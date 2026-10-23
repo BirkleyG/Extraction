@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Mineshaft Capital</title>
+<meta name="description" content="A darkly funny multiplayer pixel-art mining empire. Compete with friends to out-mine, out-trade and out-explode each other.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;500;600;700&family=Silkscreen:wght@400;700&family=VT323&display=swap">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+
+<div id="app">
+  <header class="hud">
+    <div class="brand">MINESHAFT<br><span>CAPITAL</span></div>
+    <div class="stat coin"><small>Coin</small><b id="hCoin">—</b><i id="hRate">connecting…</i></div>
+    <div class="stat"><small>Ships</small><b id="hShips">—</b></div>
+    <button class="hudbtn" data-act="tree" aria-label="Open the species skill tree">EVOLVE<b id="hSP">0</b></button>
+    <div class="stat hide-sm"><small>Planet</small><b id="hPlanet">—</b></div>
+    <div class="stat"><small>Month ends</small><b id="hTimer">—</b></div>
+    <div class="spacer"></div>
+    <button class="icon-btn" data-act="settings" aria-label="Settings and AI keys">⚙</button>
+  </header>
+  <main class="layout" id="layout">
+    <section class="stage">
+      <div class="canvas-wrap" id="cwrap">
+        <canvas id="cv" aria-label="Your colony. Drag to pan, scroll or pinch to zoom, tap things to inspect."></canvas>
+        <button class="mapbtn" id="mapBtn" data-act="togglemap" aria-label="Switch between mine view and planet map"><canvas id="mini"></canvas><span id="mapBtnLbl">MAP</span></button>
+        <div class="stage-tag" id="stageTag">Connecting to the colony network…</div>
+        <button class="paneltoggle" data-act="panel" aria-label="Show or hide the control panel" id="panelBtn">⟩</button>
+        <div class="ctrl"><button data-act="zoom:in" aria-label="Zoom in">+</button><button data-act="zoom:out" aria-label="Zoom out">−</button><button data-act="zoom:fit" aria-label="Fit view">⤢</button></div>
+        <div class="abil" id="abil" data-k=""></div>
+        <div class="focusbar" id="focusbar"></div>
+        <div class="alarm" id="alarm" hidden></div>
+        <div class="watchbar" id="watchbar" hidden></div>
+        <div class="tip" id="tip" hidden></div>
+        <div class="mapcard" id="mapcard" hidden></div>
+      </div>
+      <div class="ticker" id="ticker"></div>
+    </section>
+    <section class="panel">
+      <nav class="tabs" id="tabs" role="tablist"></nav>
+      <div class="tabbody" id="tabbody"></div>
+    </section>
+  </main>
+  <div class="overlay" id="ov" hidden><div class="sheet" id="ovBody"></div></div>
+  <div class="toast" id="toast" hidden></div>
+</div>
+
+
+<script src="js/config.js"></script>
+<script src="js/backend.js"></script>
+<script src="js/game.js"></script>
+</body>
+</html>

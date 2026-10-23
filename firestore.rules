@@ -1,0 +1,32 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Every friend group plays in its own room: rooms/{room}/...
+    // Anyone signed in (anonymously) can read the room. You can only write your own colony and profile.
+
+    match /rooms/{room}/colonies/{uid} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == uid && room.size() <= 32;
+    }
+
+    match /rooms/{room}/profiles/{uid} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == uid && room.size() <= 32;
+    }
+
+    // Shared event log: add-only.
+    match /rooms/{room}/feed/{id} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && room.size() <= 32;
+    }
+
+    // The shared planet and the lock used to create/roll it over each month.
+    match /rooms/{room}/world/{doc} {
+      allow read, write: if request.auth != null && room.size() <= 32;
+    }
+    match /rooms/{room}/locks/{doc} {
+      allow read, write: if request.auth != null && room.size() <= 32;
+    }
+  }
+}
