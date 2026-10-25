@@ -1,3 +1,4 @@
+import * as E from './economy.js';
 import { createProductionState, liftRatePerMinute, shaftRatePerMinute, tickProductionSecond, withdrawSurfaceUnits } from '../backend/src/production.js';
 import { tierOf } from './upgrades.js';
 
@@ -32,8 +33,8 @@ export const MYTHIC_ORE = 'mythic';
 export const HARDNESS = Object.freeze({ ferrite: 1, cobalt: 2, lithium: 5, sulfur: 5, crystal: 6, iridium: 6, mythic: 9 });
 export const VEIN_SIZE = Object.freeze({ rare: 900, mythic: 3000 });
 export const TOUGH_TERRAINS = Object.freeze(['mesa', 'volcanic', 'canyon', 'glacier', 'alpine', 'badlands', 'arches', 'monoliths', 'rifts', 'crystal', 'scrapyard']);
-const TOOL_HARDNESS = [2, 4, 6, 8, 10];
-export const toolHardness = (digLevel) => TOOL_HARDNESS[tierOf('dig', digLevel).i];
+const TOOL_HARDNESS = [2, 4, 6, 8, 10, 10];
+export const toolHardness = (digLevel, sandbox = false) => TOOL_HARDNESS[sandbox ? E.tierIndex('pick', digLevel) : tierOf('dig', digLevel).i];
 /** how far a shaft's tunnel face has been dug, in scene units, from the units it has mined */
 export const faceDistance = (minedUnits) => Math.min(360, 40 * Math.log2(1 + Math.max(0, minedUnits) / 4));
 const DEFAULT_SITE = Object.freeze({ seed: 'sandbox|home', regionId: 'home', commonOreId: 'ferrite', rareOreIds: RARE_ORES, mythic: true });
@@ -45,11 +46,11 @@ export function makeSite(options) {
   const R = seededRng(textHash(`${seed}|site`));
   const commonOreId = COMMON_ORES[R() < 0.5 ? 0 : 1];
   let rareOreIds = RARE_ORES.filter(() => R() < 0.55);
-  if (rareOreIds.length < 2) rareOreIds = RARE_ORES.filter((_, index) => index % 2 === Math.floor(R() * 2));
+  if (rareOreIds.length < 2) { const start = Math.floor(R() * RARE_ORES.length); rareOreIds = [RARE_ORES[start], RARE_ORES[(start + 1) % RARE_ORES.length]]; }
   return { seed, regionId, commonOreId, rareOreIds, mythic: Boolean(tough) && R() < 0.7 };
 }
 
-export function generateVeins(site, shaftNumber) {
+export function generateVeins(site, shaftNumber, sandbox = true) {
   const R = seededRng(textHash(`${site.seed}|shaft${shaftNumber}`));
   const chance = Math.min(0.8, 0.3 + 0.025 * shaftNumber);
   const maxVeins = shaftNumber >= 12 ? 3 : shaftNumber >= 5 ? 2 : 1;
@@ -61,7 +62,7 @@ export function generateVeins(site, shaftNumber) {
     const oreId = mythic ? MYTHIC_ORE : site.rareOreIds[Math.floor(R() * site.rareOreIds.length)];
     if (!oreId) continue;
     const richness = 0.6 + R() * 0.9;
-    const sizeUnits = Math.round(richness * (mythic ? VEIN_SIZE.mythic : VEIN_SIZE.rare) * (1 + 0.15 * (shaftNumber - 1)));
+    const sizeUnits = sandbox ? E.veinSize(shaftNumber, richness, mythic) : Math.round(richness * (mythic ? VEIN_SIZE.mythic : VEIN_SIZE.rare) * (1 + 0.15 * (shaftNumber - 1)));
     veins.push({ id: `v${shaftNumber}-${k}`, shaftNumber, oreId, at: Math.round(150 + R() * 170 + k * 25), sizeUnits, remainingUnits: sizeUnits, seen: false, warned: false });
   }
   return veins.sort((a, b) => a.at - b.at);
@@ -72,7 +73,7 @@ export function veinStatus(state, vein) {
   if (vein.remainingUnits <= 1e-9) return 'empty';
   if (faceDistance(state.shaftMined?.[vein.shaftNumber] ?? 0) < vein.at) return 'ahead';
   const shaft = shaftByNumber(state, vein.shaftNumber);
-  return !shaft || HARDNESS[vein.oreId] > toolHardness(shaft.digLevel) ? 'blocked' : 'mining';
+  return !shaft || HARDNESS[vein.oreId] > toolHardness(shaft.digLevel, Boolean(state.economyProfile)) ? 'blocked' : 'mining';
 }
 function miningVein(state, shaftNumber) { return (state.veins || []).find((vein) => vein.shaftNumber === shaftNumber && veinStatus(state, vein) === 'mining'); }
 
@@ -135,6 +136,7 @@ function costAt(base, growth, level) {
 }
 
 function costSchedule(type, state, shaftNumber = 1) {
+  if (state.economyProfile) { const id = sandboxLine(type); if (!id) fail("UNKNOWN_UPGRADE"); return { level: sandboxLevel(state, id), cap: E.LEVEL_CAP, id }; }
   switch (type) {
     case 'dig': return { level: findShaft(state, shaftNumber).digLevel, cap: 1000, base: 15, growth: 1.021 };
     case 'lift': return { level: state.production.lift.level, cap: 1000, base: 25, growth: 1.0205 };
@@ -201,20 +203,21 @@ function changeCoin(state, delta, type, description, externalAccount) {
   addLedger(state, type, Math.abs(delta), description, externalAccount);
 }
 
-export function createGameState(siteOptions) {
+export function createGameState(siteOptions, { legacy = false } = {}) {
   const site = makeSite(siteOptions);
   const state = {
     schemaVersion: SAVE_VERSION,
+    economyProfile: 'sandbox-rebuild-v1',
     simSeconds: 0,
     coins: 0,
     sourceGrants: 0,
     totalExternalEarnings: 0,
-    workersHired: 5,
-    upgrades: { habitat: 0, yard: 0, shipCapacity: 0, shipSpeed: 0, loading: 0 },
+    workersHired: 10,
+    upgrades: { habitat: 0, yard: 0, shipCapacity: 0, shipSpeed: 0, loading: 0, pick: 0, hauler: 0 },
     production: newProductionState([shaftBlueprint(1, { oreId: site.commonOreId }, 5)], { level: 1, baseRatePerMinute: 2, curve: 'exponential', growth: BASE_LIFT_GROWTH }, { capacityUnits: 300, unitsByOre: [{ oreId: site.commonOreId, units: 5 }] }),
     ship: { capacityUnits: 150, speedPerMinute: 0.5, loadingUnitsPerMinute: 60, readyAtSecond: 0, loading: false, cargoOreId: null, cargoUnits: 0 },
     site,
-    veins: generateVeins(site, 1),
+    veins: generateVeins(site, 1, !legacy),
     shaftMined: {},
     selectedDestinationId: DESTINATIONS[0].id,
     autoLaunch: true,
@@ -225,6 +228,11 @@ export function createGameState(siteOptions) {
     log: [],
     notice: 'The mine is live with zero coin. Press Launch now to sell your starter ore, then spend it on digging.',
   };
+  if (legacy) { delete state.economyProfile; delete state.upgrades.pick; delete state.upgrades.hauler; state.workersHired = 5; return state; }
+  state.production.lift.level = 0;
+  syncSandbox(state);
+  state.production.surface.unitsByOre = [{ oreId: site.commonOreId, units: E.START_YARD_UNITS }];
+  state.production.initialUnitsByOre = [{ oreId: site.commonOreId, units: E.START_YARD_UNITS }];
   return state;
 }
 
@@ -265,7 +273,7 @@ function availableSurface(state, oreId) {
   return state.production.surface.unitsByOre.find((row) => row.oreId === oreId)?.units ?? 0;
 }
 function preferredCargoOre(state, destinationId) {
-  return state.production.surface.unitsByOre.filter((row) => row.units > 0).sort((a, b) => {
+  return state.production.surface.unitsByOre.filter((row) => state.economyProfile ? Math.floor(row.units + 1e-9) >= 1 : row.units > 0).sort((a, b) => {
     const valueOrder = priceFor(destinationFor(destinationId), b.oreId) - priceFor(destinationFor(destinationId), a.oreId);
     return valueOrder || (a.oreId < b.oreId ? -1 : a.oreId > b.oreId ? 1 : 0);
   })[0]?.oreId ?? null;
@@ -278,15 +286,16 @@ function computeDispatch(state, destinationId, extraLoadSeconds = 0) {
   const cargoOreId = state.ship.cargoOreId;
   const units = state.ship.cargoUnits;
   if (!cargoOreId || units < 1e-9) return { state, result: null, reason: 'no-cargo' };
-  const price = priceFor(destination, cargoOreId);
+  const price = state.economyProfile ? roundHalfUp(E.DESTINATIONS[DESTINATIONS.indexOf(destination)].basePrice * ore(cargoOreId).value) : priceFor(destination, cargoOreId);
   const payment = roundHalfUp(units * price);
   if (!Number.isSafeInteger(payment) || payment < 1) return { state, result: null, reason: 'no-cargo' };
-  const next = clone(state);
+  if (payment > MAX_COIN - state.coins || payment > MAX_COIN - state.totalExternalEarnings) return { state, result: null, reason: 'balance-limit' };
+  const next = state;
   changeCoin(next, payment, 'NPC_RAW_PURCHASE', `${destination.name} paid at departure`, `source:NPC:${destinationId}`);
   next.totalExternalEarnings = addSafe(next.totalExternalEarnings, payment, 'external earnings');
   const now = next.simSeconds;
   const travelOneWaySeconds = destination.distance / next.ship.speedPerMinute * 60;
-  const unloadSeconds = units / destination.unloadUnitsPerMinute * 60;
+  const unloadSeconds = state.economyProfile ? E.DESTINATIONS[DESTINATIONS.indexOf(destination)].unloadSeconds : units / destination.unloadUnitsPerMinute * 60;
   const arrivalAtSecond = now + Math.ceil(travelOneWaySeconds + unloadSeconds);
   const tripSeconds = Math.ceil(2 * travelOneWaySeconds + unloadSeconds);
   next.ship.readyAtSecond = now + tripSeconds + extraLoadSeconds;
@@ -307,11 +316,11 @@ function computeDispatch(state, destinationId, extraLoadSeconds = 0) {
 /** Normal loading: the pad moves ore from the yard into the hold at the pad's loading rate. */
 function loadOneSecond(state) {
   if (state.ship.readyAtSecond > state.simSeconds) return state;
-  const next = clone(state);
+  const next = state;
   const cargoOreId = next.ship.cargoOreId ?? preferredCargoOre(next, next.selectedDestinationId);
   const room = Math.max(0, next.ship.capacityUnits - next.ship.cargoUnits);
   const available = cargoOreId ? availableSurface(next, cargoOreId) : 0;
-  const amount = Math.min(available, room, next.ship.loadingUnitsPerMinute / 60);
+  const amount = Math.min(next.economyProfile ? Math.floor(available + 1e-9) : available, room, next.ship.loadingUnitsPerMinute / 60);
   next.ship.loading = amount > 1e-9;
   if (amount <= 1e-9) return next;
   next.production = withdrawSurfaceUnits(next.production, cargoOreId, amount);
@@ -325,7 +334,8 @@ function rushLoad(state) {
   const next = clone(state);
   const cargoOreId = next.ship.cargoOreId ?? preferredCargoOre(next, next.selectedDestinationId);
   if (!cargoOreId) return { state: next, loaded: 0 };
-  const amount = Math.min(availableSurface(next, cargoOreId), Math.max(0, next.ship.capacityUnits - next.ship.cargoUnits));
+  const available = availableSurface(next, cargoOreId);
+  const amount = Math.min(next.economyProfile ? Math.floor(available + 1e-9) : available, Math.max(0, next.ship.capacityUnits - next.ship.cargoUnits));
   if (amount <= 1e-9) return { state: next, loaded: 0 };
   next.production = withdrawSurfaceUnits(next.production, cargoOreId, amount);
   next.ship.cargoOreId = cargoOreId;
@@ -336,7 +346,7 @@ function rushLoad(state) {
 /** The cargo ore has stopped arriving (vein dry, shaft idle) so waiting for a full hold would wait forever. */
 function cargoStranded(state) {
   const id = state.ship.cargoOreId;
-  if (!id || state.ship.cargoUnits < 1e-9 || availableSurface(state, id) >= 1e-9) return false;
+  if (!id || state.ship.cargoUnits < 1e-9 || (state.economyProfile ? Math.floor(availableSurface(state, id) + 1e-9) >= 1 : availableSurface(state, id) >= 1e-9)) return false;
   return !state.production.shafts.some((shaft) => shaft.workersAssigned > 0 && ((miningVein(state, shaft.shaftNumber)?.oreId ?? state.site.commonOreId) === id || shaft.bufferUnits > 1e-9 && shaft.oreId === id));
 }
 
@@ -353,7 +363,7 @@ function launchIfReady(state) {
 }
 
 function arriveShipments(state) {
-  const next = clone(state);
+  const next = state;
   for (const shipment of next.shipments) {
     if (next.shipmentStatusById[shipment.id] !== 'IN_TRANSIT' || shipment.arrivalAtSecond > next.simSeconds) continue;
     next.shipmentStatusById[shipment.id] = 'DELIVERED';
@@ -370,6 +380,7 @@ export function stepGame(inputState) {
   let advanced = arriveShipments(next);
   // Online play: the server owns takeoffs and payments; the browser only keeps the picture of the mine moving between polls.
   if (!advanced.remote) advanced = launchIfReady(advanced);
+  if (advanced.economyProfile) compactHistory(advanced);
   return validateGameState(advanced);
 }
 
@@ -398,7 +409,7 @@ export function purchaseUpgrade(inputState, type, { shaftNumber = 1, count = 1 }
   let affordableCount = 0;
   let spend = 0;
   for (let index = 0; index < levels; index += 1) {
-    const cost = costAt(schedule.base, schedule.growth, schedule.level + index);
+    const cost = schedule.id ? E.lineCost(schedule.id, schedule.level + index) : costAt(schedule.base, schedule.growth, schedule.level + index);
     if (spend + cost > state.coins) break;
     spend += cost;
     affordableCount += 1;
@@ -407,6 +418,14 @@ export function purchaseUpgrade(inputState, type, { shaftNumber = 1, count = 1 }
   const next = clone(state);
   changeCoin(next, -spend, 'SYSTEM_PURCHASE', `Purchased ${type} ×${affordableCount}`, 'sink:SYSTEM_PURCHASE');
   const finalLevel = schedule.level + affordableCount;
+  if (state.economyProfile) {
+    if (schedule.id === 'pick') next.upgrades.pick = finalLevel;
+    if (schedule.id === 'hauler') next.upgrades.hauler = finalLevel;
+    if (schedule.id === 'lift') next.production.lift.level = finalLevel;
+    syncSandbox(next);
+    appendLog(next, `Upgraded ${schedule.id} ×${affordableCount}.`, 'purchase');
+    return validateGameState(next);
+  }
   switch (type) {
     case 'dig': findShaft(next, shaftNumber).digLevel = finalLevel; break;
     case 'bunkhouse': findShaft(next, shaftNumber).bunkhouseLevel = finalLevel; break;
@@ -430,15 +449,16 @@ export function buyNextShaft(inputState) {
   const state = validateGameState(inputState);
   const number = state.production.shafts.length + 1;
   if (number > 30) fail('AT_CAP');
-  const cost = roundHalfUp(120 * 2.4 ** (number - 1));
+  const cost = state.economyProfile ? E.shaftCost(number) : roundHalfUp(120 * 2.4 ** (number - 1));
+  if (!Number.isSafeInteger(cost)) fail("INSUFFICIENT_FUNDS");
   safeInt(cost, 'shaft cost');
   if (state.coins < cost) fail('INSUFFICIENT_FUNDS');
   const next = clone(state);
   changeCoin(next, -cost, 'SYSTEM_PURCHASE', `Unlocked shaft ${number}`, 'sink:SYSTEM_PURCHASE');
   next.production.shafts.push(shaftBlueprint(number, { liftLevel: next.production.lift.level, oreId: next.site.commonOreId }, 0));
-  next.veins.push(...generateVeins(next.site, number));
-  rebalanceWorkers(next);
-  appendLog(next, `Shaft ${number} opened. Assign workers through the hire panel.`, 'purchase');
+  next.veins.push(...generateVeins(next.site, number, Boolean(next.economyProfile)));
+  if (next.economyProfile) syncSandbox(next); else rebalanceWorkers(next);
+  appendLog(next, next.economyProfile ? `Shaft ${number} opened with ten miners already at work.` : `Shaft ${number} opened. Assign workers through the hire panel.`, 'purchase');
   return validateGameState(next);
 }
 
@@ -447,6 +467,7 @@ export const habitatCapacity = (level) => 10 + 2 * level;
 
 export function hireWorkers(inputState, count = 1) {
   const state = validateGameState(inputState);
+  if (state.economyProfile) fail("NO_WORKER_CAPACITY", "Every shaft already includes ten miners.");
   const requested = count === 'max' ? MAX_COIN : safeInt(count, 'worker count');
   const workerCapacity = habitatCapacity(state.upgrades.habitat);
   const poolSpace = workerCapacity - state.workersHired;
@@ -474,7 +495,7 @@ export function selectDestination(inputState, destinationId) {
   destinationFor(destinationId);
   const next = clone(state);
   next.selectedDestinationId = destinationId;
-  rebalanceWorkers(next);
+  if (!next.economyProfile) rebalanceWorkers(next);
   return next;
 }
 
@@ -491,9 +512,9 @@ export function dispatchNow(inputState) {
   if (state.ship.readyAtSecond > state.simSeconds) fail('SHIP_BUSY');
   const rushed = rushLoad(state);
   if (rushed.state.ship.cargoUnits < 1e-9) fail('NOT_ENOUGH_STOCK');
-  const extra = Math.ceil(rushed.loaded / rushed.state.ship.loadingUnitsPerMinute * 60);
+  const extra = state.economyProfile ? 0 : Math.ceil(rushed.loaded / rushed.state.ship.loadingUnitsPerMinute * 60);
   const result = computeDispatch(rushed.state, rushed.state.selectedDestinationId, extra);
-  if (!result.result) fail('NOT_ENOUGH_STOCK');
+  if (!result.result) fail(result.reason === 'balance-limit' ? 'BALANCE_LIMIT' : 'NOT_ENOUGH_STOCK');
   return validateGameState(result.state);
 }
 
@@ -528,11 +549,13 @@ export function currentLiftRate(state) {
 
 export function upgradeCost(state, type, shaftNumber = 1) {
   const schedule = costSchedule(type, state, shaftNumber);
-  return schedule.level >= schedule.cap ? null : costAt(schedule.base, schedule.growth, schedule.level);
+  const cost = schedule.id ? E.lineCost(schedule.id, schedule.level) : costAt(schedule.base, schedule.growth, schedule.level);
+  return schedule.level >= schedule.cap || !Number.isSafeInteger(cost) ? null : cost;
 }
 
 export function expectedUnitValue(state, oreId) {
-  return priceFor(destinationFor(state.selectedDestinationId), oreId);
+  const d = destinationFor(state.selectedDestinationId);
+  return state.economyProfile ? roundHalfUp(E.DESTINATIONS[DESTINATIONS.indexOf(d)].basePrice * ore(oreId).value) : priceFor(d, oreId);
 }
 
 export function shipmentRows(state) {
@@ -549,17 +572,28 @@ export function validateGameState(input) {
   if (!Array.isArray(input.shipments) || !Array.isArray(input.ledger) || !Array.isArray(input.log) || !Array.isArray(input.production?.shafts)) fail('INVALID_SAVE');
   if (!input.upgrades || typeof input.upgrades !== 'object' || !input.shipmentStatusById || typeof input.shipmentStatusById !== 'object') fail('INVALID_SAVE');
   for (const key of ['habitat', 'yard', 'shipCapacity', 'shipSpeed', 'loading']) safeInt(input.upgrades[key], `upgrade ${key}`);
-  if (Object.keys(input.upgrades).length !== 5 || input.upgrades.habitat > 1000 || Object.values(input.upgrades).some((value) => value > 1000) || typeof input.autoLaunch !== 'boolean') fail('INVALID_SAVE');
+  if ((!input.economyProfile && Object.keys(input.upgrades).length !== 5) || input.upgrades.habitat > 1000 || Object.values(input.upgrades).some((value) => value > 1000) || typeof input.autoLaunch !== 'boolean') fail('INVALID_SAVE');
+  if (input.economyProfile) {
+    if (input.remote || input.economyProfile !== 'sandbox-rebuild-v1') fail('INVALID_SAVE');
+    for (const value of [input.upgrades.pick, input.upgrades.hauler, input.production.lift.level]) if (!Number.isSafeInteger(value) || value < 0 || value > E.LEVEL_CAP) fail('INVALID_SAVE');
+  }
   destinationFor(input.selectedDestinationId);
   const production = createProductionState(input.production);
   if (production.shafts.some((shaft, index) => shaft.shaftNumber !== index + 1 || !ore(shaft.oreId))) fail('INVALID_SAVE', 'Shaft order or ore is invalid');
-  if (production.shafts.reduce((sum, shaft) => sum + shaft.workersAssigned, 0) !== input.workersHired || input.workersHired > habitatCapacity(input.upgrades.habitat)) fail('INVALID_SAVE', 'Worker assignments do not match the crew pool');
+  if (production.shafts.reduce((sum, shaft) => sum + shaft.workersAssigned, 0) !== input.workersHired || (!input.economyProfile && input.workersHired > habitatCapacity(input.upgrades.habitat))) fail('INVALID_SAVE', 'Worker assignments do not match the crew pool');
   if (production.syntheticDownstreamDrain.unitsPerSecond !== 0 || production.syntheticDownstreamDrain.drainedByOre.length !== 0) fail('INVALID_SAVE', 'Synthetic drain must remain disabled in the playtest');
   if (!input.ship || number(input.ship.capacityUnits, 'ship capacity', Number.MIN_VALUE) <= 0 || number(input.ship.speedPerMinute, 'ship speed', Number.MIN_VALUE) <= 0 || number(input.ship.loadingUnitsPerMinute, 'loading rate', Number.MIN_VALUE) <= 0) fail('INVALID_SAVE');
   safeInt(input.ship.readyAtSecond, 'ship ready time');
   number(input.ship.cargoUnits, 'ship cargo');
   if (typeof input.ship.loading !== 'boolean' || input.ship.cargoUnits > input.ship.capacityUnits || (input.ship.cargoUnits > 0 && !ore(input.ship.cargoOreId)) || (input.ship.cargoUnits === 0 && input.ship.cargoOreId !== null)) fail('INVALID_SAVE');
   if (!Number.isSafeInteger(input.nextRecordId) || input.nextRecordId < 1) fail('INVALID_SAVE');
+  if (input.historyArchive) {
+    if (!input.economyProfile || !input.historyArchive.shipments || !input.historyArchive.ledger) fail('INVALID_SAVE');
+    const { shipments, ledger } = input.historyArchive;
+    for (const value of [shipments.count, shipments.payment, ledger.count, ...Object.values(ledger.amountsByType)]) safeInt(value, 'archive total');
+    if (!Number.isSafeInteger(ledger.ownerDelta) || !Number.isSafeInteger(ledger.externalDelta) || ledger.ownerDelta + ledger.externalDelta !== 0 || !Array.isArray(shipments.unitsByOre)) fail('INVALID_SAVE');
+    for (const row of shipments.unitsByOre) { if (!ore(row.oreId)) fail('INVALID_SAVE'); number(row.units, 'archived ore'); }
+  }
   const shipmentIds = new Set();
   for (const shipment of input.shipments) {
     if (!shipment || typeof shipment.id !== 'string' || shipmentIds.has(shipment.id) || !ore(shipment.oreId) || !destinationFor(shipment.destinationId) || typeof shipment.state !== 'string') fail('INVALID_SAVE');
@@ -574,7 +608,7 @@ export function validateGameState(input) {
   if (input.log.some((entry) => !entry || typeof entry.message !== 'string' || !Number.isSafeInteger(entry.atSecond) || entry.atSecond < 0 || entry.atSecond > input.simSeconds)) fail('INVALID_SAVE');
   const site = input.site ?? makeSite();
   if (typeof site.commonOreId !== 'string' || !COMMON_ORES.includes(site.commonOreId) || !Array.isArray(site.rareOreIds) || site.rareOreIds.some((id) => !RARE_ORES.includes(id))) fail('INVALID_SAVE', 'Site is malformed');
-  const veins = input.veins ?? production.shafts.flatMap((shaft) => generateVeins(site, shaft.shaftNumber));
+  const veins = input.veins ?? production.shafts.flatMap((shaft) => generateVeins(site, shaft.shaftNumber, Boolean(input.economyProfile)));
   if (!Array.isArray(veins) || veins.some((vein) => !vein || !ore(vein.oreId) || HARDNESS[vein.oreId] < 5 || !Number.isFinite(vein.sizeUnits) || !Number.isFinite(vein.remainingUnits) || vein.remainingUnits < 0 || vein.remainingUnits > vein.sizeUnits + 1e-9 || !production.shafts.some((shaft) => shaft.shaftNumber === vein.shaftNumber))) fail('INVALID_SAVE', 'Veins are malformed');
   const shaftMined = input.shaftMined ?? {};
   if (typeof shaftMined !== 'object' || Object.values(shaftMined).some((value) => !Number.isFinite(value) || value < 0)) fail('INVALID_SAVE', 'Mined totals are malformed');
@@ -583,6 +617,51 @@ export function validateGameState(input) {
 
 export function coinRatePerMinute(state) {
   const producing = currentRates(state).reduce((sum, row) => sum + row.ratePerMinute, 0);
+  if (state.economyProfile) { const destination = destinationsFor(state).find(d => d.id === state.selectedDestinationId); return Math.min(producing, currentLiftRate(state), state.ship.capacityUnits / E.tripSeconds(destination, state.ship.speedPerMinute) * 60) * expectedUnitValue(state, state.site.commonOreId); }
   const destination = destinationFor(state.selectedDestinationId);
   return producing * priceFor(destination, ORES[0].id);
+}
+
+// Sandbox coefficients are encoded in the existing conserved production state. Remote states never use this profile.
+const sandboxLine = (type) => ({ dig: 'pick', pick: 'pick', lift: 'lift', hauler: 'hauler', shipCapacity: 'hauler', shipSpeed: 'hauler', loading: 'hauler' })[type];
+const sandboxLevel = (state, id) => id === 'lift' ? state.production.lift.level : state.upgrades[id];
+function syncSandbox(state) {
+  const pick = state.upgrades.pick; const haul = state.upgrades.hauler; const lift = state.production.lift.level;
+  state.production.lift = { level: lift, baseRatePerMinute: E.TUNE.lift, curve: 'exponential', growth: E.TUNE.growth };
+  for (const shaft of state.production.shafts) {
+    shaft.digLevel = pick; shaft.workersAssigned = E.MINERS_PER_SHAFT; shaft.cartLevel = 10; shaft.bunkhouseLevel = 0;
+    shaft.depthGrowth = E.TUNE.depth; shaft.baseRatePerWorkerPerMinute = E.pickRatePerMiner(pick) / (1 + .04 * pick);
+    shaft.bufferCapacityUnits = Math.max(shaft.bufferUnits, E.shaftBuffer(lift));
+  }
+  state.workersHired = state.production.shafts.length * E.MINERS_PER_SHAFT;
+  state.production.surface.capacityUnits = Math.max(state.production.surface.unitsByOre.reduce((sum, r) => sum + r.units, 0), E.yardCapacity(lift, haul));
+  state.ship.capacityUnits = E.haulerCapacity(haul); state.ship.speedPerMinute = E.haulerSpeed(haul); state.ship.loadingUnitsPerMinute = state.ship.capacityUnits * 60;
+  state.upgrades.shipCapacity = haul; state.upgrades.shipSpeed = haul; state.upgrades.loading = haul;
+}
+
+export const nextShaftCost = (state) => {
+  if (state.production.shafts.length >= E.MAX_SHAFTS) return null;
+  const cost = state.economyProfile ? E.shaftCost(state.production.shafts.length + 1) : roundHalfUp(120 * 2.4 ** state.production.shafts.length);
+  return Number.isSafeInteger(cost) ? cost : null;
+};
+export const destinationsFor = (state) => state.economyProfile ? DESTINATIONS.map((d, i) => ({ ...d, ...E.DESTINATIONS[i], id: d.id, unloadUnitsPerMinute: d.unloadUnitsPerMinute })) : DESTINATIONS;
+
+// Keep recent local detail and aggregate every retired record explicitly. Paid shipments still in transit are never retired.
+function compactHistory(state) {
+  if (state.shipments.length <= 32 && state.ledger.length <= 64) return;
+  const archive = state.historyArchive ??= { shipments: { count: 0, payment: 0, unitsByOre: [] }, ledger: { count: 0, ownerDelta: 0, externalDelta: 0, amountsByType: {} } };
+  while (state.shipments.length > 32 && state.shipmentStatusById[state.shipments[0].id] === 'DELIVERED') {
+    const row = state.shipments.shift();
+    const totals = archive.shipments; totals.count += 1; totals.payment = addSafe(totals.payment, row.payment, 'archived payments');
+    const item = totals.unitsByOre.find(r => r.oreId === row.oreId);
+    if (item) item.units += row.units; else totals.unitsByOre.push({oreId:row.oreId, units:row.units});
+    totals.lastId = row.id; totals.lastAtSecond = row.departureAtSecond;
+    delete state.shipmentStatusById[row.id];
+  }
+  while (state.ledger.length > 64) {
+    const row = state.ledger.shift(); const totals = archive.ledger; totals.count += 1;
+    totals.ownerDelta += row.ownerDelta; totals.externalDelta += row.externalDelta;
+    totals.amountsByType[row.type] = addSafe(totals.amountsByType[row.type] ?? 0, row.amount, 'archived ledger amount');
+    totals.lastId = row.id; totals.lastAtSecond = row.atSecond;
+  }
 }

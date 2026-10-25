@@ -1,5 +1,5 @@
 import {
-  HARDNESS, ORES, DESTINATIONS, SAVE_KEY, TOUGH_TERRAINS, toolHardness, veinStatus, advanceGame, buyNextShaft, createGameState, currentLiftRate, currentRates, shaftRateFor, habitatCapacity, hireCost,
+  expectedUnitValue, nextShaftCost, destinationsFor, HARDNESS, ORES, DESTINATIONS, SAVE_KEY, TOUGH_TERRAINS, toolHardness, veinStatus, advanceGame, buyNextShaft, createGameState, currentLiftRate, currentRates, shaftRateFor, habitatCapacity, hireCost,
   dispatchNow, grantDevCoins, hireWorkers, purchaseUpgrade, selectDestination,
   setAutoLaunch, stepGame, upgradeCost, validateGameState,
 } from './model.js';
@@ -84,6 +84,11 @@ let catchupKind = 'offline';
 let savedAtMs = Date.now();
 let tab = 'sell';
 let resetPromptOpen = false;
+let newEconomyPrompt = false;
+const RECOVERY_KEY = 'extraction_sandbox_corrupt_recovery';
+let corruptRaw = null;
+let saveBlocked = false;
+const blockedSaveMessage = 'The unreadable save is preserved at its original key. Recovery storage is unavailable or already occupied. This mine runs in memory only until you explicitly reset it in Tools.';
 let grantValue = '10000';
 let toastTimer;
 /* ---- offline sandbox (default) or the online game (opt-in with ?mode=online or the header button) ---- */
@@ -116,15 +121,17 @@ function fmt(value) { return formatter.format(value); }
 function fmtUnits(value) { return new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 }).format(value); }
 function fillFraction(value, max) { return Math.round(Math.min(1, max > 0 ? value / max : 0) * 100); }
 function oreById(id) { return ORES.find((ore) => ore.id === id); }
-function destinationById(id) { return DESTINATIONS.find((item) => item.id === id); }
+const isNewEconomy = () => state.economyProfile === 'sandbox-rebuild-v1';
+function destinationById(id) { return destinationsFor(state).find((item) => item.id === id); }
 function surfaceTotal() { return state.production.surface.unitsByOre.reduce((sum, row) => sum + row.units, 0); }
 function liftRate() { return currentLiftRate(state); }
 function totalRate() { return currentRates(state).reduce((sum, row) => sum + row.ratePerMinute, 0); }
 function safeText(value) { return String(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]); }
 
 function loadSave() {
+  let raw = null;
   try {
-    const raw = localStorage.getItem(SAVE_KEY);
+    raw = localStorage.getItem(SAVE_KEY);
     if (!raw) return createGameState(siteOpts());
     const wrapper = JSON.parse(raw);
     if (!wrapper || wrapper.version !== 1 || !Number.isSafeInteger(wrapper.savedAtMs) || wrapper.savedAtMs < 0) throw new Error('Unsupported save');
@@ -139,13 +146,26 @@ function loadSave() {
     else if (elapsed < 0) recovering = 'The browser clock moved backward since the last save. The mine resumed without adding offline time.';
     return loaded;
   } catch {
-    recovering = 'This local save could not be read. A fresh sandbox was opened; the prototype save was left alone.';
+    corruptRaw = raw;
+    if (raw !== null) {
+      try {
+        const existing = localStorage.getItem(RECOVERY_KEY);
+        if (!existing) {
+          const backup = JSON.stringify({ backedUpAtMs: Date.now(), sourceKey: SAVE_KEY, reason: 'Unreadable local save', raw });
+          localStorage.setItem(RECOVERY_KEY, backup);
+          if (localStorage.getItem(RECOVERY_KEY) !== backup) throw new Error('Recovery backup did not persist');
+        } else if (JSON.parse(existing).raw !== raw) throw new Error('Recovery slot already contains another save');
+      } catch { saveBlocked = true; }
+    }
+    catchupRemaining = 0; paused = false; savedAtMs = Date.now();
+    recovering = saveBlocked ? blockedSaveMessage : 'The unreadable save was preserved as a recovery backup. A fresh sandbox is open. Download the original text from Tools.';
     return createGameState(siteOpts());
   }
 }
 
 function save() {
   if (state && state.remote) return; // the server is the save file online
+  if (saveBlocked) { recovering = blockedSaveMessage; return; }
   try {
     savedAtMs = Date.now();
     localStorage.setItem(SAVE_KEY, JSON.stringify({ version: 1, savedAtMs, pendingCatchupSeconds: catchupRemaining, catchupKind, paused, state }));
@@ -236,6 +256,19 @@ function apply(action, success) {
 }
 
 /* ---- upgrade juice: sound, floating text, tier-up fanfare ---- */
+let reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+let guideDismissed = false;
+try { const motion = localStorage.getItem('extraction_motion'); if (motion) reducedMotion = motion === 'reduced'; guideDismissed = localStorage.getItem('extraction_guide_done') === 'yes'; } catch {}
+document.documentElement.classList.toggle('reduce-motion', reducedMotion);
+function renderGuide() {
+  const el = $('#firstSteps');
+  if (!el) return;
+  el.hidden = !!state.remote || guideDismissed;
+  if (el.hidden) return;
+  const sold = state.shipments.length > 0;
+  const bought = state.ledger.some((e) => /upgrade/i.test(e.type + e.description));
+  el.innerHTML = `<span class="${state.simSeconds > 0 ? 'done' : ''}">1. Mine</span><span class="${sold ? 'done' : ''}">2. Launch & earn</span><button data-tab="upgrades" type="button" class="${bought ? 'done' : ''}">3. Upgrade</button><button data-act="guide-dismiss" aria-label="Dismiss first steps" type="button">×</button><small>${sold ? 'Reinvest your coin in the Upgrades tab.' : `Your ${state.workersHired} miners are digging. Send your first ore from Sell.`}</small>`;
+}
 let audio = null;
 let soundOn = true;
 try { soundOn = localStorage.getItem('extraction_sound') !== 'off'; } catch { /* default on */ }
@@ -252,6 +285,7 @@ function blip(notes) {
   } catch { /* audio unavailable */ }
 }
 const levelOf = (type, n = 1) => {
+  if (isNewEconomy() && (type === 'pick' || type === 'hauler')) return state.upgrades[type];
   if (type === 'lift') return state.production.lift.level;
   const sh = state.production.shafts.find((q) => q.shaftNumber === n);
   if (type === 'dig') return sh.digLevel;
@@ -278,14 +312,16 @@ function buyUpgrade(type, n, count) {
 /* what the next level of an upgrade will actually do */
 const effectCache = new Map();
 function effectText(type, n = 1) {
-  const level = levelOf(type, n); const key = `${type}|${n}|${level}|${state.production.shafts.length}|${state.workersHired}`;
+  const level = levelOf(type, n); const key = `${state.economyProfile || 'original'}|${type}|${n}|${level}|${state.production.lift.level}|${state.upgrades.pick}|${state.upgrades.hauler}|${state.production.shafts.length}|${state.workersHired}`;
   if (effectCache.has(key)) return effectCache.get(key);
   let text = '';
   try {
-    const next = purchaseUpgrade(state, type, { shaftNumber: n, count: 1 });
+    const next = purchaseUpgrade({ ...state, coins: Number.MAX_SAFE_INTEGER }, type, { shaftNumber: n, count: 1 });
     const crew = Math.max(1, state.production.shafts.find((q) => q.shaftNumber === n).workersAssigned);
     const rate = (st) => shaftRateFor(st, n, crew);
     const f = {
+      pick: (st) => `${fmtUnits(shaftRateFor(st, n, 10))} ore/min per shaft`,
+      hauler: (st) => `${fmtUnits(st.ship.capacityUnits)} hold · ${fmtUnits(st.ship.speedPerMinute)} AU/min`,
       lift: (st) => `${currentLiftRate(st).toFixed(2)} units/min hauled`,
       dig: (st) => `${fmtUnits(rate(st))} ore/min from shaft ${String(n).padStart(2, '0')}${state.production.shafts.find((q) => q.shaftNumber === n).workersAssigned ? '' : ' (per miner)'}`,
       yard: (st) => `${fmtUnits(st.production.surface.capacityUnits)} units of yard`,
@@ -306,14 +342,14 @@ function upgradeCard(type, n = 1, opts = {}) {
   const level = levelOf(type, n); const tier = tierOf(type, level); const cost = upgradeCost(state, type, n);
   const flash = lastBought.type === type && lastBought.n === n && performance.now() - lastBought.at < 900 ? ` flash" style="animation-delay:-${Math.round(performance.now() - lastBought.at)}ms` : '';
   const left = tier.next ? Math.max(0, tier.next.at - level) : 0;
-  const bulk = opts.bulk ? `<div class="bulk">${['10', 'max'].map((c) => `<button data-buy="${type}" data-count="${c}" data-shaft="${n}" type="button">${c === 'max' ? 'MAX' : `×${c}`}</button>`).join('')}</div>` : '';
+  const bulk = opts.bulk ? `<div class="bulk">${['10', '100', 'max'].map((c) => `<button data-buy="${type}" data-count="${c}" data-shaft="${n}" type="button">${c === 'max' ? 'MAX' : `×${c}`}</button>`).join('')}</div>` : '';
   const can = cost !== null && state.coins >= cost;
   return `<div class="up2${flash}"${tip(UPGRADE_TIPS[type] || '')}><div class="up2-ico">${tier.icon}</div><div class="up2-main">
       <div class="up2-title"><b>${tier.label}</b><span>${safeText(tier.name)}</span><em>LV ${level}</em></div>
       <div class="up2-effect">${safeText(effectText(type, n))}</div>
       <div class="meter tier"><i style="width:${Math.round(tier.progress * 100)}%"></i></div>
       <div class="up2-next">${tier.next ? `Becomes a <b>${safeText(tier.next.name)}</b> at LV ${tier.next.at} · ${left} to go` : 'Top tier reached'}</div>${bulk}
-    </div><button class="buy up2-buy${can ? ' ready' : ''}" data-buy="${type}" data-shaft="${n}" type="button"${cost === null ? ' disabled' : ''}>${cost === null ? 'MAXED' : `UPGRADE<br><b>${fmt(cost)} ◉</b>`}</button></div>`;
+    </div><button class="buy up2-buy${can ? ' ready' : ''}" data-buy="${type}" data-shaft="${n}" type="button"${can ? '' : ' disabled'}>${cost === null ? 'MAXED' : `UPGRADE<br><b>${fmt(cost)} ◉</b>`}</button></div>`;
 }
 
 function costButton(type, shaftNumber = 1) {
@@ -323,7 +359,7 @@ function costButton(type, shaftNumber = 1) {
 
 const TABS = [['sell', 'Sell'], ['upgrades', 'Upgrades'], ['shafts', 'Shafts'], ['planet', 'Planet'], ['records', 'Records'], ['tools', 'Tools']];
 const tabLabel = (id, label) => (REMOTE && id === 'tools' ? 'Account' : label);
-const shaftCost = () => (state.production.shafts.length >= 30 ? null : Math.floor(120 * 2.4 ** state.production.shafts.length + 0.5));
+const shaftCost = () => nextShaftCost(state);
 const crewCap = () => habitatCapacity(state.upgrades.habitat);
 const buyBtn = (attrs, label, cost, cls = '') => `<button class="buy ${cls}" ${attrs} type="button"${cost === null ? ' disabled' : ''}>${label}<br>${cost === null ? 'CAPPED' : `${fmt(cost)} ◉`}</button>`;
 
@@ -336,11 +372,11 @@ function watchVeins() {
     if (prev === undefined || prev === st) continue;
     const o = ORES.find((q) => q.id === v.oreId); const spot = veinSpot(v.shaftNumber, v);
     if (st === 'mining') { addFx(spot[0], spot[1] - 12, `${o.name.toUpperCase()} VEIN!`, o.color); blip([523, 784, 1047]); toast(`Shaft ${v.shaftNumber} broke into a ${o.name} vein.`, 'success'); }
-    else if (st === 'blocked') { addFx(spot[0], spot[1] - 12, 'PICK TOO WEAK', '#ff5a6e'); blip([220, 180]); toast(`Shaft ${v.shaftNumber} found ${o.name} but the pick can't break it. Upgrade the pick.`, 'error'); }
+    else if (st === 'blocked') { addFx(spot[0], spot[1] - 12, 'PICK TOO WEAK', '#ff5a6e'); blip([220, 180]); toast(`Shaft ${v.shaftNumber} found ${o.name} but the pick can't break it. The crew keeps digging common ore.`, 'error'); }
     else if (st === 'empty') { addFx(spot[0], spot[1] - 12, 'VEIN DRY', '#b3a5d3'); toast(`The ${o.name} vein in shaft ${v.shaftNumber} ran dry.`); }
   }
 }
-const pickNeeded = (hardness) => { const t = TIERS.dig.tiers.find(([at]) => toolHardness(at) >= hardness); return t ? t[1] : 'a better pick'; };
+const pickNeeded = (hardness) => { const sandbox = isNewEconomy(); const t = TIERS[sandbox ? 'pick' : 'dig'].tiers.find(([at]) => toolHardness(at, sandbox) >= hardness); return t ? t[1] : 'a better pick'; };
 const oreRank = (id) => (id === 'mythic' ? 'Mythic' : ['lithium', 'sulfur', 'crystal', 'iridium'].includes(id) ? 'Rare' : 'Common');
 
 function renderHud() {
@@ -355,21 +391,22 @@ function renderHud() {
     $('#hTime').textContent = `${Math.floor(left / 86400)}d ${String(Math.floor(left / 3600) % 24).padStart(2, '0')}h ${String(Math.floor(left / 60) % 60).padStart(2, '0')}m`;
     $('#hTime').previousElementSibling.textContent = 'Month ends';
   } else $('#hTime').textContent = formatClock(state.simSeconds);
-  $('#hLive').textContent = state.remote ? 'ONLINE' : catchingUp ? 'CATCHING UP' : paused ? 'MINE PAUSED' : 'MINE RUNNING';
+  $('#hLive').textContent = state.remote ? 'ONLINE' : catchingUp ? 'CATCHING UP' : paused ? 'MINE PAUSED' : isNewEconomy() ? 'SANDBOX · NEW' : 'SANDBOX · ORIGINAL';
   $('#hLive').classList.toggle('off', !state.remote && (paused || catchingUp));
   for (const sel of ['#pauseBtn', '[data-forward="60"]']) { const el = document.querySelector(sel); if (el) el.hidden = !!state.remote; }
   const mb = $('#modeBtn'); if (mb) mb.textContent = state.remote ? 'Offline sandbox' : 'Play online ↗';
   $('#pauseBtn').textContent = paused ? 'Resume' : 'Pause';
   $('#pauseBtn').setAttribute('aria-pressed', String(paused));
   const tag = $('#stageTag');
-  tag.innerHTML = `<b>${safeText(region().name.toUpperCase())}</b> · ${safeText(TERRAINS[region().terrain].label)} · ${state.production.shafts.length} shaft${state.production.shafts.length === 1 ? '' : 's'} · ${state.workersHired} miners · lift LV ${state.production.lift.level}`;
+  tag.innerHTML = `<b>${safeText(region().name.toUpperCase())}</b> · ${safeText(TERRAINS[region().terrain].label)} · ${state.remote ? 'ONLINE' : isNewEconomy() ? 'SANDBOX · NEW ECONOMY' : 'SANDBOX · ORIGINAL ECONOMY'} · ${state.production.shafts.length} shaft${state.production.shafts.length === 1 ? '' : 's'} · ${state.workersHired} miners · lift LV ${state.production.lift.level}`;
   const yard = state.production.surface.capacityUnits ? surfaceTotal() / state.production.surface.capacityUnits : 0;
   const buf = Math.max(0, ...state.production.shafts.map((s) => (s.bufferCapacityUnits ? s.bufferUnits / s.bufferCapacityUnits : 0)));
   const banner = $('#banner');
-  const msg = catchingUp ? `CATCHING UP · ${fmt(catchupRemaining)} s left` : recovering || (yard >= 0.9 ? '! YARD FULL — launch cargo or expand the yard' : buf >= 0.9 ? '! SHAFT BUFFER FULL — upgrade the lift' : '');
+  const msg = catchingUp ? `CATCHING UP · ${fmt(catchupRemaining)} s left` : recovering || (yard >= 0.9 ? 'ORE YARD · near capacity' : buf >= 0.9 ? 'ORE WAITING BELOW · crews at work' : '');
   banner.hidden = !msg;
   banner.classList.toggle('bad', !catchingUp && !recovering && !!msg);
   banner.textContent = msg;
+  renderGuide();
   const last = state.log.slice(-2).reverse();
   $('#ticker').innerHTML = last.length ? last.map((e) => `<div>${formatClock(e.atSecond)} · ${safeText(e.message)}</div>`).join('') : '<div>The mine is quiet. Dig deeper, keep the lift moving, sell the ore.</div>';
 }
@@ -388,11 +425,11 @@ function shipStatus() {
 /** units (and their value) that "Launch now" would send this second */
 function launchPreview() {
   const aboard = state.ship.cargoUnits;
-  const id = state.ship.cargoOreId ?? state.production.surface.unitsByOre.filter((r) => r.units > 0).map((r) => r.oreId)[0] ?? null;
+  const id = state.ship.cargoOreId ?? state.production.surface.unitsByOre.filter((r) => isNewEconomy() ? Math.floor(r.units + 1e-9) >= 1 : r.units > 0).sort((a, b) => expectedUnitValue(state, b.oreId) - expectedUnitValue(state, a.oreId) || (a.oreId < b.oreId ? -1 : a.oreId > b.oreId ? 1 : 0))[0]?.oreId ?? null;
   const yardUnits = id ? (state.production.surface.unitsByOre.find((r) => r.oreId === id)?.units ?? 0) : 0;
-  const units = Math.min(state.ship.capacityUnits, aboard + yardUnits);
-  const d = DESTINATIONS.find((x) => x.id === state.selectedDestinationId);
-  return { units, id, pay: id ? Math.floor(units * d.basePrice * oreById(id).value + 0.5) : 0 };
+  const loadable = isNewEconomy() ? Math.floor(yardUnits + 1e-9) : yardUnits;
+  const units = aboard + Math.min(loadable, Math.max(0, state.ship.capacityUnits - aboard));
+  return { units, id, pay: id ? Math.floor(units * expectedUnitValue(state, id) + 0.5) : 0 };
 }
 
 function tabSell() {
@@ -400,11 +437,15 @@ function tabSell() {
   const ready = state.ship.readyAtSecond <= state.simSeconds;
   const can = ready && preview.units >= 0.5 && !catchingUp;
   const holdPct = Math.round(Math.min(1, state.ship.cargoUnits / state.ship.capacityUnits) * 100);
-  const rows = DESTINATIONS.map((d) => {
+  const rows = destinationsFor(state).map((d) => {
     const sel = d.id === state.selectedDestinationId;
-    const price = Math.floor(d.basePrice * oreById('ferrite').value + 0.5);
-    const trip = Math.ceil(2 * d.distance / state.ship.speedPerMinute * 60);
-    return `<div class="row ${sel ? 'sel' : ''}"><div><div class="t"><span class="pick"></span>${safeText(d.name)} <span class="own"${tip(GLOSSARY.bid)}>${fmt(price)} ◉ / unit</span></div><div class="d"><span${tip(GLOSSARY.au)}>${d.distance} AU away</span> · about ${formatClock(trip)} round trip</div><div class="e"${tip(GLOSSARY.endless)}>Buys every unit · never runs out</div></div><button class="buy ${sel ? 'ok' : 'ghost'} sm" data-destination="${d.id}" type="button">${sel ? 'Selected' : 'Sell here'}</button></div>`;
+    const oreId = preview.id || state.site.commonOreId;
+    const price = expectedUnitValue({ ...state, selectedDestinationId: d.id }, oreId);
+    const units = preview.units || state.ship.capacityUnits;
+    const unload = isNewEconomy() ? d.unloadSeconds : units / d.unloadUnitsPerMinute * 60;
+    const load = isNewEconomy() ? 0 : Math.ceil(Math.max(0, units - state.ship.cargoUnits) / state.ship.loadingUnitsPerMinute * 60);
+    const trip = Math.ceil(2 * d.distance / state.ship.speedPerMinute * 60 + unload) + load;
+    return `<div class="row ${sel ? 'sel' : ''}"><div><div class="t"><span class="pick"></span>${safeText(d.name)} <span class="own"${tip(GLOSSARY.bid)}>${fmt(price)} ◉ / ${safeText(oreById(oreId).name)} unit</span></div><div class="d"><span${tip(GLOSSARY.au)}>${d.distance} AU away</span> · ${formatClock(trip)} until ready again${preview.units ? ' at this load' : ' at full hold'}</div><div class="e"${tip(GLOSSARY.endless)}>Buys every unit · never runs out</div></div><button class="buy ${sel ? 'ok' : 'ghost'} sm" data-destination="${d.id}" type="button">${sel ? 'Selected' : 'Sell here'}</button></div>`;
   }).join('');
   return `<h2>Where to sell</h2><p class="lede">Ore is counted in <b${tip(GLOSSARY.unit)}>units</b> (one unit = one crate). Buyers pay <b>coin per unit</b> the moment the hauler takes off.</p>
     <h3>Hauler</h3>
@@ -415,6 +456,10 @@ function tabSell() {
 }
 
 function tabUpgrades() {
+  if (isNewEconomy()) return `<h2>Reinvest</h2><p class="lede">Three machines. One growing mine. Every level applies across all shafts.</p>
+    <div class="rows compact-upgrades">${upgradeCard('pick', 1, { bulk: true })}${upgradeCard('lift', 1, { bulk: true })}${upgradeCard('hauler', 1, { bulk: true })}</div>
+    <h3>Expand the mine</h3><div class="row"><div><div class="t">Open shaft ${String(state.production.shafts.length + 1).padStart(2, '0')}</div><div class="d">${state.production.shafts.length} / 30 open · includes 10 miners</div></div>${buyBtn('data-act="shaft"', '＋ Shaft', shaftCost())}</div>
+    <div class="note">Single-player sandbox · local save. These three upgrade lines use a simplified economy, separate from the online game.</div>`;
   const hirePrice = hireCost(state.workersHired);
   const hireDisabled = state.workersHired >= crewCap() || state.coins < hirePrice;
   return `<h2>Reinvest</h2><p class="lede">Dig deeper. Keep the lift moving. Every upgrade is a local test curve, and each one changes how the mine looks.</p>
@@ -449,9 +494,9 @@ function tabShafts() {
       <div class="d">${shaft.workersAssigned} / ${10 + shaft.bunkhouseLevel * 5} crew · buffer ${fmtUnits(shaft.bufferUnits)} / ${fmtUnits(shaft.bufferCapacityUnits)}</div>
       <div class="meter ${pct >= 90 ? 'warn' : ''}"><i style="width:${pct}%"></i></div>
       ${veinRows(n)}
-      <div class="rows">${upgradeCard('dig', n)}${upgradeCard('bunkhouse', n)}${upgradeCard('cart', n)}</div></div>`;
+      <div class="rows">${!isNewEconomy() ? upgradeCard('dig', n) + upgradeCard('bunkhouse', n) + upgradeCard('cart', n) : '<div class="d">10 miners · uses your global Pick and Lift levels</div>'}</div></div>`;
   }).join('');
-  return `<h2>Your shafts</h2><p class="lede">Each shaft digs its own ore. Watch the buffers: a full one stalls the shaft.</p><div class="rows">${cards}</div>`;
+  return `<h2>Your shafts</h2><p class="lede">Each shaft digs its own ore. Follow your crews as the tunnels grow.</p><div class="rows">${cards}</div>`;
 }
 
 function tabPlanetRemote() {
@@ -493,12 +538,18 @@ function tabRecords() {
   const ledger = state.ledger.slice().reverse().slice(0, 10).map((e) => `<div class="row"><div><div class="t">${safeText(e.description)}</div><div class="d">${formatClock(e.atSecond)} · ${safeText(e.type.replaceAll('_', ' '))}</div></div><div class="e" style="color:${e.ownerDelta > 0 ? 'var(--ok)' : 'var(--bad)'}">${e.ownerDelta > 0 ? '+' : '−'}${fmt(e.amount)} ◉</div></div>`).join('') || '<p class="lede">No records yet.</p>';
   const cargo = state.shipments.slice().reverse().slice(0, 8).map((s) => `<div class="row"><div><div class="t">${fmtUnits(s.units)} ${safeText(oreById(s.oreId).name)} → ${safeText(destinationById(s.destinationId).name)}</div><div class="d">${state.shipmentStatusById[s.id] === 'DELIVERED' ? 'Delivered' : `ETA ${formatClock(Math.max(0, s.arrivalAtSecond - state.simSeconds))}`} · paid at departure</div></div><div class="e">${fmt(s.payment)} ◉</div></div>`).join('') || '<p class="lede">The launch pad is waiting for its first cargo.</p>';
   const events = state.log.slice().reverse().slice(0, 10).map((e) => `<div>${formatClock(e.atSecond)} · ${safeText(e.message)}</div>`).join('') || '<p class="lede">No events yet.</p>';
-  return `<h2>Paper trail</h2><h3>Ledger · ${state.ledger.length} entries</h3><div class="rows">${ledger}</div><h3>Cargo</h3><div class="rows">${cargo}</div><h3>Events</h3><div class="feed">${events}</div>`;
+  const archive = isNewEconomy() ? state.historyArchive : null;
+  const archivedLedger = archive?.ledger;
+  const archivedCargo = archive?.shipments;
+  const olderLedger = archivedLedger?.count ? `<div class="note"><b>Older ledger · ${fmt(archivedLedger.count)} entries summarized</b><br>Buyer payments: ${fmt(archivedLedger.amountsByType.NPC_RAW_PURCHASE || 0)} ◉<br>Developer grants: ${fmt(archivedLedger.amountsByType.DEV_TEST_GRANT || 0)} ◉<br>Upgrade and shaft spending: ${fmt(archivedLedger.amountsByType.SYSTEM_PURCHASE || 0)} ◉<br>Net coin change: ${archivedLedger.ownerDelta >= 0 ? '+' : '−'}${fmt(Math.abs(archivedLedger.ownerDelta))} ◉</div>` : '';
+  const olderCargo = archivedCargo?.count ? `<div class="note"><b>Older delivered cargo · ${fmt(archivedCargo.count)} shipments summarized</b><br>${fmt(archivedCargo.payment)} ◉ paid at departure<br>${archivedCargo.unitsByOre.map((r) => `${fmtUnits(r.units)} ${safeText(oreById(r.oreId).name)} units`).join(' · ')}</div>` : '';
+  const recent = isNewEconomy();
+  return `<h2>Paper trail</h2>${recent ? '<p class="lede">Recent entries are listed below. Older completed records are kept as totals; cargo in transit stays in the detailed history.</p>' : ''}<h3>Ledger · ${state.ledger.length} ${recent ? 'recent' : ''} entries</h3>${olderLedger}<div class="rows">${ledger}</div><h3>${recent ? 'Recent cargo' : 'Cargo'}</h3>${olderCargo}<div class="rows">${cargo}</div><h3>Events</h3><div class="feed">${events}</div>`;
 }
 
 function tabAccount() {
   return `<h2>Account</h2><p class="lede">Signed in as <b>${safeText(state.online.email || 'guest')}</b>. Your mine runs on the server, so it keeps working while you are away.</p>
-    <div class="devbox"><b>Sound</b><p class="d">Little chimes when you buy upgrades.</p><div class="btnrow"><button class="buy ghost sm" data-act="sound" type="button">${soundOn ? 'Sound: on' : 'Sound: off'}</button></div></div>
+    <div class="devbox"><b>Motion</b><div class="btnrow"><button class="buy ghost sm" data-act="motion" type="button">${reducedMotion ? 'Reduced motion: on' : 'Reduced motion: off'}</button></div></div><div class="devbox"><b>Sound</b><p class="d">Little chimes when you buy upgrades.</p><div class="btnrow"><button class="buy ghost sm" data-act="sound" type="button">${soundOn ? 'Sound: on' : 'Sound: off'}</button></div></div>
     <div class="devbox"><b>Refresh from the server</b><p class="d">The game checks in every few seconds on its own.</p><div class="btnrow"><button class="buy ghost sm" data-act="resync" type="button">Refresh now</button></div></div>
     <div class="devbox"><b>Sign out</b><div class="btnrow"><button class="buy ghost sm" data-act="signout" type="button">Sign out</button></div></div>
     <div class="note">Online play counts toward this month's competition. Coin, ore and ships are decided by the server; this page only shows them.</div>`;
@@ -514,8 +565,9 @@ function tabTools() {
       <label class="f">Engine<select id="aiProvider"><option value="off"${ai.provider === 'off' ? ' selected' : ''}>Off</option><option value="anthropic"${ai.provider === 'anthropic' ? ' selected' : ''}>My Claude API key</option><option value="openai"${ai.provider === 'openai' ? ' selected' : ''}>My OpenAI API key</option></select></label>
       <label class="f">API key<input type="password" id="aiKey" autocomplete="off" value="${safeText(ai.key || '')}" placeholder="paste key"></label>
       <div class="btnrow"><button class="buy sm" data-act="ai-save" type="button">Save</button><button class="buy ghost sm" data-act="ai-test" type="button">Test connection</button></div></div>
-    <div class="devbox"><b>Sound</b><p class="d">Little chimes when you buy upgrades.</p><div class="btnrow"><button class="buy ghost sm" data-act="sound" type="button">${soundOn ? 'Sound: on' : 'Sound: off'}</button></div></div>
-    <div class="devbox"><b>Reset sandbox</b><p class="d">Starts a new local save. The legacy prototype is untouched.</p>${resetPromptOpen ? '<div class="btnrow"><button class="buy danger sm" data-act="confirm-reset" type="button">Reset mine</button><button class="buy ghost sm" data-act="cancel-reset" type="button">Keep playing</button></div>' : '<div class="btnrow"><button class="buy ghost sm" data-act="reset" type="button">Reset local save…</button></div>'}</div>
+    <div class="devbox"><b>Motion</b><div class="btnrow"><button class="buy ghost sm" data-act="motion" type="button">${reducedMotion ? 'Reduced motion: on' : 'Reduced motion: off'}</button></div></div><div class="devbox"><b>Sound</b><p class="d">Little chimes when you buy upgrades.</p><div class="btnrow"><button class="buy ghost sm" data-act="sound" type="button">${soundOn ? 'Sound: on' : 'Sound: off'}</button></div></div>
+    ${!isNewEconomy() ? `<div class="devbox"><b>Try the new economy</b><p class="d">Start with 10 miners and three global upgrades: Pick, Lift, Hauler. Your current save is backed up in this browser before starting fresh.</p><div class="btnrow">${newEconomyPrompt ? '<button class="buy sm" data-act="economy-new" type="button">Back up & start fresh</button><button class="buy ghost sm" data-act="economy-cancel" type="button">Keep this mine</button>' : '<button class="buy sm" data-act="economy-ask" type="button">Try new economy…</button>'}</div></div>` : ''}
+    <div class="devbox"><b>Recovery copy</b><p class="d">An unreadable save is kept exactly as found. Download its original text for recovery.</p><div class="btnrow"><button class="buy ghost sm" data-act="export-corrupt" type="button">Download recovery text</button></div></div><div class="devbox"><b>Save a copy</b><p class="d">Download this local mine, or download the backup made before trying the new economy.</p><div class="btnrow"><button class="buy ghost sm" data-act="export-save" type="button">Download save</button><button class="buy ghost sm" data-act="export-backup" type="button">Download backup</button></div></div><div class="devbox"><b>Reset sandbox</b><p class="d">Starts a new local save. The legacy prototype is untouched.</p>${resetPromptOpen ? '<div class="btnrow"><button class="buy danger sm" data-act="confirm-reset" type="button">Reset mine</button><button class="buy ghost sm" data-act="cancel-reset" type="button">Keep playing</button></div>' : '<div class="btnrow"><button class="buy ghost sm" data-act="reset" type="button">Reset local save…</button></div>'}</div>
     <div class="note">Rates, offers, costs and buyer budgets are local test fixtures, not certified balance.</div>`;
 }
 
@@ -546,9 +598,9 @@ function drawScene() {
   const dpr = window.devicePixelRatio || 1;
   const W = Math.max(300, canvas.clientWidth); const H = Math.max(200, canvas.clientHeight || 400);
   if (canvas.width !== Math.round(W * dpr) || canvas.height !== Math.round(H * dpr)) { canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr); }
-  const t = performance.now() / 1000;
+  const t = reducedMotion || paused ? 0 : performance.now() / 1000;
   if (view === 'map') renderMap(canvas, ctx, { planet, regionId, t, cam: camMap, selected: mapSel });
-  else renderScene(canvas, ctx, { state, planet, region: region(), t, frac: Math.min(1, (performance.now() - lastTickMs) / 1000), oreIndex, cam: camSide });
+  else renderScene(canvas, ctx, { state, planet, region: region(), t, frac: paused || reducedMotion ? 0 : Math.min(1, (performance.now() - lastTickMs) / 1000), oreIndex, cam: camSide });
   if (t - miniT > 0.5) { miniT = t; drawMini(); }
 }
 let miniT = 0;
@@ -634,6 +686,8 @@ document.addEventListener('click', (event) => {
   if (button.dataset.zoom) { const cm = view === 'map' ? camMap : camSide; if (button.dataset.zoom === 'fit') { cm.auto = true; cm.z = 1; } else { cm.auto = false; cm.z *= button.dataset.zoom === 'in' ? 1.4 : 1 / 1.4; } return; }
   if (button.id === 'mapBtn') { view = view === 'map' ? 'side' : 'map'; showMapCard(); return; }
   switch (button.dataset.act) {
+    case 'motion': reducedMotion = !reducedMotion; document.documentElement.classList.toggle('reduce-motion', reducedMotion); try { localStorage.setItem('extraction_motion', reducedMotion ? 'reduced' : 'full'); } catch {} render(); break;
+    case 'guide-dismiss': guideDismissed = true; try { localStorage.setItem('extraction_guide_done', 'yes'); } catch {} renderGuide(); break;
     case 'sound': soundOn = !soundOn; try { localStorage.setItem('extraction_sound', soundOn ? 'on' : 'off'); } catch { /* ignore */ } if (soundOn) blip([660, 880]); render(); break;
     case 'mapclose': mapSel = null; showMapCard(); break;
     case 'mapback': view = 'side'; mapSel = null; showMapCard(); break;
@@ -673,9 +727,38 @@ document.addEventListener('click', (event) => {
       apply((current) => grantDevCoins(current, amount), 'Local test grant recorded.');
       break;
     }
+    case 'export-corrupt': {
+      try {
+        const raw = corruptRaw ?? JSON.parse(localStorage.getItem(RECOVERY_KEY) || 'null')?.raw;
+        if (typeof raw !== 'string') { toast('No unreadable save is stored.'); break; }
+        const url = URL.createObjectURL(new Blob([raw], { type: 'text/plain' }));
+        const a = document.createElement('a'); a.href = url; a.download = 'extraction-unreadable-save.txt'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+      } catch { toast('The recovery text could not be downloaded.', 'error'); }
+      break;
+    }
+    case 'export-save':
+    case 'export-backup': {
+      try {
+        save(); const backup = button.dataset.act === 'export-backup';
+        const raw = localStorage.getItem(backup ? 'extraction_sandbox_backup' : SAVE_KEY);
+        if (!raw) { toast('No backup is saved yet.'); break; }
+        const data = backup ? JSON.stringify(JSON.parse(raw).save, null, 2) : raw;
+        const url = URL.createObjectURL(new Blob([data], { type: 'application/json' }));
+        const a = document.createElement('a'); a.href = url; a.download = backup ? 'extraction-mine-backup.json' : 'extraction-mine.json'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+      } catch { toast('The save could not be downloaded.', 'error'); }
+      break;
+    }
+    case 'economy-ask': newEconomyPrompt = true; render(); break;
+    case 'economy-cancel': newEconomyPrompt = false; render(); break;
+    case 'economy-new': {
+      try { save(); const old = localStorage.getItem(SAVE_KEY); if (!old) throw new Error('Save unavailable'); localStorage.setItem('extraction_sandbox_backup', JSON.stringify({ backedUpAtMs: Date.now(), save: JSON.parse(old) })); }
+      catch { toast('Backup could not be saved. Your current mine is still open.', 'error'); break; }
+      newEconomyPrompt = false; freshMine(); render(); toast('Original mine backed up. New economy ready.', 'success'); break;
+    }
     case 'reset': resetPromptOpen = true; render(); break;
     case 'cancel-reset': resetPromptOpen = false; render(); break;
     case 'confirm-reset':
+      saveBlocked = false;
       state = createGameState(siteOpts()); paused = false; catchupRemaining = 0; catchingUp = false; catchupKind = 'offline'; resetPromptOpen = false; recovering = '';
       save(); render(); toast('Fresh local mine opened.', 'success'); break;
     default:

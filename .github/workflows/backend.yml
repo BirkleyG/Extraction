@@ -43,6 +43,14 @@ jobs:
         run: npm ci
       - name: Test playable sandbox transactions
         run: npm --prefix play test
+      - name: Verify sandbox pacing evidence
+        run: |
+          node play/sim/pacing.mjs all > play/sim/pacing-evidence.txt
+          node play/sim/engine-pacing.mjs > play/sim/engine-pacing-evidence.json
+          git diff --exit-code -- play/sim/pacing-evidence.txt play/sim/engine-pacing-evidence.json
+      - name: Check playable modules
+        run: |
+          for source in play/*.js play/sim/*.mjs; do node --check "$source"; done
       - name: Test accounting and command invariants
         working-directory: backend
         run: npm test

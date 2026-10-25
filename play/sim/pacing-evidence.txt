@@ -1,0 +1,48 @@
+
+== active (always playing) ==
+when      earned     benchmark  income/s   shafts pick lift haul buys  buyer
+10 sec         183                   8.3      1    0    0    0    0  Frontier Refinery
+1 min          600                   8.3      2    0    0    0    1  Frontier Refinery
+5 min        3.34K                    17      2    1    0    2    4  Frontier Refinery
+15 min       15.5K                    25      3    3    2    3   10  Frontier Refinery
+1 hour      184.4K     100.0K        105      5    6    7    7   24  Frontier Refinery
+6 hours      11.6M      3.00M      1.32K      8   14   13   14   48  Frontier Refinery
+1 day       379.8M     100.0M      10.2K     10   20   19   20   68  Outer Station
+5 days       25.1B     506.3M     137.8K     13   27   26   27   92  Outer Station
+7 days       62.4B      1.14B     288.1K     14   28   28   29   98  Outer Station
+14 days     397.7B      19.5B     878.4K     15   32   31   32  109  Outer Station
+21 days      1.19T     332.5B      1.79M     16   33   33   34  115  Outer Station
+28 days      2.56T      5.68T      2.60M     17   35   34   35  120  Outer Station
+30 days      3.01T      12.8T      2.60M     17   35   34   35  120  Outer Station
+
+== casual (visits every 8 h) ==
+when      earned     benchmark  income/s   shafts pick lift haul buys  buyer
+10 sec         183                   8.3      1    0    0    0    0  Frontier Refinery
+1 min          600                   8.3      1    0    0    0    0  Frontier Refinery
+5 min        2.60K                   8.3      1    0    0    0    0  Frontier Refinery
+15 min       7.60K                   8.3      1    0    0    0    0  Frontier Refinery
+1 hour       30.1K     100.0K        8.3      1    0    0    0    0  Frontier Refinery
+6 hours     180.1K      3.00M        8.3      1    0    0    0    0  Frontier Refinery
+1 day        21.4M     100.0M        630      7   11   12   12   41  Frontier Refinery
+5 days       11.3B     506.3M      95.5K     12   25   24   26   86  Outer Station
+7 days       33.2B      1.14B     147.0K     14   27   27   27   94  Frontier Refinery
+14 days     250.7B      19.5B     605.0K     15   31   30   31  106  Outer Station
+21 days     742.6B     332.5B     878.4K     16   33   32   32  112  Outer Station
+28 days      1.59T      5.68T      1.79M     16   34   34   34  117  Outer Station
+30 days      1.90T      12.8T      1.79M     17   34   34   34  118  Outer Station
+
+== idle (visits every 24 h) ==
+when      earned     benchmark  income/s   shafts pick lift haul buys  buyer
+10 sec         183                   8.3      1    0    0    0    0  Frontier Refinery
+1 min          600                   8.3      1    0    0    0    0  Frontier Refinery
+5 min        2.60K                   8.3      1    0    0    0    0  Frontier Refinery
+15 min       7.60K                   8.3      1    0    0    0    0  Frontier Refinery
+1 hour       30.1K     100.0K        8.3      1    0    0    0    0  Frontier Refinery
+6 hours     180.1K      3.00M        8.3      1    0    0    0    0  Frontier Refinery
+1 day       720.1K     100.0M        8.3      1    0    0    0    0  Frontier Refinery
+5 days       2.24B     506.3M      16.7K     11   21   21   21   73  Frontier Refinery
+7 days       10.5B      1.14B      64.3K     12   24   23   25   83  Outer Station
+14 days     162.6B      19.5B     417.3K     14   30   29   30  102  Outer Station
+21 days     641.2B     332.5B      1.28M     15   32   31   33  110  Outer Station
+28 days      1.59T      5.68T      1.79M     16   34   33   34  116  Outer Station
+30 days      1.90T      12.8T      1.79M     16   34   34   34  117  Outer Station

@@ -2,11 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createProductionState } from '../../backend/src/production.js';
 import {
-  advanceGame, createGameState, dispatchNow, selectDestination, setAutoLaunch, stepGame,
+  advanceGame, createGameState as createDefaultGameState, dispatchNow, selectDestination, setAutoLaunch, stepGame,
   validateGameState, purchaseUpgrade, buyNextShaft, currentLiftRate, grantDevCoins,
   makeSite, generateVeins, veinStatus, faceDistance, toolHardness, COMMON_ORES, RARE_ORES,
 } from '../model.js';
 
+const createGameState = (options) => createDefaultGameState(options, { legacy: true });
 const code = (name) => (error) => error?.code === name;
 
 function yardState({ units = 200, ore = 'ferrite', auto = true } = {}) {

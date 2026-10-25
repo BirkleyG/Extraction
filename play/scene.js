@@ -249,7 +249,7 @@ export function addFx(wx, wy, text, col) {
   POPS.push({ wx, wy, text, col: col || '#ffd23f', born, bits: Array.from({ length: 14 }, () => ({ a: R0() * 6.283, v: 20 + R0() * 40, c: R0() < 0.5 ? col || '#ffd23f' : '#ffffff' })) });
 }
 export const veinSpot = (shaftNumber, vein) => [SX + 15 + vein.at, lvY(shaftNumber - 1) - TH * 0.6];
-export const FX_SPOTS = { lift: [SX, -70], dig: [SX + 150, LV0 - 14], yard: [YARD_X0 + 100, -30], shipSpeed: [PAD_X, -50], shipCapacity: [PAD_X, -50], loading: [PAD_X - 40, -60], habitat: [HAB_X, -44], bunkhouse: [SX + 40, LV0 - 20], cart: [SX + 60, LV0 - 20], shaft: [SX, 20] };
+export const FX_SPOTS = { pick: [SX + 150, LV0 - 14], hauler: [PAD_X, -50], lift: [SX, -70], dig: [SX + 150, LV0 - 14], yard: [YARD_X0 + 100, -30], shipSpeed: [PAD_X, -50], shipCapacity: [PAD_X, -50], loading: [PAD_X - 40, -60], habitat: [HAB_X, -44], bunkhouse: [SX + 40, LV0 - 20], cart: [SX + 60, LV0 - 20], shaft: [SX, 20] };
 
 export function clampCam(cam, state) {
   cam.z = clamp(cam.z, 0.4, 8);
@@ -316,7 +316,7 @@ export function renderScene(canvas, ctx, data) {
   g.globalAlpha = 1; g.drawImage(bg, 0, 0);
   for (const st of bgCache.stars) { const on = Math.sin(t * 2 + st.x) > 0.5; if (on) pB(st.x, st.y, 2, 2, planet.stars); }
   if (hy > 0) drawWeather(region.fx, hy, t);
-  const simNow = state.simSeconds + (frac || 0);
+  const simNow = t === 0 ? 0 : state.simSeconds + (frac || 0);
   { const sp = SPEC[region.terrain]; if (sp && sp.over) drawOverlay(sp.over, { t, sd, planet, spec: sp, wx0: -PXC.ox / s, wx1: (bw - PXC.ox) / s, g }); }
   for (const c of bgCache.craters) { const glow = 0.5 + 0.5 * Math.sin(t * 3 + c.x); g.globalAlpha = 0.25 * glow; pD(bx(c.x), by(c.y), 7 * s + 3, '#ff6a2a', g, true); g.globalAlpha = 1; pR(c.x - 5, c.y - 1, 10, 2, glow > 0.5 ? '#ffb347' : '#ff6a2a'); for (let q = 0; q < 5; q += 1) { const ph = (t * 0.25 + q / 5) % 1; g.globalAlpha = (1 - ph) * 0.45; pD(bx(c.x + Math.sin(ph * 5 + q) * 6), by(c.y - ph * 90), (3 + ph * 9) * s + 1, '#6a5a60', g, true); } g.globalAlpha = 1; }
   if (region.terrain === 'volcanic') for (let i = 0; i < 12; i += 1) { const x = 30 + i * 80 + (sd % 20); if (Math.sin(t * 2 + i * 1.7) > 0.2) pR(x, -1, 9, 1, '#ffb347'); }
@@ -344,10 +344,10 @@ export function renderScene(canvas, ctx, data) {
   // tunnels, dug out as the crew mines; deposits in the rock ahead; veins to reach
   let shownCount = 0;
   const commonOre = oreAt(state.site.commonOreId);
-  const toolCap = (sf) => toolHardness(sf.digLevel);
+  const toolCap = (sf) => toolHardness(sf.digLevel, state.economyProfile === 'sandbox-rebuild-v1');
   for (let i = 0; i < shafts.length; i += 1) {
     const y = lvY(i); if (y - TH > vy1 || y < vy0) continue; shownCount += 1;
-    const sf = shafts[i]; const n = sf.shaftNumber; const digTier = tierOf('dig', sf.digLevel).i;
+    const sf = shafts[i]; const n = sf.shaftNumber; const digTier = tierOf(state.economyProfile === 'sandbox-rebuild-v1' ? 'pick' : 'dig', sf.digLevel).i;
     const faceD = faceDistance(state.shaftMined[n] || 0);
     const lenR = shaftW + 26 + faceD; const lenL = shaftW + 18 + faceD * 0.4;
     const xl = SX - lenL; const xr = SX + lenR;
@@ -448,10 +448,10 @@ export function renderScene(canvas, ctx, data) {
   // launch pad, crane and hauler
   pR(PAD_X - 52, -4, 104, 4, '#2b2238'); pR(PAD_X - 52, -4, 104, 1, '#4b4258');
   const blink = Math.floor(t * 3) % 2; pR(PAD_X - 52, -6, 3, 2, blink ? '#ff5a6e' : '#5a1a2a'); pR(PAD_X + 49, -6, 3, 2, blink ? '#5ee6a8' : '#1a4a2a');
-  const craneT = tierOf('loading', state.upgrades.loading).i; const craneCol = ['#c8a020', '#9aa7b8', '#ff8a3d', '#7ad1ff'][craneT];
+  const craneT = Math.min(3, tierOf(state.economyProfile === 'sandbox-rebuild-v1' ? 'hauler' : 'loading', state.upgrades.loading).i); const craneCol = ['#c8a020', '#9aa7b8', '#ff8a3d', '#7ad1ff'][craneT];
   pR(PAD_X - 40, -58, 4, 58, craneCol); for (let q = 0; q < 58; q += 6) pR(PAD_X - 40, -q - 3, 4, 1, sh(craneCol, -0.3));
   const sw = Math.sin(t * 0.8) * 0.5; const ex = PAD_X - 38 + Math.cos(sw) * 30; pL(PAD_X - 38, -58, ex, -58 + Math.sin(sw) * 4, craneCol, Math.max(1, s * 2));
-  const model = Math.min(4, tierOf('shipSpeed', state.upgrades.shipSpeed).i + tierOf('shipCapacity', state.upgrades.shipCapacity).i);
+  const model = state.economyProfile === 'sandbox-rebuild-v1' ? Math.min(4, tierOf('hauler', state.upgrades.hauler).i) : Math.min(4, tierOf('shipSpeed', state.upgrades.shipSpeed).i + tierOf('shipCapacity', state.upgrades.shipCapacity).i);
   const last = state.shipments[state.shipments.length - 1]; const away = state.ship.readyAtSecond > state.simSeconds && last;
   let shipX = PAD_X; let shipY = -4; let flame = false; let visible = true;
   if (away) {
