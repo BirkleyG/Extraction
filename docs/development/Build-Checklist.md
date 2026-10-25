@@ -43,7 +43,7 @@ Scope per section 22: mine, miners, raw-ore shipping to NPC refineries, independ
 - [x] ✅ Event kernel: ordering, dedupe, seeded RNG per site/second, horizon (T17-01/02 foundation)
 - [x] ✅ Pure production model: shafts, lift (C01-LIFT-02), finite buffers, 1s catch-up (T03 partial)
 - [x] 🟡 **Durable event queue** (`backend/src/event-queue.js`) — one record per event, ordered page claims, fenced leases, CAS checkpoints, atomic state docs with commit. Memory store tested (9 tests); Firestore store + emulator test written but not yet run. Still to do: wire the kernel handlers and scheduler onto it (next item)
-- [ ] ⬜ **Zero-client scheduler/worker** — advances all businesses with nobody online (T18-08)
+- [x] 🟡 **Zero-client scheduler/worker** (`backend/src/event-worker.js`, hooked into `WorldAdmin.tick`) — claims fenced pages, applies pure handlers with the seeded per-site/second RNG to one small state doc per site, commits state + checkpoint atomically; live == catch-up proven across page sizes. Owner settlement already advanced with nobody online; **no real game event type is migrated onto the queue yet** (handler registry is empty), and the Firestore path has no emulator run
 - [ ] ⬜ Server-side world record: month ID, seed, state machine (`open → closing → closed`)
 - [ ] ⬜ Player enrollment + admin/host endpoints (server-verified roles, never `#admin`)
 - [ ] ⬜ Private read-model projections with explicit field allowlists (T18-09, T20-02)

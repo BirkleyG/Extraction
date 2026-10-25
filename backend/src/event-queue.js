@@ -147,6 +147,8 @@ export class MemoryEventQueue {
       const plan = planClaim(q.checkpoint, claim);
       if (!plan.granted) return plan;
       const page = [...q.events.keys()].sort().filter((k) => (q.checkpoint.cursorKey === null || k > q.checkpoint.cursorKey)).filter((k) => q.events.get(k).event.atMs < claim.beforeMs).slice(0, claim.limit);
+      // Nothing due: no lease is written, so idle ticks cost reads only.
+      if (!page.length) return { granted: true, token: null, version: q.checkpoint.version, cursorKey: q.checkpoint.cursorKey, events: [] };
       q.checkpoint = plan.next;
       return { granted: true, token: plan.fence, version: q.checkpoint.version, cursorKey: q.checkpoint.cursorKey, events: page.map((k) => ({ sortKey: k, event: q.events.get(k).event })) };
     });
@@ -181,6 +183,8 @@ export class MemoryEventQueue {
   }
 
   readDoc(scope, path) { return this.#serial(() => (this.#docs.has(`${scope.worldId}\u0000${path}`) ? JSON.parse(this.#docs.get(`${scope.worldId}\u0000${path}`)) : null)); }
+
+  async readDocs(scope, paths) { return Promise.all(paths.map((p) => this.readDoc(scope, p))); }
 }
 
 /**
@@ -233,6 +237,7 @@ export class FirestoreEventQueue {
       const snap = await tx.get(query.limit(claim.limit));
       const page = snap.docs.map((d) => d.data()).filter((r) => r.event.atMs < claim.beforeMs);
       // Order is atMs-first, so the due events are always a prefix of the page.
+      if (!page.length) return { granted: true, token: null, version: cp.version, cursorKey: cp.cursorKey, events: [] };
       tx.set(queue, plan.next);
       return { granted: true, token: plan.fence, version: plan.next.version, cursorKey: cp.cursorKey, events: page.map((r) => ({ sortKey: r.sortKey, event: r.event })) };
     }, { maxAttempts: this.attempts });
@@ -251,6 +256,12 @@ export class FirestoreEventQueue {
       for (const d of commit.docs ?? []) tx.set(world.collection('docs').doc(digest(d.path)), { path: d.path, json: JSON.stringify(d.value) });
       return { version: next.version, cursorKey: next.cursorKey };
     }, { maxAttempts: this.attempts });
+  }
+
+  async readDocs(scope, paths) {
+    const { world } = this.#refs(scope);
+    const snaps = await this.firestore.getAll(...paths.map((p) => world.collection('docs').doc(digest(p))));
+    return snaps.map((s) => (s.exists ? JSON.parse(s.data().json) : null));
   }
 
   async release(scope, { workerId, token }) {

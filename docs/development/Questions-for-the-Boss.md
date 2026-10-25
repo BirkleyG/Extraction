@@ -55,3 +55,7 @@ Sources checked: [Functions getting started](https://firebase.google.com/docs/fu
 ## Industry and browser-runtime direction · 26 October 2026
 
 The CEO asks for refineries, stations, global economies, all Release A features, responsive browser execution, approximately 30-second state polling, playtesting and connected dynamic AI. Engineering is implementing this in reviewable slices without blocking on questions. Local industry/home-safety previews and browser simulation are permitted; shared coin/trades remain server-validated. Existing paid-service ceilings remain in effect; BYOK AI uses explicit requests and no-key fallbacks. Full Release A/B acceptance is not inferred from adding preview tabs.
+
+## Durable event queue · 26 October 2026
+
+**Q-A1-1 (recommendation, not a rule):** if one event's handler keeps failing, the worker blocks that month's queue and reports `blocked` on every tick (fail-closed) rather than skipping it, because skipping would make replay diverge from live play. Proposed operator action: fix and redeploy the handler; the identical page then retries. Alternative: quarantine the offending event after N failures with an admin-visible record. Needs your call before launch.

@@ -135,3 +135,25 @@ test('tick prepares the new month before settlement and keeps rollover results',
   assert.deepEqual(result.closed, []);
   assert.equal(result.done, true);
 });
+
+test('tick drains the durable event queue with no clients, reports it, and a stuck queue never blocks owner settlement', async () => {
+  const { MemoryEventQueue } = await import('../src/event-queue.js');
+  const { EventWorker } = await import('../src/event-worker.js');
+  const { admin } = await setup();
+  const queue = new MemoryEventQueue();
+  const scope = { worldId, monthId };
+  const ev = (id, type) => ({ id, monthId, atMs: start + 1000, priority: 0, type, siteId: 'site', payload: {} });
+  admin.eventWorker = new EventWorker({ queue, handlers: { note: (d) => ({ n: (d.n ?? 0) + 1 }) }, seedFor: () => 's' });
+  await queue.enqueue(scope, [ev('a', 'note')]);
+  const nowMs = start + 86_400_000;
+  let result;
+  for (let i = 0; i < 20 && !result?.done; i += 1) result = await admin.tick({ worldId, nowMs });
+  assert.equal(result.done, true);
+  assert.equal(result.events.done, true);
+  assert.equal((await queue.stats(scope)).pending, 0);
+  await queue.enqueue(scope, [{ ...ev('b', 'mystery'), atMs: start + 2000 }]);
+  const stuck = await admin.tick({ worldId, nowMs });
+  assert.equal(stuck.events.status, 'blocked');
+  assert.equal(stuck.done, false);
+  assert(stuck.settlements.every((s) => s.done)); // owners still advanced
+});
