@@ -1,0 +1,572 @@
+{
+  "reportSchemaVersion": 1,
+  "studyStatus": "EXPERIMENTAL_C01_FIXTURE_CALIBRATION",
+  "studySeed": "C01-production-fixture-2026-10-v1",
+  "units": {
+    "shaftAndLiftRates": "units per minute",
+    "tickDuration": "one second",
+    "inventory": "units"
+  },
+  "studyBases": {
+    "shaftOneBasePerWorkerPerMinute": 1,
+    "liftBaseUnitsPerMinute": 2,
+    "shaftDepthGrowth": 2.2,
+    "digRateFormula": "baseRate * depthGrowth^(shaftNumber-1) * (1 + 0.04*digLevel)",
+    "utilizationFormula": "0.25 + 0.075*cartLevel",
+    "shaftRateFormula": "workersAssigned * digRate * soil * weather * utilization * buffs",
+    "liftProfiles": [
+      "linear-reference: base * (1 + 0.04*liftLevel)",
+      "exponential: base * growth^liftLevel"
+    ],
+    "workerCapacityFixture": "10 + 5*bunkhouseLevel; max bunkhouse level 10",
+    "c01Status": "These study bases are experimental fixtures, not approved universal production defaults.",
+    "flowFixtureLiftGrowth": "1.0311 is retained in the small flow fixtures as the previous neutral-only candidate for comparison; it is not the recommended next calibration benchmark."
+  },
+  "fixtures": {
+    "fullyUpgradedBalanced": {
+      "shaftCount": 30,
+      "workersPerShaft": 60,
+      "digLevel": 1000,
+      "cartLevel": 10,
+      "bunkhouseLevel": 10,
+      "soil": 1,
+      "weather": 1,
+      "buffs": 1,
+      "liftBaseUnitsPerMinute": 2,
+      "liftLevel": 1000
+    },
+    "analyticalInputEnvelope": {
+      "soil": 1.25,
+      "weather": 1.25,
+      "buffs": 1,
+      "label": "selected study-generator envelope only; not world limits"
+    },
+    "earlyTenMinute": {
+      "shaftCount": 1,
+      "workers": 5,
+      "digLevel": 1,
+      "cartLevel": 0,
+      "bunkhouseLevel": 0,
+      "liftLevel": 1,
+      "surfaceCapacityUnits": 100,
+      "shaftBufferCapacityUnits": 10,
+      "drainRatesUnitsPerSecond": [
+        0,
+        0.01
+      ]
+    },
+    "lowLiftBuffering": {
+      "shaftCount": 1,
+      "workers": 60,
+      "digLevel": 1000,
+      "cartLevel": 10,
+      "bufferCapacityUnits": 10,
+      "liftBaseUnitsPerMinute": 2,
+      "liftCurve": "linear-reference",
+      "liftLevel": 0,
+      "seconds": 60
+    },
+    "fullYard": {
+      "surfaceCapacityUnits": 100,
+      "initialSurfaceUnits": 100,
+      "existingShaftBufferUnits": 2,
+      "workers": 0,
+      "liftLevel": 1000,
+      "seconds": 1
+    },
+    "highLiftMultiOre": {
+      "shaftCount": 30,
+      "oreIds": 7,
+      "workersPerShaft": 60,
+      "digLevel": 1000,
+      "cartLevel": 10,
+      "liftBaseUnitsPerMinute": 2,
+      "liftGrowth": 1.0311,
+      "liftLevel": 1000,
+      "seconds": 1
+    },
+    "tickOrder": [
+      "mine assigned workforce into per-shaft buffers in ascending shaft number",
+      "move buffered units through the shared lift in ascending shaft number",
+      "drain surface yard at the explicit synthetic downstream rate in code-unit ore order"
+    ]
+  },
+  "rateSweep": [
+    {
+      "level": 1,
+      "shaftOneDigFactor": 1.04,
+      "linearLiftUnitsPerMinute": 2.08,
+      "exponentialLiftUnitsPerMinute": {
+        "1.03": 2.06,
+        "1.0311": 2.0622,
+        "1.0316": 2.0632,
+        "1.032": 2.064
+      }
+    },
+    {
+      "level": 10,
+      "shaftOneDigFactor": 1.4,
+      "linearLiftUnitsPerMinute": 2.8,
+      "exponentialLiftUnitsPerMinute": {
+        "1.03": 2.6878327586882444,
+        "1.0311": 2.7166761136004465,
+        "1.0316": 2.7298785767055156,
+        "1.032": 2.740482092671294
+      }
+    },
+    {
+      "level": 100,
+      "shaftOneDigFactor": 5,
+      "linearLiftUnitsPerMinute": 10,
+      "exponentialLiftUnitsPerMinute": {
+        "1.03": 38.437263961712596,
+        "1.0311": 42.766989632452734,
+        "1.0316": 44.89141990533802,
+        "1.032": 46.66590845876594
+      }
+    },
+    {
+      "level": 250,
+      "shaftOneDigFactor": 11,
+      "linearLiftUnitsPerMinute": 22,
+      "exponentialLiftUnitsPerMinute": {
+        "1.03": 3238.442362736203,
+        "1.0311": 4228.893128293813,
+        "1.0316": 4773.790568852773,
+        "1.032": 5259.61939843956
+      }
+    },
+    {
+      "level": 500,
+      "shaftOneDigFactor": 21,
+      "linearLiftUnitsPerMinute": 42,
+      "exponentialLiftUnitsPerMinute": {
+        "1.03": 5243754.468382221,
+        "1.0311": 8941768.545265317,
+        "1.0316": 11394538.19763384,
+        "1.032": 13831798.108220864
+      }
+    },
+    {
+      "level": 800,
+      "shaftOneDigFactor": 33,
+      "linearLiftUnitsPerMinute": 66,
+      "exponentialLiftUnitsPerMinute": {
+        "1.03": 37222861793.34766,
+        "1.0311": 87429799246.02902,
+        "1.0316": 128853662813.97421,
+        "1.032": 175706500302.91077
+      }
+    },
+    {
+      "level": 1000,
+      "shaftOneDigFactor": 41,
+      "linearLiftUnitsPerMinute": 82,
+      "exponentialLiftUnitsPerMinute": {
+        "1.03": 13748480462339.254,
+        "1.0311": 39977612358548.11,
+        "1.0316": 64917750368668.33,
+        "1.032": 95659319453291.12
+      }
+    }
+  ],
+  "liftProfiles": [
+    {
+      "label": "Legacy linear reference",
+      "curve": "linear-reference",
+      "growth": null,
+      "maxLiftRate": 82,
+      "balancedMaxShaftRate": 38409113688752.94,
+      "liftToShaftRatio": 2.1349099764312307e-12,
+      "liftHeadroomPercent": -99.99999999978651,
+      "reachableLiftLevels": {
+        "checkedLevels": 1001,
+        "level1000Rate": 82,
+        "safeIntegerMagnitude": true
+      },
+      "scenarioComparisons": [
+        {
+          "scenario": "Neutral fixture",
+          "shaftOutput": 38409113688752.94,
+          "liftToShaftRatio": 2.1349099764312307e-12,
+          "passesLiftThroughput": false
+        },
+        {
+          "scenario": "Seeded soil/weather fixture A",
+          "shaftOutput": 56828196199055.35,
+          "liftToShaftRatio": 1.4429456763465436e-12,
+          "passesLiftThroughput": false
+        },
+        {
+          "scenario": "Seeded soil/weather fixture B",
+          "shaftOutput": 43845430875621.7,
+          "liftToShaftRatio": 1.8702062760567473e-12,
+          "passesLiftThroughput": false
+        },
+        {
+          "scenario": "Analytical input-envelope ceiling (study fixture only)",
+          "shaftOutput": 60014240138676.46,
+          "liftToShaftRatio": 1.366342384915988e-12,
+          "passesLiftThroughput": false
+        }
+      ]
+    },
+    {
+      "label": "Exponential growth 1.03",
+      "curve": "exponential",
+      "growth": 1.03,
+      "maxLiftRate": 13748480462339.254,
+      "balancedMaxShaftRate": 38409113688752.94,
+      "liftToShaftRatio": 0.35794839146119434,
+      "liftHeadroomPercent": -64.20516085388057,
+      "reachableLiftLevels": {
+        "checkedLevels": 1001,
+        "level1000Rate": 13748480462339.254,
+        "safeIntegerMagnitude": true
+      },
+      "scenarioComparisons": [
+        {
+          "scenario": "Neutral fixture",
+          "shaftOutput": 38409113688752.94,
+          "liftToShaftRatio": 0.35794839146119434,
+          "passesLiftThroughput": false
+        },
+        {
+          "scenario": "Seeded soil/weather fixture A",
+          "shaftOutput": 56828196199055.35,
+          "liftToShaftRatio": 0.24193061511545555,
+          "passesLiftThroughput": false
+        },
+        {
+          "scenario": "Seeded soil/weather fixture B",
+          "shaftOutput": 43845430875621.7,
+          "liftToShaftRatio": 0.3135670054501274,
+          "passesLiftThroughput": false
+        },
+        {
+          "scenario": "Analytical input-envelope ceiling (study fixture only)",
+          "shaftOutput": 60014240138676.46,
+          "liftToShaftRatio": 0.22908697053516439,
+          "passesLiftThroughput": false
+        }
+      ]
+    },
+    {
+      "label": "Exponential growth 1.0311",
+      "curve": "exponential",
+      "growth": 1.0311,
+      "maxLiftRate": 39977612358548.11,
+      "balancedMaxShaftRate": 38409113688752.94,
+      "liftToShaftRatio": 1.0408366275385954,
+      "liftHeadroomPercent": 4.0836627538595405,
+      "reachableLiftLevels": {
+        "checkedLevels": 1001,
+        "level1000Rate": 39977612358548.11,
+        "safeIntegerMagnitude": true
+      },
+      "scenarioComparisons": [
+        {
+          "scenario": "Neutral fixture",
+          "shaftOutput": 38409113688752.94,
+          "liftToShaftRatio": 1.0408366275385954,
+          "passesLiftThroughput": true
+        },
+        {
+          "scenario": "Seeded soil/weather fixture A",
+          "shaftOutput": 56828196199055.35,
+          "liftToShaftRatio": 0.7034819866271359,
+          "passesLiftThroughput": false
+        },
+        {
+          "scenario": "Seeded soil/weather fixture B",
+          "shaftOutput": 43845430875621.7,
+          "liftToShaftRatio": 0.9117851406673227,
+          "passesLiftThroughput": false
+        },
+        {
+          "scenario": "Analytical input-envelope ceiling (study fixture only)",
+          "shaftOutput": 60014240138676.46,
+          "liftToShaftRatio": 0.6661354416247012,
+          "passesLiftThroughput": false
+        }
+      ]
+    },
+    {
+      "label": "Exponential growth 1.0316",
+      "curve": "exponential",
+      "growth": 1.0316,
+      "maxLiftRate": 64917750368668.33,
+      "balancedMaxShaftRate": 38409113688752.94,
+      "liftToShaftRatio": 1.6901652793846613,
+      "liftHeadroomPercent": 69.01652793846613,
+      "reachableLiftLevels": {
+        "checkedLevels": 1001,
+        "level1000Rate": 64917750368668.33,
+        "safeIntegerMagnitude": true
+      },
+      "scenarioComparisons": [
+        {
+          "scenario": "Neutral fixture",
+          "shaftOutput": 38409113688752.94,
+          "liftToShaftRatio": 1.6901652793846613,
+          "passesLiftThroughput": true
+        },
+        {
+          "scenario": "Seeded soil/weather fixture A",
+          "shaftOutput": 56828196199055.35,
+          "liftToShaftRatio": 1.1423510635684657,
+          "passesLiftThroughput": true
+        },
+        {
+          "scenario": "Seeded soil/weather fixture B",
+          "shaftOutput": 43845430875621.7,
+          "liftToShaftRatio": 1.4806046849630334,
+          "passesLiftThroughput": true
+        },
+        {
+          "scenario": "Analytical input-envelope ceiling (study fixture only)",
+          "shaftOutput": 60014240138676.46,
+          "liftToShaftRatio": 1.0817057788061832,
+          "passesLiftThroughput": true
+        }
+      ]
+    },
+    {
+      "label": "Exponential growth 1.032",
+      "curve": "exponential",
+      "growth": 1.032,
+      "maxLiftRate": 95659319453291.12,
+      "balancedMaxShaftRate": 38409113688752.94,
+      "liftToShaftRatio": 2.490537017554309,
+      "liftHeadroomPercent": 149.0537017554309,
+      "reachableLiftLevels": {
+        "checkedLevels": 1001,
+        "level1000Rate": 95659319453291.12,
+        "safeIntegerMagnitude": true
+      },
+      "scenarioComparisons": [
+        {
+          "scenario": "Neutral fixture",
+          "shaftOutput": 38409113688752.94,
+          "liftToShaftRatio": 2.490537017554309,
+          "passesLiftThroughput": true
+        },
+        {
+          "scenario": "Seeded soil/weather fixture A",
+          "shaftOutput": 56828196199055.35,
+          "liftToShaftRatio": 1.683307334236332,
+          "passesLiftThroughput": true
+        },
+        {
+          "scenario": "Seeded soil/weather fixture B",
+          "shaftOutput": 43845430875621.7,
+          "liftToShaftRatio": 2.1817397512788093,
+          "passesLiftThroughput": true
+        },
+        {
+          "scenario": "Analytical input-envelope ceiling (study fixture only)",
+          "shaftOutput": 60014240138676.46,
+          "liftToShaftRatio": 1.5939436912347578,
+          "passesLiftThroughput": true
+        }
+      ]
+    }
+  ],
+  "analyticalEnvelope": {
+    "label": "Analytical input-envelope ceiling (study fixture only)",
+    "seed": null,
+    "soilModifier": 1.25,
+    "weatherModifier": 1.25,
+    "buffsMultiplier": 1,
+    "balancedMaxShaftUnitsPerMinute": 60014240138676.46
+  },
+  "depthSensitivity": [
+    {
+      "label": "Rulebook shaft-depth factor",
+      "depthGrowth": 2.2,
+      "balancedMaxShaftRate": 38409113688752.94
+    },
+    {
+      "label": "Sensitivity only: gentler shaft-depth factor",
+      "depthGrowth": 2,
+      "balancedMaxShaftRate": 2641404884580
+    }
+  ],
+  "scenarioRates": [
+    {
+      "label": "Neutral fixture",
+      "seed": "C01-production-fixture-2026-10-v1",
+      "soilModifier": 1,
+      "weatherModifier": 1,
+      "buffsMultiplier": 1,
+      "firstShaftUnitsPerMinute": 1.3,
+      "balancedMaxUnitsPerMinute": 38409113688752.94,
+      "flowFixture": {
+        "seconds": 600,
+        "syntheticDrainUnitsPerSecond": 0.01,
+        "initialUnits": 0,
+        "minedUnits": 12.99999999999992,
+        "bufferUnits": 0,
+        "surfaceUnits": 7.000000000000027,
+        "drainedUnits": 5.9999999999999165,
+        "accountedUnits": 12.99999999999992,
+        "conservedUnits": 12.999999999999943,
+        "massBalanceResidualUnits": 2.3092638912203256e-14
+      }
+    },
+    {
+      "label": "Seeded soil/weather fixture A",
+      "seed": "C01-production-fixture-2026-10-v1-A",
+      "soilModifier": 1.2270553729031235,
+      "weatherModifier": 1.2057726370403543,
+      "buffsMultiplier": 1,
+      "firstShaftUnitsPerMinute": 1.923414730613915,
+      "balancedMaxUnitsPerMinute": 56828196199055.35,
+      "flowFixture": {
+        "seconds": 600,
+        "syntheticDrainUnitsPerSecond": 0.01,
+        "initialUnits": 0,
+        "minedUnits": 19.234147306139036,
+        "bufferUnits": 0,
+        "surfaceUnits": 13.234147306139164,
+        "drainedUnits": 5.9999999999999165,
+        "accountedUnits": 19.234147306139036,
+        "conservedUnits": 19.23414730613908,
+        "massBalanceResidualUnits": 4.263256414560601e-14
+      }
+    },
+    {
+      "label": "Seeded soil/weather fixture B",
+      "seed": "C01-production-fixture-2026-10-v1-B",
+      "soilModifier": 1.1932263019261882,
+      "weatherModifier": 0.9566811982076615,
+      "buffsMultiplier": 1,
+      "firstShaftUnitsPerMinute": 1.4839983187375354,
+      "balancedMaxUnitsPerMinute": 43845430875621.7,
+      "flowFixture": {
+        "seconds": 600,
+        "syntheticDrainUnitsPerSecond": 0.01,
+        "initialUnits": 0,
+        "minedUnits": 14.83998318737534,
+        "bufferUnits": 0,
+        "surfaceUnits": 8.839983187375438,
+        "drainedUnits": 5.9999999999999165,
+        "accountedUnits": 14.83998318737534,
+        "conservedUnits": 14.839983187375354,
+        "massBalanceResidualUnits": 1.4210854715202004e-14
+      }
+    }
+  ],
+  "earlyOutput": {
+    "fixtureRateUnitsPerMinute": 1.3,
+    "tenMinuteNoDrain": {
+      "seconds": 600,
+      "initialUnits": 0,
+      "minedUnits": 12.99999999999992,
+      "bufferUnits": 0,
+      "surfaceUnits": 12.99999999999992,
+      "drainedUnits": 0,
+      "accountedUnits": 12.99999999999992,
+      "conservedUnits": 12.99999999999992,
+      "massBalanceResidualUnits": 0
+    },
+    "tenMinuteSyntheticDrain": {
+      "seconds": 600,
+      "initialUnits": 0,
+      "minedUnits": 12.99999999999992,
+      "bufferUnits": 0,
+      "surfaceUnits": 7.000000000000027,
+      "drainedUnits": 5.9999999999999165,
+      "accountedUnits": 12.99999999999992,
+      "conservedUnits": 12.999999999999943,
+      "massBalanceResidualUnits": 2.3092638912203256e-14
+    }
+  },
+  "flowCases": {
+    "lowLiftBuffering": {
+      "seconds": 60,
+      "initialUnits": 0,
+      "minedUnits": 11.96666666666666,
+      "bufferUnits": 9.966666666666667,
+      "surfaceUnits": 2.0000000000000027,
+      "drainedUnits": 0,
+      "accountedUnits": 11.96666666666666,
+      "conservedUnits": 11.966666666666669,
+      "massBalanceResidualUnits": 8.881784197001252e-15
+    },
+    "fullYard": {
+      "seconds": 1,
+      "initialUnits": 102,
+      "minedUnits": 0,
+      "bufferUnits": 2,
+      "surfaceUnits": 100,
+      "drainedUnits": 0,
+      "accountedUnits": 102,
+      "conservedUnits": 102,
+      "massBalanceResidualUnits": 0
+    },
+    "highLiftMultiOre": {
+      "seconds": 1,
+      "initialUnits": 0,
+      "minedUnits": 640151894812.5488,
+      "bufferUnits": 0,
+      "surfaceUnits": 640151894812.5488,
+      "drainedUnits": 0,
+      "accountedUnits": 640151894812.5488,
+      "conservedUnits": 640151894812.5488,
+      "massBalanceResidualUnits": 0
+    }
+  },
+  "chunkReplay": {
+    "seconds": 600,
+    "catchupMaxSteps": 600,
+    "oneSecondTicks": 600,
+    "finalFixtureStateEqual": true
+  },
+  "massBalance": {
+    "maxObservedAbsoluteResidualUnits": 4.263256414560601e-14,
+    "acceptanceTolerance": "128 * Number.EPSILON * max(1, absolute accounted units, absolute physical units), checked independently per ore",
+    "scope": "floating-point ore-unit fixture only; coin is not modeled and remains subject to exact integer ledger accounting"
+  },
+  "monthHorizonBookkeeping": [
+    {
+      "days": 28,
+      "horizonSeconds": 2419200,
+      "boundedPreviewSteps": 60,
+      "remainingSeconds": 2419140,
+      "complete": false
+    },
+    {
+      "days": 29,
+      "horizonSeconds": 2505600,
+      "boundedPreviewSteps": 60,
+      "remainingSeconds": 2505540,
+      "complete": false
+    },
+    {
+      "days": 30,
+      "horizonSeconds": 2592000,
+      "boundedPreviewSteps": 60,
+      "remainingSeconds": 2591940,
+      "complete": false
+    },
+    {
+      "days": 31,
+      "horizonSeconds": 2678400,
+      "boundedPreviewSteps": 60,
+      "remainingSeconds": 2678340,
+      "complete": false
+    }
+  ],
+  "interpretation": {
+    "previousNeutralCandidate": "1.0311 exponential lift growth has 4.08% headroom in the neutral fixture but fails both deterministic seeded soil/weather fixtures and the selected analytical study envelope.",
+    "provisionalBenchmarkCandidate": "1.0316 exponential lift growth is recommended for the next pipeline calibration because it clears the selected soil=1.25, weather=1.25, buffs=1 analytical study envelope; it is not a certified global default.",
+    "scope": "Structural lift throughput only; it does not certify economic balance or the complete mine-to-market pipeline. Chunk replay equality applies only to this fixture and does not establish production/live equivalence.",
+    "downstream": "Finite surface storage, loading rates, fleet capacity, shipment timing, buyer budgets, prices, and affordability remain separate C-01 calibration work.",
+    "simulations": "Month rows are bounded bookkeeping previews (60 executed ticks), not completed 28/29/30/31-day production simulations.",
+    "flow": "The synthetic downstream drain removes units from the fixture surface yard only; it does not ship cargo, create payments, or create coin.",
+    "omitted": "No workforce allocation, ore depletion, weather generation, hazards, shipping, market, or player strategy is modeled.",
+    "workforce": "Worker counts are explicit assigned-shaft fixture inputs; habitat pool constraints, autoallocation, and production-UI wiring remain unimplemented.",
+    "productionConfig": "No production configuration is changed or written by this study."
+  }
+}

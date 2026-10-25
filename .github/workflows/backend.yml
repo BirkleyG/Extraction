@@ -4,11 +4,13 @@ on:
   push:
     paths:
       - 'backend/**'
+      - 'docs/development/calibration/**'
       - '.nvmrc'
       - '.github/workflows/backend.yml'
   pull_request:
     paths:
       - 'backend/**'
+      - 'docs/development/calibration/**'
       - '.nvmrc'
       - '.github/workflows/backend.yml'
 
@@ -34,6 +36,11 @@ jobs:
       - name: Test accounting and command invariants
         working-directory: backend
         run: npm test
+      - name: Regenerate production calibration evidence
+        working-directory: backend
+        run: npm run calibrate:production
+      - name: Verify committed calibration reports match the generator
+        run: git diff --exit-code -- docs/development/calibration
       - name: Test Firebase authority with isolated local emulators
         working-directory: backend
         run: npm run test:integration
