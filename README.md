@@ -10,6 +10,8 @@ The scene reuses the original game's pixel sprites and look. Each planet is buil
 
 AI is the default way to make a planet: under **Tools** add your own Claude or OpenAI key, then **Planet → Ask the Maker**. The prompt makes the AI choose a theme first and read a summary of earlier planets (kept in this browser) so each one is new. With no key the Maker improvises from one of twelve built-in themes instead, avoiding recently used ones. Planets are presentation only in this sandbox; they do not change rates, prices or the ledger.
 
+Controls: mouse wheel or pinch to zoom, drag to pan, `+` `-` `0` keys or the corner buttons to zoom and fit, and the top-left thumbnail (or `M`) flips between your mine and the whole-planet map, where you can click a region and move your mine there. Upgrades are named machines (Hand Winch → Rope Hoist → Steam Lift ...) that change how the lift, pick, yard and hauler look as you tier up.
+
 Open **Local developer tools** to fast-forward, add explicit test coins or reset only the sandbox save. Prices, buyer budgets, starting coin and incomplete upgrade lines in this build are test fixtures, not certified game balance. No month competition is active.
 
 ## Run locally

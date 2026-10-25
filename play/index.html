@@ -28,7 +28,10 @@
     <section class="stage">
       <div class="canvas-wrap" id="cwrap">
         <canvas id="cv" aria-label="Animated pixel view of your mine, lift, ore yard and launch pad"></canvas>
+        <button class="mapbtn" id="mapBtn" type="button" aria-label="Switch between the mine and the planet map"><canvas id="mini"></canvas><span id="mapBtnLbl">MAP</span></button>
         <div class="stage-tag" id="stageTag"></div>
+        <div class="ctrl"><button data-zoom="in" type="button" aria-label="Zoom in">+</button><button data-zoom="out" type="button" aria-label="Zoom out">−</button><button data-zoom="fit" type="button" aria-label="Fit view">⤢</button></div>
+        <div class="mapcard" id="mapcard" hidden></div>
         <div class="banner hidden" id="banner" role="status" hidden></div>
       </div>
       <div class="ticker" id="ticker"></div>
