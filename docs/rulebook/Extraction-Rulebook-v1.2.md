@@ -530,6 +530,12 @@ Products
 Other Thoughts
 Players can reserve docks for their own shipments to ensure that their shipments always arrive without delay. These docks do not sit empty, they just cannot be booked by other players during the expected landing and unloading time of the players own ships.
 
+### Playable local refinery preview · 26 October 2026
+
+**Scope: new-economy local sandbox; online business state is unchanged.** One refinery costs 25,000 test coin. Shared input and output capacities start at 1,000 units; each ore line processes up to 120 raw units/minute. Yield starts at 70% and rises by `0.25 × L/1000` to 95%. Speed uses `120 × (1 + 0.04L)`; storage uses `1000 × (1 + 0.04L)`. Speed/yield prices are `round(100 × 1.019^L)`; storage prices `round(50 × 1.0195^L)`, caps 1000.
+
+Yard → own refinery is an instant local transfer with no coin or revenue; optional automatic routing feeds available whole crates into free input storage. Processing consumes real raw units, records yield loss and stops at full output. Refined goods can be sold to an NPC station at 80% of its current published reference quote or transferred into the owner's station. No raw ore reaches the galactic end market. Budget funding/release, where exercised, remains an internal escrow movement, not earnings. Cross-owner purchasing and full facility logistics are not implemented in this preview.
+
 ## 07 — Space Stations and Commercial Contracts
 
 **Status: consolidated revision 1.2.** Approved rules use the register in 00; C-numbered coefficients remain calibration work.
@@ -591,6 +597,10 @@ Players can reserve docks for their own shipments to ensure that their shipments
 ### Default and foreclosure accounting
 - Default fees, collateral, liabilities and station forfeiture follow 02. Thresholds and terms must be displayed before acceptance; a station cannot be seized under undisclosed rules. Forfeiture does not cancel paid cargo commitments.
 - Buyer selection follows 08’s effective delivered price and preferences, with deterministic time/ID tie-breaks; lowest nominal ask alone does not override freight or service costs.
+
+### Playable local station preview · 26 October 2026
+
+One local station costs 250,000 test coin and stores 2,000 refined units per product. Silo level L provides `2000 × (1 + 0.04L)` capacity; next-level price is `round(50 × 1.0195^L)`, cap 1000. Own-refinery → own-station transfers are immediate and create no payment. Hourly published spot contracts require existing refined silo stock; completion removes that quantity and posts `GALACTIC_CONTRACT_SALE` once. Repeated or expired contract IDs cannot pay again. Completed IDs are bounded to the current offer hour; expired offers cannot be resurrected. Forward contracts, negotiation and full intelligence tiers remain outside this local slice.
 
 ## 08 — Galactic Market, Prices and Economic Events
 
@@ -655,6 +665,12 @@ T08-10: for fixed budgets, an increase in all local prices can shift spending to
 
 #### Open questions / provisional tuning
 Set nested CES elasticities and calibrated weights by buyer category, external supply elasticity, faction population-to-demand conversion, budget renewal rules, stockpile horizons, solver convergence tolerance, hourly versus alternative clearing frequency, intelligence cost curve and forecasting error bounds. These are parameters to simulate, not numbers for AI to invent.
+
+### Simulated hourly market preview · 26 October 2026
+
+The local industry's published initial refined quotes are 120/138/126/108/180/276/480 coin across the seven canonical ores. Seeded outside supply/demand and actual player refined sales influence each hourly clear. Relative supply pressure changes quotes by no more than ±10% per clear; invalid input preserves the last valid quote. Offer quantities are deterministic whole quantities of 20–100 per ore and expire at the next simulated market hour. Lifetime refined sales are accounted separately from current-hour supplied quantity.
+
+**This is a responsive local market experiment, not the accepted nested CES solver, a shared multiplayer economy or a disclosure of hidden global demand.** The UI shows published offers only. Canonical Release B market requirements and section 21 certification remain binding.
 
 ## 09 — Multiplayer Trading and AI Businesses
 
@@ -927,6 +943,10 @@ Military Strategy unlock level thresholds; division capacity and unit costs; rol
 - Section 23 is adopted for combat, command HQ and branch equipment research. Infantry: close defense, rapid fire, precision, area denial. Armored: heavy weapon, armor, mobility, targeting. Specialist: rescue, environmental suits, reconnaissance, adaptive tools. Air: interception, escort, sensors, propulsion.
 - Each branch also has explicit shared protection/armor progression and aggregate troop readiness; a named line such as Armored armor is that branch’s protection line, not a duplicate purchase. For other branches the protection line is additional to the four specialty lines. Costs and exact effects must be registered in 10 before release.
 - HQ lines and Military Strategy/Security Planning are distinct from equipment. All eligible units receive branch research; remote retrofit delay is off by default (C-09).
+
+### Local home-safety slice · 26 October 2026
+
+A 250-coin local supply order brings ten infantry after 60 simulated seconds; ordered troops provide no coverage in transit. Seeded home incidents are gas, small cave-ins and pests, with no casualties, capture or cargo losses. Unassisted response reduces production to 75% for at most 30 seconds; deployed infantry response keeps 90% for ten seconds. Incidents recur 180–360 seconds apart and always recover. These are provisional local coefficients, not the full section 23 functional combat resolver. Paid outbound commitments are unaffected.
 
 ## 13 — Tribes, Diplomacy and Campaigns
 
@@ -1250,6 +1270,12 @@ Month-end ordering
 - A partial or failed owner remains incomplete and resumes on the next tick; retries cannot pay a departure twice. Other owners may still advance. The existing internal authentication secret is required. This is a private-world checkpoint implementation, not the general durable indexed event queue or a guarantee of immediate catch-up for arbitrary backlogs.
 - Backend deployment and production cost/timeout measurements remain separate from committing this implementation. Existing month-close batches retain their own limits.
 
+### Responsive browser runtime · 26 October 2026
+
+The CEO requests browser-first responsiveness and approximately 30-second synchronization. The local sandbox runs its deterministic engine in the browser; heavy catch-up uses bounded module-worker batches, with validated state results, request IDs, timeout/disposal and a main-thread fallback. Online rendering predicts visible mining locally while trusted commands retain authority over shared money, takeoffs, hidden truth and settlement. Watching still cannot change authoritative outcomes.
+
+Passive online reconciliation runs every 30 seconds without departure-triggered early polling; commands, joining/sign-in and returning/focusing the tab can refresh immediately. Requests coalesce and stale responses cannot overwrite newer optimistic commands. Hidden tabs do not passively poll. This does not add a server broadcast for every other player's presence change or turn local browser saves into shared records.
+
 ## 18 — Data Architecture, Persistence and Multiplayer Integrity
 
 **Status: consolidated revision 1.2.** Approved rules use the register in 00; C-numbered coefficients remain calibration work.
@@ -1393,6 +1419,10 @@ Safety
 - T19-06: direct price assignments and out-of-envelope changes are rejected. T19-07: replay of an accepted proposal reproduces scores, economic inputs and market results. T19-08: fallback proposal uses identical accounting/validation paths.
 ### Presentation standard
 - Cartoonish, reasonably graphic violence is permitted: stylized blood, injury and exaggerated combat effects. Tone remains fictional and darkly comic. This standard replaces conflicting “non-graphic” wording; factual event constraints and user motion settings remain mandatory.
+
+### Connected Maker presentation · 26 October 2026
+
+The existing Claude/OpenAI BYOK connection now supports validated facility names, buyer personalities and colony dispatches in addition to planet design. Calls occur only on explicit player action. Credentials remain in browser AI settings and are excluded from economic save exports and prompts. Prompts use projected planet/lore identities and recorded facts only. Names/personality/headline output is constrained; factual news bodies must match the engine input. Malformed output gets at most one validation retry, then a deterministic built-in fallback; provider calls have a hard timeout and sanitized errors. No AI response can create buildings, coin, rates, prices, combat results or new engine events. No-key mode remains fully playable.
 
 ## 20 — Interface, Visuals and Player Feedback
 
@@ -1637,6 +1667,12 @@ Changing a rule
 
 - PRs #12–#14 are merged; Pages successfully published the new sandbox from `73ee0bd`. Public browser checks verified the ten-unit starter shipment, upgrades, fast-forward, mobile layout, preserved prototype and online sign-in. The rulebook remains the maintained source; this does not certify Release A or full-month balance.
 - Acceptance evidence for this batch: 27 sandbox tests, 86 backend tests and 10 real Auth/Firestore emulator tests passed. An authenticated browser loop on local emulators verified server-backed sale, single/bulk purchase and reload persistence. Complete results and remaining runtime/deployment limits: [Playability progress](../development/Overnight-Progress.md).
+
+### Industry, home operations and client-runtime batch · 26 October 2026
+
+Added the local refinery → refined goods → station/spot buyer loop, simulated hourly offers, bounded home-safety incidents and delayed infantry reinforcement, explicit-action Maker names/factual dispatches, 30-second online reconciliation and a browser worker for heavy local catch-up. Owning sections 06/07/08/12/17/19 document scope and coefficients. Existing saves initialize new systems at the current second; no old progress is replayed into invented earnings.
+
+The legacy pixel interface remains the visual contract. Industry and Colony tabs expose actual inventory, processing, contracts and safety status; no controls claim unimplemented shared industry or full combat. [Implementation and acceptance evidence](../development/Industry-Release.md) tracks this batch. Release A/B remain unaccepted pending their full gates.
 
 ## 23 — Advanced Combat and AI Military Command
 

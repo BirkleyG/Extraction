@@ -51,3 +51,7 @@ Sources checked: [Functions getting started](https://firebase.google.com/docs/fu
 ## Autonomous playability session · 26 October 2026
 
 **CEO direction:** integrate the two supplied economy/pacing files, retain the legacy game's feel, use judgment, test playability and save frequent GitHub PRs. The CEO is unavailable during this session: do not block routine development on questions. Keep unresolved future design choices recorded as provisional; no new paid services or paid AI are needed.
+
+## Industry and browser-runtime direction · 26 October 2026
+
+The CEO asks for refineries, stations, global economies, all Release A features, responsive browser execution, approximately 30-second state polling, playtesting and connected dynamic AI. Engineering is implementing this in reviewable slices without blocking on questions. Local industry/home-safety previews and browser simulation are permitted; shared coin/trades remain server-validated. Existing paid-service ceilings remain in effect; BYOK AI uses explicit requests and no-key fallbacks. Full Release A/B acceptance is not inferred from adding preview tabs.

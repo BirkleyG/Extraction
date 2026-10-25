@@ -16,7 +16,7 @@ const params = new URLSearchParams(location.search);
 const API = (params.get('api') || API_BASE || '').replace(/\/$/, '');
 const WORLD = params.get('world') || WORLD_ID;
 const MODE_KEY = 'extraction_mode';
-export const POLL_MS = 15_000;
+export { RECONCILE_MS as POLL_MS } from './sync-policy.js';
 
 export function wantsOnline() {
   if (params.get('mode') === 'online') { try { localStorage.setItem(MODE_KEY, 'online'); } catch { /* ignore */ } return true; }
