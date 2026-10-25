@@ -12,6 +12,8 @@ AI is the default way to make a planet: under **Tools** add your own Claude or O
 
 Controls: mouse wheel or pinch to zoom, drag to pan, `+` `-` `0` keys or the corner buttons to zoom and fit, and the top-left thumbnail (or `M`) flips between your mine and the whole-planet map, where you can click a region and move your mine there. Upgrades are named machines (Hand Winch → Rope Hoist → Steam Lift ...) that change how the lift, pick, yard and hauler look as you tier up.
 
+Mining follows the rulebook (section 04): each region's site has one endless common ore, and shafts hide finite rare veins (and, in tough regions, a mythic one). Tunnels are dug out as the crew mines, veins sit in the rock ahead, and a vein only yields once the tunnel reaches it *and* the pick is hard enough. Opening a mine in a different region, or building a new planet, starts a fresh mine because ore and veins belong to the site.
+
 Open **Local developer tools** to fast-forward, add explicit test coins or reset only the sandbox save. Prices, buyer budgets, starting coin and incomplete upgrade lines in this build are test fixtures, not certified game balance. No month competition is active.
 
 ## Run locally

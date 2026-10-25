@@ -1,9 +1,9 @@
 import {
-  ORES, DESTINATIONS, SAVE_KEY, advanceGame, buyNextShaft, createGameState, currentLiftRate, currentRates,
+  HARDNESS, ORES, DESTINATIONS, SAVE_KEY, TOUGH_TERRAINS, toolHardness, veinStatus, advanceGame, buyNextShaft, createGameState, currentLiftRate, currentRates, shaftRateFor,
   dispatchNow, grantDevCoins, hireWorkers, purchaseUpgrade, selectDestination,
   setAutoLaunch, stepGame, upgradeCost, validateGameState,
 } from './model.js';
-import { FX_SPOTS, MAPVIEW, VIEW, addFx, clampCam, clampMapCam, mapScale, mapTerrain, regionAtMap, renderMap, renderScene, sideScale } from './scene.js';
+import { FX_SPOTS, MAPVIEW, veinSpot, VIEW, addFx, clampCam, clampMapCam, mapScale, mapTerrain, regionAtMap, renderMap, renderScene, sideScale } from './scene.js';
 import { TIERS, tierOf } from './upgrades.js';
 import { TERRAINS, aiReady, aiSettings, generatePlanet, loadHistory, loadPlanet, recordPlanet, saveAiSettings, savePlanet, askJSON } from './planet.js';
 
@@ -28,6 +28,7 @@ let regionId = world.regionId;
 let planetBusy = false;
 let lastTickMs = performance.now();
 const region = () => planet.regions.find((r) => r.id === regionId) || planet.regions[0];
+const siteOpts = (r = region()) => ({ planetId: planet.id, regionId: r.id, tough: TOUGH_TERRAINS.includes(r.terrain) });
 const oreIndex = (id) => ORES.findIndex((o) => o.id === id);
 /* The planet decides what the ores are called and look like. Rates and values stay with the model. */
 function skinOres() { ORES.forEach((o, i) => { const p = planet.ores[i]; o.name = p.name; o.color = p.color; o.cat = p.cat; }); }
@@ -53,7 +54,7 @@ function safeText(value) { return String(value).replace(/[&<>"']/g, (char) => ({
 function loadSave() {
   try {
     const raw = localStorage.getItem(SAVE_KEY);
-    if (!raw) return createGameState();
+    if (!raw) return createGameState(siteOpts());
     const wrapper = JSON.parse(raw);
     if (!wrapper || wrapper.version !== 1 || !Number.isSafeInteger(wrapper.savedAtMs) || wrapper.savedAtMs < 0) throw new Error('Unsupported save');
     savedAtMs = wrapper.savedAtMs;
@@ -68,7 +69,7 @@ function loadSave() {
     return loaded;
   } catch {
     recovering = 'This local save could not be read. A fresh sandbox was opened; the prototype save was left alone.';
-    return createGameState();
+    return createGameState(siteOpts());
   }
 }
 
@@ -165,10 +166,11 @@ function effectText(type, n = 1) {
   let text = '';
   try {
     const next = purchaseUpgrade(state, type, { shaftNumber: n, count: 1 });
-    const rate = (st) => currentRates(st).find((r) => r.shaftNumber === n).ratePerMinute;
+    const crew = Math.max(1, state.production.shafts.find((q) => q.shaftNumber === n).workersAssigned);
+    const rate = (st) => shaftRateFor(st, n, crew);
     const f = {
       lift: (st) => `${currentLiftRate(st).toFixed(2)} units/min hauled`,
-      dig: (st) => (rate(state) === 0 && rate(st) === 0 ? 'no crew here yet, hire miners' : `${fmtUnits(rate(st))} ore/min from shaft ${String(n).padStart(2, '0')}`),
+      dig: (st) => `${fmtUnits(rate(st))} ore/min from shaft ${String(n).padStart(2, '0')}${state.production.shafts.find((q) => q.shaftNumber === n).workersAssigned ? '' : ' (per miner)'}`,
       yard: (st) => `${fmtUnits(st.production.surface.capacityUnits)} units of yard`,
       shipSpeed: (st) => `${st.ship.speedPerMinute.toFixed(2)} AU/min`,
       shipCapacity: (st) => `${fmtUnits(st.ship.capacityUnits)} unit hold`,
@@ -177,7 +179,7 @@ function effectText(type, n = 1) {
       bunkhouse: (st) => `${10 + 5 * st.production.shafts.find((q) => q.shaftNumber === n).bunkhouseLevel} crew in this shaft`,
       cart: (st) => `${fmtUnits(st.production.shafts.find((q) => q.shaftNumber === n).bufferCapacityUnits)} unit shaft buffer`,
     }[type];
-    text = f(state).startsWith('no crew') ? f(state) : `${f(state)}  →  ${f(next)}`;
+    text = `${f(state)}  →  ${f(next)}`;
   } catch { text = ''; }
   if (effectCache.size > 400) effectCache.clear();
   effectCache.set(key, text); return text;
@@ -207,7 +209,24 @@ const shaftCost = () => (state.production.shafts.length >= 30 ? null : Math.floo
 const crewCap = () => 10 + 5 * state.upgrades.habitat;
 const buyBtn = (attrs, label, cost, cls = '') => `<button class="buy ${cls}" ${attrs} type="button"${cost === null ? ' disabled' : ''}>${label}<br>${cost === null ? 'CAPPED' : `${fmt(cost)} ◉`}</button>`;
 
+/* ---- veins: announce when the crew reaches, can't break, or exhausts one ---- */
+const veinSeen = new Map(); let veinSite = '';
+function watchVeins() {
+  if (veinSite !== state.site.seed) { veinSeen.clear(); veinSite = state.site.seed; }
+  for (const v of state.veins) {
+    const st = veinStatus(state, v); const prev = veinSeen.get(v.id); veinSeen.set(v.id, st);
+    if (prev === undefined || prev === st) continue;
+    const o = ORES.find((q) => q.id === v.oreId); const spot = veinSpot(v.shaftNumber, v);
+    if (st === 'mining') { addFx(spot[0], spot[1] - 12, `${o.name.toUpperCase()} VEIN!`, o.color); blip([523, 784, 1047]); toast(`Shaft ${v.shaftNumber} broke into a ${o.name} vein.`, 'success'); }
+    else if (st === 'blocked') { addFx(spot[0], spot[1] - 12, 'PICK TOO WEAK', '#ff5a6e'); blip([220, 180]); toast(`Shaft ${v.shaftNumber} found ${o.name} but the pick can't break it. Upgrade the pick.`, 'error'); }
+    else if (st === 'empty') { addFx(spot[0], spot[1] - 12, 'VEIN DRY', '#b3a5d3'); toast(`The ${o.name} vein in shaft ${v.shaftNumber} ran dry.`); }
+  }
+}
+const pickNeeded = (hardness) => { const t = TIERS.dig.tiers.find(([at]) => toolHardness(at) >= hardness); return t ? t[1] : 'a better pick'; };
+const oreRank = (id) => (id === 'mythic' ? 'Mythic' : ['lithium', 'sulfur', 'crystal', 'iridium'].includes(id) ? 'Rare' : 'Common');
+
 function renderHud() {
+  watchVeins();
   const rate = totalRate();
   $('#hCoin').textContent = fmt(state.coins);
   $('#hRate').textContent = `${fmtUnits(rate)} ore / min`;
@@ -274,6 +293,18 @@ function tabUpgrades() {
     <h3>The hauler</h3><div class="rows">${upgradeCard('shipSpeed', 1, { bulk: true })}${upgradeCard('shipCapacity')}${upgradeCard('loading')}</div>`;
 }
 
+function veinRows(n) {
+  const veins = state.veins.filter((v) => v.shaftNumber === n);
+  const common = ORES.find((o) => o.id === state.site.commonOreId);
+  const head = `<div class="d">Common ore here: <b style="color:${common.color}">${safeText(common.name)}</b> · endless</div>`;
+  if (!veins.length) return `${head}<div class="d">No rare vein found in this shaft.</div>`;
+  return head + veins.map((v) => {
+    const o = ORES.find((q) => q.id === v.oreId); const st = veinStatus(state, v); const pct = Math.round(v.remainingUnits / v.sizeUnits * 100);
+    const note = { ahead: 'Hidden in the rock ahead. Keep digging to reach it.', blocked: `⛏ Pick too weak. Needs hardness ${HARDNESS[v.oreId]} (${pickNeeded(HARDNESS[v.oreId])}).`, mining: 'The crew is mining it now.', empty: 'Dry. The shaft is back on the common ore.' }[st];
+    return `<div class="vein ${st}"><div class="shead"><span class="swatch2" style="--ore:${o.color}"></span><b>${safeText(o.name)}</b><span class="pill ${oreRank(v.oreId) === 'Mythic' ? 'sp' : 'warn'}">${oreRank(v.oreId)}</span><span class="d" style="margin-left:auto">hardness ${HARDNESS[v.oreId]}</span></div><div class="meter ${pct < 20 ? 'warn' : ''}"><i style="width:${pct}%;background:${o.color}"></i></div><div class="d">${fmtUnits(v.remainingUnits)} / ${fmtUnits(v.sizeUnits)} units left · ${safeText(note)}</div></div>`;
+  }).join('');
+}
+
 function tabShafts() {
   const rates = currentRates(state);
   const cards = state.production.shafts.map((shaft) => {
@@ -283,6 +314,7 @@ function tabShafts() {
     return `<div class="shaft"><div class="shead"><b>SHAFT ${String(n).padStart(2, '0')}</b><span class="swatch2" style="--ore:${rate.ore.color}"></span><span>${safeText(rate.ore.name)}</span><span class="own" style="font-family:var(--f-mono);font-size:19px;color:var(--coin);margin-left:auto">${fmtUnits(rate.ratePerMinute)}/min</span></div>
       <div class="d">${shaft.workersAssigned} / ${10 + shaft.bunkhouseLevel * 5} crew · buffer ${fmtUnits(shaft.bufferUnits)} / ${fmtUnits(shaft.bufferCapacityUnits)}</div>
       <div class="meter ${pct >= 90 ? 'warn' : ''}"><i style="width:${pct}%"></i></div>
+      ${veinRows(n)}
       <div class="rows">${upgradeCard('dig', n)}${upgradeCard('bunkhouse', n)}${upgradeCard('cart', n)}</div></div>`;
   }).join('');
   return `<h2>Your shafts</h2><p class="lede">Each shaft digs its own ore. Watch the buffers: a full one stalls the shaft.</p><div class="rows">${cards}</div>`;
@@ -291,25 +323,29 @@ function tabShafts() {
 function tabPlanet() {
   const rows = planet.regions.map((r) => {
     const T = TERRAINS[r.terrain]; const sel = r.id === regionId;
-    return `<div class="row ${sel ? 'sel' : ''}"><div><div class="t"><span class="swatch2" style="--ore:${r.biome}"></span>${safeText(r.name)}</div><div class="d">${safeText(T.label)}${T.group === 'alien' ? ' · alien' : ''} · ${safeText(r.blurb)}</div></div><button class="buy ${sel ? 'ok' : 'ghost'} sm" data-region="${r.id}" type="button">${sel ? 'Here' : 'Visit'}</button></div>`;
+    return `<div class="row ${sel ? 'sel' : ''}"><div><div class="t"><span class="swatch2" style="--ore:${r.biome}"></span>${safeText(r.name)}</div><div class="d">${safeText(T.label)}${T.group === 'alien' ? ' · alien' : ''} · ${safeText(r.blurb)}</div></div><button class="buy ${sel ? 'ok' : 'ghost'} sm" data-act="${sel ? 'noop' : 'relocate-ask'}" data-rid="${r.id}" type="button">${sel ? 'Your mine' : 'Mine here'}</button></div>`;
   }).join('');
-  const ores = planet.ores.map((o) => `<span class="chip"><i style="background:${o.color}"></i>${safeText(o.name)}</span>`).join('');
+  const ores = planet.ores.map((o, i) => { const id = ORES[i].id; const here = id === state.site.commonOreId || state.site.rareOreIds.includes(id) || (id === 'mythic' && state.site.mythic); const rank = oreRank(id); return `<div class="row${here ? '' : ' dim'}"><div><div class="t"><span class="swatch2" style="--ore:${o.color}"></span>${safeText(o.name)} <span class="pill ${rank === 'Common' ? 'ok' : rank === 'Rare' ? 'warn' : 'sp'}">${rank}</span></div><div class="d">Hardness ${HARDNESS[id]} · ${id === state.site.commonOreId ? 'the common ore of your site, endless' : here ? 'a vein may hide in your shafts' : rank === 'Common' ? 'the other common ore, found in other regions' : 'none at this site'}</div></div></div>`; }).join('');
+  const confirm = pendingRelocate ? (() => { const r = planet.regions.find((q) => q.id === pendingRelocate); return `<div class="note"><b>Start a new mine in ${safeText(r.name)}?</b><br>A site's ore and veins belong to that site, so this replaces your current local mine. The legacy prototype is untouched.<div class="btnrow"><button class="buy danger sm" data-act="relocate-yes" type="button">Yes, start fresh</button><button class="buy ghost sm" data-act="relocate-no" type="button">Cancel</button></div></div>`; })() : '';
   const th = planet.theme || { concept: '', motifs: [] };
   const ready = aiReady();
   const past = loadHistory().slice(-5).reverse().map((e) => `<div class="d">${safeText(e.name)} · ${safeText(e.concept)}</div>`).join('');
   return `<h2>${safeText(planet.name)}</h2><p class="lede">${safeText(planet.tagline)}</p>
     <div class="note"><b>THEME</b> · ${safeText(th.concept)}${th.mood ? ` <i>(${safeText(th.mood)})</i>` : ''}${th.motifs && th.motifs.length ? `<br>${th.motifs.map((m) => `<span class="pill sp">${safeText(m)}</span>`).join(' ')}` : ''}</div>
     <p class="story">${safeText(planet.story)}</p>
-    <h3>Ores on this world</h3><div class="chips">${ores}</div>
-    <h3>Regions · pick the ground your mine sits on</h3><div class="rows">${rows}</div>
-    <div class="note">Regions change the landscape, weather and look. The sandbox's rates and prices don't depend on them yet.</div>
+    ${confirm}
+    <h3>Ores · common, rare and mythic</h3><div class="rows">${ores}</div>
+    <h3>Regions · each site has its own common ore and veins</h3><div class="rows">${rows}</div>
+    <div class="note">Common ore is endless. Rare ores hide in finite veins you have to dig to and break. Vein sizes are provisional.</div>
     <h3>New planet</h3>
     <label class="f">What should the Maker build? (optional)<textarea id="planetPrompt" maxlength="400" placeholder="A cold, pink planet of floating ice and screaming moons">${safeText(planetPromptValue)}</textarea></label>
-    <div class="btnrow"><button class="buy alt" data-act="newplanet-ai" type="button"${planetBusy ? ' disabled' : ''}>${planetBusy ? 'The Maker is thinking…' : ready ? 'Ask the Maker (AI)' : 'Ask the Maker'}</button></div>
+    ${pendingPlanet ? '<div class="note"><b>A new planet means a new mine.</b> Your current local mine is replaced.<div class="btnrow"><button class="buy danger sm" data-act="newplanet-go" type="button">Build the planet</button><button class="buy ghost sm" data-act="newplanet-no" type="button">Cancel</button></div></div>' : `<div class="btnrow"><button class="buy alt" data-act="newplanet-ask" type="button"${planetBusy ? ' disabled' : ''}>${planetBusy ? 'The Maker is thinking…' : ready ? 'Ask the Maker (AI)' : 'Ask the Maker'}</button></div>`}
     <p class="lede">${ready ? 'The Maker invents a theme, builds the whole planet from it, and reads the planets before it so this one is new.' : 'No AI key yet, so the Maker will improvise from a theme. Add your own Claude or OpenAI key under Tools for full AI planets.'}</p>
     ${past ? `<h3>Planets so far</h3><div class="rows">${past}</div>` : ''}`;
 }
 let planetPromptValue = '';
+let pendingRelocate = null;
+let pendingPlanet = false;
 
 function tabRecords() {
   const ledger = state.ledger.slice().reverse().slice(0, 10).map((e) => `<div class="row"><div><div class="t">${safeText(e.description)}</div><div class="d">${formatClock(e.atSecond)} · ${safeText(e.type.replaceAll('_', ' '))}</div></div><div class="e" style="color:${e.ownerDelta > 0 ? 'var(--ok)' : 'var(--bad)'}">${e.ownerDelta > 0 ? '+' : '−'}${fmt(e.amount)} ◉</div></div>`).join('') || '<p class="lede">No records yet.</p>';
@@ -345,6 +381,10 @@ function render() {
 }
 let renderPending = false;
 
+function freshMine() {
+  state = createGameState(siteOpts()); paused = false; catchupRemaining = 0; catchingUp = false; catchupKind = 'offline'; resetPromptOpen = false; recovering = '';
+  veinSeen.clear(); effectCache.clear(); save();
+}
 let view = 'side';
 const camSide = { auto: true, x: 490, y: 0, z: 1 };
 const camMap = { auto: true, x: 500, y: 500, z: 1 };
@@ -380,7 +420,7 @@ function mapCardHTML(r) {
   const T = TERRAINS[r.terrain]; const here = r.id === regionId;
   return `<button class="buy sm ghost close" data-act="mapclose" type="button">✕</button><h4>${safeText(r.name)}</h4><p class="lede">${safeText(T.label)}${T.group === 'alien' ? ' · alien' : ''}<br>${safeText(r.blurb)}</p>
     <div class="chips">${planet.ores.slice(0, 7).map((o) => `<span class="chip"><i style="background:${o.color}"></i>${safeText(o.name)}</span>`).join('')}</div>
-    <div class="btnrow">${here ? '<button class="buy ok" data-act="mapback" type="button">Back to your mine</button>' : `<button class="buy" data-region="${r.id}" data-goto="1" type="button">Move my mine here</button>`}</div>`;
+    ${pendingRelocate === r.id ? '<div class="note"><b>Start a new mine here?</b> Your current local mine is replaced.</div><div class="btnrow"><button class="buy danger sm" data-act="relocate-yes" type="button">Yes, start fresh</button><button class="buy ghost sm" data-act="relocate-no" type="button">Cancel</button></div>' : `<div class="btnrow">${here ? '<button class="buy ok" data-act="mapback" type="button">Back to your mine</button>' : `<button class="buy" data-act="relocate-ask" data-rid="${r.id}" type="button">Open a mine here</button>`}</div>`}`;
 }
 function showMapCard() { const c = $('#mapcard'); c.hidden = view !== 'map' || !mapSel; if (!c.hidden) c.innerHTML = mapCardHTML(mapSel); }
 
@@ -431,21 +471,30 @@ document.addEventListener('click', (event) => {
   if (button.dataset.forward) { startForward(Number(button.dataset.forward)); return; }
   if (button.dataset.destination) { apply((current) => selectDestination(current, button.dataset.destination)); return; }
   if (button.dataset.buy) { const raw = button.dataset.count || '1'; buyUpgrade(button.dataset.buy, Number(button.dataset.shaft || 1), raw === 'max' ? 'max' : Number(raw)); return; }
-  if (button.dataset.region) { regionId = button.dataset.region; savePlanet(planet, regionId); if (button.dataset.goto) { view = 'side'; camSide.auto = true; mapSel = null; showMapCard(); } render(); toast(`Your mine now sits in ${region().name}.`, 'success'); return; }
   if (button.dataset.zoom) { const cm = view === 'map' ? camMap : camSide; if (button.dataset.zoom === 'fit') { cm.auto = true; cm.z = 1; } else { cm.auto = false; cm.z *= button.dataset.zoom === 'in' ? 1.4 : 1 / 1.4; } return; }
   if (button.id === 'mapBtn') { view = view === 'map' ? 'side' : 'map'; showMapCard(); return; }
   switch (button.dataset.act) {
     case 'sound': soundOn = !soundOn; try { localStorage.setItem('extraction_sound', soundOn ? 'on' : 'off'); } catch { /* ignore */ } if (soundOn) blip([660, 880]); render(); break;
     case 'mapclose': mapSel = null; showMapCard(); break;
     case 'mapback': view = 'side'; mapSel = null; showMapCard(); break;
-    case 'newplanet-ai': {
+    case 'newplanet-ask': if (state.simSeconds > 120) { pendingPlanet = true; render(); break; } /* fall through: nothing to lose yet */
+    case 'newplanet-go': {
+      pendingPlanet = false;
       const prompt = ($('#planetPrompt') && $('#planetPrompt').value) || planetPromptValue; planetPromptValue = prompt; planetBusy = true; render();
       generatePlanet(prompt).then(({ planet: p, how, error }) => {
-        planet = p; regionId = p.regions[0].id; skinOres(); savePlanet(planet, regionId);
-        toast(how === 'ai' ? `The Maker delivered ${planet.name}.` : `The Maker improvised ${planet.name}${error ? ` (${error})` : ''}.`, 'success');
+        planet = p; regionId = p.regions[0].id; skinOres(); savePlanet(planet, regionId); freshMine();
+        toast(how === 'ai' ? `The Maker delivered ${planet.name}. A new mine is open.` : `The Maker improvised ${planet.name}${error ? ` (${error})` : ''}. A new mine is open.`, 'success');
       }).finally(() => { planetBusy = false; render(); });
       break;
     }
+    case 'newplanet-no': pendingPlanet = false; render(); break;
+    case 'relocate-ask': pendingRelocate = button.dataset.rid; if (view === 'map') showMapCard(); else render(); break;
+    case 'relocate-no': pendingRelocate = null; if (view === 'map') showMapCard(); else render(); break;
+    case 'relocate-yes': {
+      regionId = pendingRelocate; pendingRelocate = null; savePlanet(planet, regionId); freshMine(); view = 'side'; camSide.auto = true; mapSel = null; showMapCard(); render();
+      toast(`A new mine is open in ${region().name}. Common ore: ${ORES.find((o) => o.id === state.site.commonOreId).name}.`, 'success'); break;
+    }
+    case 'noop': break;
     case 'ai-save': { const key = $('#aiKey').value.trim(); saveAiSettings({ provider: $('#aiProvider').value, key, model: aiSettings().model }); toast('AI settings saved in this browser.', 'success'); render(); break; }
     case 'ai-test': {
       saveAiSettings({ provider: $('#aiProvider').value, key: $('#aiKey').value.trim(), model: aiSettings().model });
@@ -465,7 +514,7 @@ document.addEventListener('click', (event) => {
     case 'reset': resetPromptOpen = true; render(); break;
     case 'cancel-reset': resetPromptOpen = false; render(); break;
     case 'confirm-reset':
-      state = createGameState(); paused = false; catchupRemaining = 0; catchingUp = false; catchupKind = 'offline'; resetPromptOpen = false; recovering = '';
+      state = createGameState(siteOpts()); paused = false; catchupRemaining = 0; catchingUp = false; catchupKind = 'offline'; resetPromptOpen = false; recovering = '';
       save(); render(); toast('Fresh local mine opened.', 'success'); break;
     default:
   }

@@ -7,6 +7,7 @@ import {
 import { SPEC, ridgeLayer, drawDecor, drawOverlay, waterColor } from './terrains.js';
 import { tierOf } from './upgrades.js';
 import { MAPW, TERRAINS } from './planet.js';
+import { faceDistance, toolHardness, veinStatus } from './model.js';
 
 const SX = 290; // lift shaft x
 const WW = 1060; // world width framed at default zoom
@@ -61,7 +62,7 @@ function ridge(T, wx, L, sd, planet) {
     case 'crystal': {
       const cell = L ? 30 : 44; const idx = Math.floor(wx / cell); const cen = idx * cell + cell * (0.3 + h01(idx, sd) * 0.4);
       const H = (L ? 26 : 54) + h01(idx + 99, sd) * (L ? 30 : 70); const w = cell * 0.5; const d = Math.abs(wx - cen);
-      const col = planet.ores[(idx + L * 2 + ((sd >> 3) % 7) + 70) % planet.ores.length].color;
+      const col = planet.ores[(idx + L * 2 + ((sd >>> 3) % 7) + 70) % planet.ores.length].color;
       return d < w ? { h: Math.max(L ? 3 : 6, H * (1 - d / w)), c: col } : { h: L ? 3 : 6 };
     }
     case 'fungal': {
@@ -102,7 +103,7 @@ function drawSkyline(planet, region, hy, s, sd, craters) {
       if (r.crown) pB(col, top, 2, Math.min(h, Math.max(3, Math.round(9 * s))), hexMix('#3a6a34', planet.sky[1], L ? 0.05 : 0.18));
       if (spec) {
         if (spec.stripes) for (let y = top; y < top + segH; y += stripe) { if (((y - top) / stripe) % 2 === 0) pB(col, y, 2, 1, sh(c, 0.1)); }
-        if (spec.windows && h > 8) for (let y = top + 2; y < hy - 2; y += Math.max(3, Math.round(4 * s))) { if (h01w(col * 13 + y, sd) < 0.2) pB(col, y, 1, 1, hexMix(planet.ores[(sd >> 2) % 7].color, '#ffffff', 0.5)); }
+        if (spec.windows && h > 8) for (let y = top + 2; y < hy - 2; y += Math.max(3, Math.round(4 * s))) { if (h01w(col * 13 + y, sd) < 0.2) pB(col, y, 1, 1, hexMix(planet.ores[(sd >>> 2) % 7].color, '#ffffff', 0.5)); }
         if (spec.holes && h > 8) for (let y = top + 3; y < hy - 2; y += Math.max(4, Math.round(5 * s))) { if ((col >> 1) % 3 === 0) pB(col, y, 1, 1, sh(c, -0.4)); }
         if (r.snow) pB(col, top, 2, Math.min(Math.max(2, Math.round(5 * s)), h), L ? '#ffffff' : '#cfe6f6');
         else if (spec.glint && r.cap) pB(col, top, 2, 1, '#ffffff');
@@ -247,6 +248,7 @@ export function addFx(wx, wy, text, col) {
   const born = performance.now() / 1000; const R0 = rng(Math.floor(born * 1000));
   POPS.push({ wx, wy, text, col: col || '#ffd23f', born, bits: Array.from({ length: 14 }, () => ({ a: R0() * 6.283, v: 20 + R0() * 40, c: R0() < 0.5 ? col || '#ffd23f' : '#ffffff' })) });
 }
+export const veinSpot = (shaftNumber, vein) => [SX + 15 + vein.at, lvY(shaftNumber - 1) - TH * 0.6];
 export const FX_SPOTS = { lift: [SX, -70], dig: [SX + 150, LV0 - 14], yard: [YARD_X0 + 100, -30], shipSpeed: [PAD_X, -50], shipCapacity: [PAD_X, -50], loading: [PAD_X - 40, -60], habitat: [HAB_X, -44], bunkhouse: [SX + 40, LV0 - 20], cart: [SX + 60, LV0 - 20], shaft: [SX, 20] };
 
 export function clampCam(cam, state) {
@@ -339,45 +341,83 @@ export function renderScene(canvas, ctx, data) {
   const top = drawHeadframe(liftTier, t, state.production.surface.capacityUnits > 0 && state.production.surface.unitsByOre.reduce((a, r) => a + r.units, 0) / state.production.surface.capacityUnits > 0.9);
   const oreAt = (oreId) => planet.ores[Math.max(0, oreIndex(oreId))];
 
-  // tunnels
+  // tunnels, dug out as the crew mines; deposits in the rock ahead; veins to reach
   let shownCount = 0;
+  const commonOre = oreAt(state.site.commonOreId);
+  const toolCap = (sf) => toolHardness(sf.digLevel);
   for (let i = 0; i < shafts.length; i += 1) {
     const y = lvY(i); if (y - TH > vy1 || y < vy0) continue; shownCount += 1;
-    const sf = shafts[i]; const o = oreAt(sf.oreId); const digTier = tierOf('dig', sf.digLevel).i;
-    const dig = Math.min(320, 24 * Math.log2(1 + sf.digLevel)); const lenR = 200 + dig; const lenL = 120 + dig * 0.4;
+    const sf = shafts[i]; const n = sf.shaftNumber; const digTier = tierOf('dig', sf.digLevel).i;
+    const faceD = faceDistance(state.shaftMined[n] || 0);
+    const lenR = shaftW + 26 + faceD; const lenL = shaftW + 18 + faceD * 0.4;
     const xl = SX - lenL; const xr = SX + lenR;
+    const veinsHere = (state.veins || []).filter((v) => v.shaftNumber === n);
+    const working = veinsHere.find((v) => veinStatus(state, v) === 'mining');
+    const activeOre = oreAt(sf.oreId);
+
+    // rock ahead of the face: the common ore seam this shaft is eating, and the rare veins waiting in it
+    for (let k = 0; k < 9; k += 1) {
+      const x = SX + shaftW + 34 + k * 40 + h01(k + n * 17, 5) * 14; if (x < xr + 6 || x > cvx1 + 40) continue;
+      const im = oreSprite(commonOre.color, commonOre.cat, 2 + (k % 2), 200 + k + n * 3); pS(im, x, y - TH * 0.5 + (h01(k + n, 9) - 0.5) * 16, im.width / 2, im.height / 2, false);
+    }
+    for (const v of veinsHere) {
+      const vo = oreAt(v.oreId); const st = veinStatus(state, v); const vx = SX + shaftW + v.at;
+      if (vx < cvx0 - 40 || vx > cvx1 + 40) continue;
+      const frac = v.remainingUnits / v.sizeUnits; const count = st === 'empty' ? 0 : Math.max(3, Math.round(4 + frac * 9));
+      const twinkle = st === 'ahead' || st === 'blocked' ? 0.6 + 0.4 * Math.sin(t * 3 + v.at) : 1;
+      for (let k = 0; k < count; k += 1) {
+        const r = 4 + (k % 3) + Math.round(frac * 2); const im = oreSprite(vo.color, vo.cat, r, 700 + k + v.at);
+        const ang = k * 2.4 + v.at; const rad = 6 + (k % 4) * 6;
+        const px = vx + Math.cos(ang) * rad * 1.4; const py = y - TH * 0.5 + Math.sin(ang) * Math.min(rad * 0.9, TH * 0.9);
+        g.globalAlpha = twinkle; pS(im, px, py, im.width / 2, im.height / 2, false); g.globalAlpha = 1;
+      }
+      if (st === 'mining') { g.globalAlpha = 0.18 + 0.1 * Math.sin(t * 6); pD(bx(vx), by(y - TH * 0.5), 20 * s + 2, vo.color, g, true); g.globalAlpha = 1; }
+      if (st === 'empty') { pR(vx - 7, y - TH + 5, 14, TH - 8, '#140a1c'); pR(vx - 7, y - TH + 5, 14, 1, '#2a1c38'); }
+      if (s >= 0.35 && st !== 'empty') labels.push({ x: bx(vx), y: by(y - TH - 6), text: st === 'blocked' ? `⛏ ${vo.name.toUpperCase()}: PICK TOO WEAK` : `${vo.name.toUpperCase()} ${Math.round(frac * 100)}%`, col: st === 'blocked' ? '#ff5a6e' : vo.color });
+    }
+
+    // the dug tunnel itself
     pR(xl, y - TH, xr - xl, TH, '#1d1228');
     for (let x = Math.max(xl, cvx0 - 4); x < Math.min(xr, cvx1 + 4); x += 4) { const j = Math.floor(h01(Math.floor(x / 4) + i * 131, 7) * 3); if (j) pR(x, y - TH - j, 4, j, '#1d1228'); if ((Math.floor(x / 9) + i) % 5 === 0) pR(x, y - TH + 5 + ((x * 7) % 9), 1, 1, '#2a1c38'); }
     pR(xl, y - 2, xr - xl, 2, '#3a2a3a'); pR(xl, y - TH, xr - xl, 1, '#140a1c');
-    for (const sd2 of [-1, 1]) { const fx = sd2 > 0 ? xr : xl; for (let k = 0; k < 5; k += 1) pR(fx - (sd2 > 0 ? 0 : 2) + (k % 2 ? sd2 : 0), y - TH + k * 6, 2, 5, '#1d1228'); }
-    // timber at the shaft mouth so it reads as a doorway into the tunnel
+    for (const sd2 of [-1, 1]) { const fx = sd2 > 0 ? xr : xl; for (let k = 0; k < 6; k += 1) pR(fx - (sd2 > 0 ? 0 : 2) + (k % 2 ? sd2 * 2 : 0), y - TH + k * 5, 3, 5, '#2a1c38'); }
     for (const sd2 of [-1, 1]) { const dx = SX + sd2 * (shaftW + 3); pR(dx - 1, y - TH + 1, 3, TH - 1, '#7a5230'); pR(dx - 1, y - TH + 1, 1, TH - 1, '#9a7046'); }
     pR(SX - shaftW - 4, y - TH, shaftW * 2 + 8, 3, '#8a6238');
-    for (let x = xl + 10; x < xr - 6; x += 56) { if (Math.abs(x - SX) < shaftW + 10) continue; pR(x - 1, y - TH + 1, 2, TH - 2, '#7a5230'); pR(x - 5, y - TH + 1, 10, 2, '#8a6238'); pR(x - 1, y - TH + 1, 1, TH - 2, '#9a7046'); }
+    for (let x = xl + 10; x < xr - 14; x += 56) { if (Math.abs(x - SX) < shaftW + 10) continue; pR(x - 1, y - TH + 1, 2, TH - 2, '#7a5230'); pR(x - 5, y - TH + 1, 10, 2, '#8a6238'); pR(x - 1, y - TH + 1, 1, TH - 2, '#9a7046'); }
     for (let x = xl + 18; x < xr - 10; x += 44) { if (Math.abs(x - SX) < shaftW + 8) continue; lampGlow(x, y - TH + 7); }
     for (let x = xl; x < xr; x += 6) pR(x, y - 1, 3, 1, '#6a5a6a');
     lampGlow(SX - shaftW + 3, y - TH + 7); lampGlow(SX + shaftW - 3, y - TH + 7);
-    const faceN = 4 + Math.min(6, Math.floor(sf.digLevel / 40));
-    for (let k = 0; k < faceN; k += 1) { const im = oreSprite(o.color, o.cat, 3 + (k % 3), 100 + k + i * 7); pS(im, xr - 4 + (k % 2) * 3, y - TH + 3 + (k * 7) % (TH - 6), im.width / 2, im.height / 2, false); }
-    // ore the miners already knocked loose along the tunnel floor
-    for (let k = 0; k < 5; k += 1) { const x = xr - 30 - k * 17; if (x > SX + shaftW + 10) { pR(x, y - 4, 3, 2, sh(o.color, -0.2)); pR(x + 1, y - 5, 2, 1, o.color); } }
+    // fresh face: raw ore studded rock the crew is chewing into
+    const faceCol = working ? oreAt(working.oreId) : commonOre;
+    for (let k = 0; k < 5; k += 1) { const im = oreSprite(faceCol.color, faceCol.cat, 3 + (k % 2), 100 + k + n * 7); pS(im, xr - 3 + (k % 2) * 2, y - TH + 4 + k * 5, im.width / 2, im.height / 2, false); }
+    // rubble and loose ore along the floor
+    for (let k = 0; k < 6; k += 1) { const x = xr - 22 - k * 19; if (x > SX + shaftW + 10) { pR(x, y - 4, 3, 2, sh(activeOre.color, -0.2)); pR(x + 1, y - 5, 2, 1, activeOre.color); } }
+    // buffer waiting for the lift
     const bufFrac = sf.bufferUnits / Math.max(1, sf.bufferCapacityUnits);
-    if (sf.bufferUnits > 0.3) { pile(SX + shaftW + 12, y - 2, sf.bufferUnits * 3, o.color, 4 + bufFrac * 14); if (bufFrac > 0.9) { g.globalAlpha = Math.floor(t * 4) % 2 ? 1 : 0.3; pR(SX + shaftW + 24, y - 18, 3, 5, '#ff5a6e'); g.globalAlpha = 1; } }
-    const crew = Math.min(6, sf.workersAssigned);
-    for (let m = 0; m < crew; m += 1) {
+    if (sf.bufferUnits > 0.3) { pile(SX + shaftW + 12, y - 2, sf.bufferUnits * 3, activeOre.color, 4 + bufFrac * 14); if (bufFrac > 0.9) { g.globalAlpha = Math.floor(t * 4) % 2 ? 1 : 0.3; pR(SX + shaftW + 24, y - 18, 3, 5, '#ff5a6e'); g.globalAlpha = 1; } }
+    // the crew: diggers at the face (rock chips fly), haulers with an ore cart back to the shaft
+    const crewShown = Math.min(8, sf.workersAssigned);
+    const diggers = Math.max(sf.workersAssigned > 0 ? 1 : 0, Math.ceil(crewShown * 0.6));
+    for (let m = 0; m < crewShown; m += 1) {
       const tier = Math.min(5, 1 + digTier);
-      if (m % 2 === 0) {
-        const fx = xr - 14 - Math.floor(m / 2) * 16;
-        const frame = [0, 1, 2, 1][Math.floor(simNow * 1.2 * 4 + m * 3 + i) % 4];
+      if (m < diggers) {
+        const fx = xr - 10 - m * 14;
+        const frame = [0, 1, 2, 1][Math.floor(simNow * 4 + m * 3 + i) % 4];
         pS(personSprite({ skin: skinFor(planet), head: 'dome', role: 'miner', pose: 'swing', frame, tier }), fx, y - 2, 10, 26, false);
-        if (Math.floor(simNow * 2 + m + i) % 4 === 0) pR(fx + 8, y - 12, 2, 2, '#ffe9a0');
+        if (m === 0 || m === 1) for (let q = 0; q < 4; q += 1) { const ph = (simNow * 2.2 + q * 0.25 + m * 0.31) % 1; g.globalAlpha = 1 - ph; pR(xr + 2 + ph * 9, y - 16 - Math.sin(ph * 3.14) * 8 + ph * 8, 2, 2, q % 2 ? sh(faceCol.color, 0.2) : '#7a6a7a'); g.globalAlpha = 1; }
+        if (working && m < 2 && Math.floor(simNow * 4 + m) % 3 === 0) { g.globalAlpha = 0.9; pR(xr - 1 + (m % 2) * 3, y - 18 - (m % 2) * 3, 2, 2, '#ffffff'); g.globalAlpha = 1; }
       } else {
-        const span = lenR - shaftW - 50; const ph = ((simNow * 0.07 * (1 + (m % 3) * 0.3) + m * 0.31 + i * 0.17) % 1);
+        const span = lenR - shaftW - 40; const ph = ((simNow * 0.06 * (1 + (m % 3) * 0.25) + m * 0.29 + i * 0.17) % 1);
         const dirRight = ph < 0.5; const k2 = dirRight ? ph * 2 : (1 - ph) * 2;
-        pS(personSprite({ skin: skinFor(planet), head: 'dome', role: 'miner', pose: 'walk', frame: [0, 1, 0, 2][Math.floor(simNow * 4 + m) % 4], tier: 1, load: dirRight ? null : o.color }), SX + shaftW + 24 + span * k2, y - 2, 10, 26, !dirRight);
+        pS(personSprite({ skin: skinFor(planet), head: 'dome', role: 'miner', pose: 'walk', frame: [0, 1, 0, 2][Math.floor(simNow * 4 + m) % 4], tier: 1, load: dirRight ? null : activeOre.color }), SX + shaftW + 24 + span * k2, y - 2, 10, 26, !dirRight);
       }
     }
-    if (s >= 0.3) labels.push({ x: bx(xl + 8), y: by(y - TH + 9), left: true, text: `${String(sf.shaftNumber).padStart(2, '0')} ${o.name.toUpperCase()}`, col: o.color });
+    if (sf.workersAssigned > 0) {
+      const ph = (simNow * 0.05 + i * 0.37) % 1; const k2 = ph < 0.5 ? ph * 2 : (1 - ph) * 2; const cx = SX + shaftW + 18 + (lenR - shaftW - 50) * k2;
+      pR(cx - 6, y - 8, 12, 5, '#4a3a5a'); pR(cx - 6, y - 8, 12, 1, '#7a6a8a'); pR(cx - 4, y - 3, 3, 3, '#1a1022'); pR(cx + 2, y - 3, 3, 3, '#1a1022'); if (ph >= 0.5) pR(cx - 5, y - 11, 10, 3, activeOre.color);
+    }
+    if (sf.workersAssigned > 8 && s >= 0.35) labels.push({ x: bx(xr - 40), y: by(y - TH - 6), text: `×${sf.workersAssigned}`, col: '#f4edff' });
+    if (s >= 0.3) labels.push({ x: bx(xl + 8), y: by(y - TH + 9), left: true, text: `${String(n).padStart(2, '0')} ${commonOre.name.toUpperCase()}${working ? ` + ${oreAt(working.oreId).name.toUpperCase()}` : ''}`, col: working ? oreAt(working.oreId).color : commonOre.color });
   }
   // rope and cage ride inside the shaft
   const cp = (simNow * (0.08 + liftTier * 0.02)) % 1; const ck = cp < 0.5 ? ease(cp * 2) : ease((1 - cp) * 2); const cageY = 8 + ck * Math.max(0, bottom - 24);

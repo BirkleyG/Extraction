@@ -241,3 +241,5 @@ h3{margin:28px 0 12px}
 .up2 .bulk{margin-top:10px}
 @media (max-width:520px){.up2{grid-template-columns:44px minmax(0,1fr)}.up2-buy{grid-column:1/-1}}
 @media (max-width:860px){.layout{grid-template-columns:1fr}.tabbody{padding:16px 16px 48px}.mapbtn{width:76px;height:60px}.stage-tag{display:none}}
+.vein{background:var(--ink);border:2px solid var(--line);padding:8px 10px;display:flex;flex-direction:column;gap:6px;margin:6px 0}
+.vein.blocked{border-color:var(--bad)}.vein.mining{border-color:var(--ok)}.vein.empty{opacity:.6}
