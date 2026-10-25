@@ -34,3 +34,7 @@ There is no build step and no dependencies to install. Firebase's SDK is loaded 
 ## Credits
 
 Originally built as a Claude artifact; moved to a standalone GitHub Pages site.
+
+## Authoritative backend development
+
+The first A1 accounting foundation is developed separately from the browser prototype. See [backend/README.md](backend/README.md) for local setup and tests. It is not yet a deployed server or connected to gameplay.
