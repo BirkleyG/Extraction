@@ -1,4 +1,5 @@
 import { createProductionState, liftRatePerMinute, shaftRatePerMinute, tickProductionSecond, withdrawSurfaceUnits } from '../backend/src/production.js';
+import { tierOf } from './upgrades.js';
 
 export const SAVE_KEY = 'extraction_playtest_v1';
 export const SAVE_VERSION = 1;
@@ -16,6 +17,106 @@ export const DESTINATIONS = Object.freeze([
   Object.freeze({ id: 'frontier-refinery', name: 'Frontier Refinery', detail: 'Near · steady bid', distance: 1, basePrice: 500, unloadUnitsPerMinute: 30, budget: 1_000_000_000, capacity: 1_000_000, accent: '#e7a15a' }),
   Object.freeze({ id: 'cinder-buyer', name: 'Cinder Bay Buyer', detail: 'Far · premium bid', distance: 3, basePrice: 800, unloadUnitsPerMinute: 18, budget: 250_000_000, capacity: 250_000, accent: '#66bfd0' }),
 ]);
+
+
+/* ---------- sites, common ore and rare veins (rulebook 04, provisional C-03 sizes) ----------
+ * A site has exactly one common ore (infinite) and a few rare veins hidden in its shafts. A shaft digs the common ore
+ * until its tunnel face reaches a vein that its pick is hard enough to break; the vein then supplies its rare ore until
+ * it is empty (T04-02, T04-03) and the shaft goes back to the common ore. The scene only illustrates this. */
+const textHash = (value) => { let h = 2166136261 >>> 0; const text = String(value); for (let i = 0; i < text.length; i += 1) { h ^= text.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
+const seededRng = (seed) => { let a = (seed >>> 0) || 1; return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; };
+export const COMMON_ORES = Object.freeze(['ferrite', 'cobalt']);
+export const RARE_ORES = Object.freeze(['lithium', 'sulfur', 'crystal', 'iridium']);
+export const MYTHIC_ORE = 'mythic';
+export const HARDNESS = Object.freeze({ ferrite: 1, cobalt: 2, lithium: 5, sulfur: 5, crystal: 6, iridium: 6, mythic: 9 });
+export const VEIN_SIZE = Object.freeze({ rare: 900, mythic: 3000 });
+export const TOUGH_TERRAINS = Object.freeze(['mesa', 'volcanic', 'canyon', 'glacier', 'alpine', 'badlands', 'arches', 'monoliths', 'rifts', 'crystal', 'scrapyard']);
+const TOOL_HARDNESS = [2, 4, 6, 8, 10];
+export const toolHardness = (digLevel) => TOOL_HARDNESS[tierOf('dig', digLevel).i];
+/** how far a shaft's tunnel face has been dug, in scene units, from the units it has mined */
+export const faceDistance = (minedUnits) => Math.min(360, 40 * Math.log2(1 + Math.max(0, minedUnits) / 4));
+const DEFAULT_SITE = Object.freeze({ seed: 'sandbox|home', regionId: 'home', commonOreId: 'ferrite', rareOreIds: RARE_ORES, mythic: true });
+
+export function makeSite(options) {
+  if (!options) return { ...DEFAULT_SITE, rareOreIds: [...DEFAULT_SITE.rareOreIds] };
+  const { planetId = 'sandbox', regionId = 'home', tough = false } = options;
+  const seed = `${planetId}|${regionId}`;
+  const R = seededRng(textHash(`${seed}|site`));
+  const commonOreId = COMMON_ORES[R() < 0.5 ? 0 : 1];
+  let rareOreIds = RARE_ORES.filter(() => R() < 0.55);
+  if (rareOreIds.length < 2) rareOreIds = RARE_ORES.filter((_, index) => index % 2 === Math.floor(R() * 2));
+  return { seed, regionId, commonOreId, rareOreIds, mythic: Boolean(tough) && R() < 0.7 };
+}
+
+export function generateVeins(site, shaftNumber) {
+  const R = seededRng(textHash(`${site.seed}|shaft${shaftNumber}`));
+  const chance = Math.min(0.8, 0.3 + 0.025 * shaftNumber);
+  const maxVeins = shaftNumber >= 12 ? 3 : shaftNumber >= 5 ? 2 : 1;
+  const veins = [];
+  for (let k = 0; k < maxVeins; k += 1) {
+    const forced = shaftNumber === 3 && k === 0 && site.rareOreIds.length > 0;
+    if (!forced && R() >= chance * (k === 0 ? 1 : 0.5)) continue;
+    const mythic = site.mythic && shaftNumber >= 24 && R() < 0.5;
+    const oreId = mythic ? MYTHIC_ORE : site.rareOreIds[Math.floor(R() * site.rareOreIds.length)];
+    if (!oreId) continue;
+    const richness = 0.6 + R() * 0.9;
+    const sizeUnits = Math.round(richness * (mythic ? VEIN_SIZE.mythic : VEIN_SIZE.rare) * (1 + 0.15 * (shaftNumber - 1)));
+    veins.push({ id: `v${shaftNumber}-${k}`, shaftNumber, oreId, at: Math.round(150 + R() * 170 + k * 25), sizeUnits, remainingUnits: sizeUnits, seen: false, warned: false });
+  }
+  return veins.sort((a, b) => a.at - b.at);
+}
+
+const shaftByNumber = (state, number) => state.production.shafts.find((shaft) => shaft.shaftNumber === number);
+export function veinStatus(state, vein) {
+  if (vein.remainingUnits <= 1e-9) return 'empty';
+  if (faceDistance(state.shaftMined?.[vein.shaftNumber] ?? 0) < vein.at) return 'ahead';
+  const shaft = shaftByNumber(state, vein.shaftNumber);
+  return !shaft || HARDNESS[vein.oreId] > toolHardness(shaft.digLevel) ? 'blocked' : 'mining';
+}
+function miningVein(state, shaftNumber) { return (state.veins || []).find((vein) => vein.shaftNumber === shaftNumber && veinStatus(state, vein) === 'mining'); }
+
+function addSurfaceUnits(production, oreId, units) {
+  const row = production.surface.unitsByOre.find((item) => item.oreId === oreId);
+  if (row) row.units += units; else production.surface.unitsByOre.push({ oreId, units });
+}
+
+/** one second of digging with vein bookkeeping wrapped around the shared flow tick */
+function mineOneSecond(next) {
+  const production = next.production;
+  let surfaceFree = production.surface.capacityUnits - production.surface.unitsByOre.reduce((sum, row) => sum + row.units, 0);
+  const caps = new Map(); const plan = [];
+  for (const shaft of production.shafts) {
+    const vein = miningVein(next, shaft.shaftNumber);
+    const want = vein ? vein.oreId : next.site.commonOreId;
+    let limit = null;
+    if (shaft.oreId !== want) {
+      if (shaft.bufferUnits <= 1e-9) shaft.oreId = want;
+      else if (surfaceFree >= shaft.bufferUnits) { addSurfaceUnits(production, shaft.oreId, shaft.bufferUnits); surfaceFree -= shaft.bufferUnits; shaft.bufferUnits = 0; shaft.oreId = want; }
+      else limit = shaft.bufferUnits; // changeover: no digging until the lift has cleared the old ore
+    }
+    const activeVein = vein && shaft.oreId === vein.oreId ? vein : null;
+    if (activeVein) limit = Math.min(limit ?? Infinity, shaft.bufferUnits + activeVein.remainingUnits);
+    if (limit !== null) { caps.set(shaft.shaftNumber, shaft.bufferCapacityUnits); shaft.bufferCapacityUnits = Math.max(shaft.bufferUnits, Math.min(shaft.bufferCapacityUnits, limit)); }
+    const amount = shaft.workersAssigned > 0 && shaft.bufferUnits < shaft.bufferCapacityUnits ? Math.min(shaftRatePerMinute(shaft) / 60, shaft.bufferCapacityUnits - shaft.bufferUnits) : 0;
+    plan.push({ shaftNumber: shaft.shaftNumber, amount, vein: activeVein ? activeVein.id : null });
+  }
+  next.production = tickProductionSecond(production);
+  for (const shaft of next.production.shafts) if (caps.has(shaft.shaftNumber)) shaft.bufferCapacityUnits = caps.get(shaft.shaftNumber);
+  for (const item of plan) {
+    const vein = item.vein ? next.veins.find((v) => v.id === item.vein) : null;
+    // only common digging pushes the tunnel face forward; working a vein holds the face at the vein
+    if (!vein) next.shaftMined[item.shaftNumber] = (next.shaftMined[item.shaftNumber] ?? 0) + item.amount;
+    if (!vein) continue;
+    vein.remainingUnits = Math.max(0, vein.remainingUnits - item.amount);
+    if (vein.remainingUnits < 1e-9) { vein.remainingUnits = 0; appendLog(next, `The ${ore(vein.oreId).name} vein in shaft ${vein.shaftNumber} ran dry. The shaft is back on ${ore(next.site.commonOreId).name}.`, 'vein'); }
+    else if (!vein.warned && vein.remainingUnits < vein.sizeUnits * 0.2) { vein.warned = true; appendLog(next, `The ${ore(vein.oreId).name} vein in shaft ${vein.shaftNumber} is below 20 percent.`, 'vein'); }
+  }
+  for (const vein of next.veins) {
+    if (vein.seen) continue;
+    const status = veinStatus(next, vein);
+    if (status === 'mining' || status === 'blocked') { vein.seen = true; appendLog(next, status === 'mining' ? `Shaft ${vein.shaftNumber} broke into a vein of ${ore(vein.oreId).name}.` : `Shaft ${vein.shaftNumber} found a vein of ${ore(vein.oreId).name}, but the pick is too weak to break it.`, 'vein'); }
+  }
+}
 
 const MAX_COIN = Number.MAX_SAFE_INTEGER;
 const fail = (code, message = code) => { const error = new Error(message); error.code = code; throw error; };
@@ -60,7 +161,7 @@ function newProductionState(shafts, lift, surface, elapsedSeconds = 0) {
 function shaftBlueprint(number, upgrades = {}, workersAssigned = 0) {
   return {
     shaftNumber: number,
-    oreId: ORES[(number - 1) % ORES.length].id,
+    oreId: upgrades.oreId ?? ORES[0].id,
     digLevel: upgrades.digLevel ?? 1,
     bunkhouseLevel: upgrades.bunkhouseLevel ?? 0,
     workersAssigned,
@@ -99,7 +200,8 @@ function changeCoin(state, delta, type, description, externalAccount) {
   addLedger(state, type, Math.abs(delta), description, externalAccount);
 }
 
-export function createGameState() {
+export function createGameState(siteOptions) {
+  const site = makeSite(siteOptions);
   const buyers = DESTINATIONS.map((destination) => ({
     id: destination.id,
     funds: destination.budget,
@@ -115,8 +217,11 @@ export function createGameState() {
     totalExternalEarnings: 0,
     workersHired: 5,
     upgrades: { habitat: 0, yard: 0, shipCapacity: 0, shipSpeed: 0, loading: 0 },
-    production: newProductionState([shaftBlueprint(1, {}, 5)], { level: 1, baseRatePerMinute: 2, curve: 'exponential', growth: BASE_LIFT_GROWTH }, { capacityUnits: 100, unitsByOre: [] }),
+    production: newProductionState([shaftBlueprint(1, { oreId: site.commonOreId }, 5)], { level: 1, baseRatePerMinute: 2, curve: 'exponential', growth: BASE_LIFT_GROWTH }, { capacityUnits: 100, unitsByOre: [] }),
     ship: { capacityUnits: 150, speedPerMinute: 0.5, loadingUnitsPerMinute: 60, readyAtSecond: 0, loading: false, cargoOreId: null, cargoUnits: 0 },
+    site,
+    veins: generateVeins(site, 1),
+    shaftMined: {},
     buyers,
     selectedDestinationId: DESTINATIONS[0].id,
     autoLaunch: true,
@@ -290,7 +395,7 @@ export function stepGame(inputState) {
   const state = validateGameState(inputState);
   const next = clone(state);
   next.simSeconds += 1;
-  next.production = tickProductionSecond(next.production);
+  mineOneSecond(next);
   let advanced = arriveShipments(next);
   advanced = launchIfReady(advanced);
   return validateGameState(advanced);
@@ -358,7 +463,8 @@ export function buyNextShaft(inputState) {
   if (state.coins < cost) fail('INSUFFICIENT_FUNDS');
   const next = clone(state);
   changeCoin(next, -cost, 'SYSTEM_PURCHASE', `Unlocked shaft ${number}`, 'sink:SYSTEM_PURCHASE');
-  next.production.shafts.push(shaftBlueprint(number, { liftLevel: next.production.lift.level }, 0));
+  next.production.shafts.push(shaftBlueprint(number, { liftLevel: next.production.lift.level, oreId: next.site.commonOreId }, 0));
+  next.veins.push(...generateVeins(next.site, number));
   rebalanceWorkers(next);
   appendLog(next, `Shaft ${number} opened. Assign workers through the hire panel.`, 'purchase');
   return validateGameState(next);
@@ -423,6 +529,12 @@ export function grantDevCoins(inputState, amount = 10000) {
   changeCoin(next, amount, 'DEV_TEST_GRANT', 'Local developer test grant', 'source:DEV_TEST_GRANT');
   appendLog(next, `${amount} local test coins added by developer tools.`, 'grant');
   return validateGameState(next);
+}
+
+/** a shaft's output with a chosen crew size (default: the crew it has now) */
+export function shaftRateFor(state, shaftNumber, workers) {
+  const shaft = findShaft(state, shaftNumber);
+  return shaftRatePerMinute({ ...shaft, workersAssigned: workers ?? shaft.workersAssigned });
 }
 
 export function currentRates(state) {
@@ -496,7 +608,13 @@ export function validateGameState(input) {
   if (Object.keys(input.shipmentStatusById).length !== shipmentIds.size || Object.keys(input.shipmentStatusById).some((id) => !shipmentIds.has(id))) fail('INVALID_SAVE');
   if (input.ledger.some((entry) => !entry || typeof entry.description !== 'string' || typeof entry.externalAccount !== 'string' || !Number.isSafeInteger(entry.atSecond) || entry.atSecond < 0 || entry.atSecond > input.simSeconds || !Number.isSafeInteger(entry.amount) || entry.amount < 0 || !Number.isSafeInteger(entry.ownerDelta) || !Number.isSafeInteger(entry.externalDelta))) fail('INVALID_SAVE');
   if (input.log.some((entry) => !entry || typeof entry.message !== 'string' || !Number.isSafeInteger(entry.atSecond) || entry.atSecond < 0 || entry.atSecond > input.simSeconds)) fail('INVALID_SAVE');
-  return { ...input, production };
+  const site = input.site ?? makeSite();
+  if (typeof site.commonOreId !== 'string' || !COMMON_ORES.includes(site.commonOreId) || !Array.isArray(site.rareOreIds) || site.rareOreIds.some((id) => !RARE_ORES.includes(id))) fail('INVALID_SAVE', 'Site is malformed');
+  const veins = input.veins ?? production.shafts.flatMap((shaft) => generateVeins(site, shaft.shaftNumber));
+  if (!Array.isArray(veins) || veins.some((vein) => !vein || !ore(vein.oreId) || HARDNESS[vein.oreId] < 5 || !Number.isFinite(vein.sizeUnits) || !Number.isFinite(vein.remainingUnits) || vein.remainingUnits < 0 || vein.remainingUnits > vein.sizeUnits + 1e-9 || !production.shafts.some((shaft) => shaft.shaftNumber === vein.shaftNumber))) fail('INVALID_SAVE', 'Veins are malformed');
+  const shaftMined = input.shaftMined ?? {};
+  if (typeof shaftMined !== 'object' || Object.values(shaftMined).some((value) => !Number.isFinite(value) || value < 0)) fail('INVALID_SAVE', 'Mined totals are malformed');
+  return { ...input, production, site, veins, shaftMined };
 }
 
 export function coinRatePerMinute(state) {
