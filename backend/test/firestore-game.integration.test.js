@@ -87,3 +87,40 @@ test('Firestore: month close resumes after a crash with one snapshot and one bur
   assert.deepEqual(again, archive);
   void e2;
 });
+
+test('HTTP game API with emulator-issued ID tokens end to end on Firestore', async () => {
+  const { getAuth } = await import('firebase-admin/auth');
+  const { createGameHttpServer } = await import('../src/game-http.js');
+  const { generateWorld } = await import('../src/world.js');
+  const env = process.env;
+  const res = await fetch(`http://${env.FIREBASE_AUTH_EMULATOR_HOST}/identitytoolkit.googleapis.com/v1/accounts:signUp?key=fake-api-key`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: `${randomUUID()}@example.test`, password: 'integration-password-123', returnSecureToken: true }),
+  });
+  const { idToken, localId } = await res.json();
+  const worldId = await world([localId]);
+  const game = new GameService(new FirestoreGameRepository(db), { npcBuyers: buyers.map((b) => ({ ...b, fundsCap: 1e9 })) });
+  await game.storePlanet({ worldId, monthId, planet: generateWorld({ seed: `e2e-seed-${randomUUID()}`, monthId, players: 2 }) });
+  await game.seedNpcBuyers({ worldId, monthId, nowSec: Math.floor(Date.now() / 1000) });
+  const server = createGameHttpServer({ auth: getAuth(app), game });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const base = `http://127.0.0.1:${server.address().port}/v1/worlds/${worldId}`;
+    const call = async (path, body, token = idToken) => {
+      const r = await fetch(`${base}/${path}`, { method: body ? 'POST' : 'GET', headers: { Authorization: `Bearer ${token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
+      return { status: r.status, body: await r.json() };
+    };
+    assert.equal((await call('state', undefined, 'not-a-real-token-at-all-xxxxxx')).status, 401);
+    assert.equal((await call('commands/enroll', { requestId: 'h1', expectedVersion: 0 })).status, 200);
+    let state = (await call('state')).body;
+    assert.equal(state.coin.spendable, 0);
+    assert.equal(state.yard.units, 5);
+    const sold = await call('commands/dispatch', { requestId: 'h2', expectedVersion: state.version, destinationId: 'near' });
+    assert.equal(sold.status, 200);
+    state = (await call('state')).body;
+    assert.equal(state.coin.spendable, 200);
+    const up = await call('commands/buyUpgrade', { requestId: 'h3', expectedVersion: state.version, line: 'dig', shaftNumber: 1, mode: 'max' });
+    assert.equal(up.status, 200);
+    assert((await call('state')).body.mine.shafts[0].digLevel > 1);
+    assert.equal((await call('commands/dispatch', { requestId: 'h4', expectedVersion: up.body.version, destinationId: 'near' })).status, 409, 'ship is away');
+  } finally { await new Promise((r, j) => server.close((e) => (e ? j(e) : r()))); }
+});
