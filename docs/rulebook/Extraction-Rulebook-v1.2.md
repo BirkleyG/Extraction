@@ -1560,6 +1560,13 @@ Changing a rule
 - **Provisional, C-03:** vein size = richness 0.6-1.5 x tier constant (rare 900, mythic 3000) x (1 + 0.15 x (shaft-1)); tool hardness by pick tier 2/4/6/8/10; tunnel-face distance 40 x log2(1 + units/4), capped. The below-20-percent warning is implemented; the proportional taper below 5 percent is **not** implemented in the sandbox. These are sandbox fixtures, not certified balance.
 - A shaft changing ore flushes any old-ore buffer to the surface yard when room allows, otherwise digging holds until the lift clears it. Tests added for T04-02, T04-03, tool hardness, determinism and one common ore per site. Presentation (tunnel digging, deposits, miners reaching and mining veins) illustrates this state and never changes it (T03-02).
 
+### Playability integration checkpoint · 26 October 2026
+
+- **CEO direction:** retain the legacy interface and pixel scene; prioritize an enjoyable mine → ship → sell → upgrade loop. Make engineering judgment calls, test changes and save frequent reviewable PRs without waiting for answers during this work session.
+- Two user-supplied files propose a separate **sandbox** economy: global Pick/Lift/Hauler ladders, stronger per-level effects, shorter trips and a fluid pacing simulator. They are implementation inputs, not certified balance or an amendment to the authoritative multiplayer caps. Section 10 owns adopted coefficient records; section 21 still owns acceptance.
+- Existing prototype, browser saves and server accounts must remain intact. Online clients continue to use trusted server commands. Presentation reuse must not make the browser authoritative.
+- Work and verification are tracked in [Playability progress](../development/Overnight-Progress.md). Release A remains incomplete.
+
 ## 23 — Advanced Combat and AI Military Command
 
 **Status: consolidated revision 1.2.** Approved rules use the register in 00; C-numbered coefficients remain calibration work.
