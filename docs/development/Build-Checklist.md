@@ -17,16 +17,16 @@ Legend: ✅ built and tested · 🟡 partial / sandbox-only · ⬜ not started �
 
 ---
 
-## Phase 0 — Decisions that block code (answer first)
+## Phase 0 — Decisions (answered 25 Oct 2026)
 
-- [ ] ❓ **Starting coin / catch-up grant amounts.** Rulebook demands "first purchase within 30s" (T01-01) and a 20%-of-median catch-up for late joiners, but no start grant is specified (backend deliberately has none configured).
-- [ ] ❓ **Same-timestamp event priority table** (section 17). Scheduler can't be finalized without it. *Recommendation:* production tick → hazards → market clear → departures/arrivals → contract deadlines → month close.
-- [ ] ❓ **Ore-unit precision.** Coin is integer; ore is float in the production model. Settlement needs integer (or fixed-point) units before shipments pay. *Recommendation:* integer units at the surface yard; fractional accumulation stays inside the production model.
-- [ ] ❓ **Q-05** AI budget ($2–3/mo) per world or per account. *Rec:* per world, AI off at launch.
-- [ ] ❓ **Q-06** Host/admin identity and Firebase project/region.
-- [ ] ❓ **Blaze budget ceiling** (Q-07) — scheduled workers need Cloud Functions → paid plan. Nothing deploys without a number.
-- [ ] ❓ **Worker pool/habitat costs, hire cost, NPC refinery offer formula, buyer budgets** — rulebook says "no implementation may guess an omitted coefficient". Authorize engineering to propose + simulate these (same as Q-08 did for lift).
-- [ ] ❓ **Which branch is Pages/default?** Plan notes the default branch was `claude/gallant-mayer-qls5b9`; Pages serves `main`. Confirm `main` is the one.
+- [x] **Starting coin = 0.** Catch-up grant for mid-month joiners = 20% of the current month's median player cumulative earnings (source `CATCH_UP_GRANT`; never counts as earnings). ⚠ See tension note below.
+- [x] **Same-timestamp event priority (engineering call, provisional until the scheduler is built):** 1 month-close boundary → 2 hazard/ecology/combat events → 3 production tick → 4 arrivals → 5 departures/commands → 6 contract deadlines → 7 hourly market clear → 8 news/AI. Ties then break by timestamp, then event ID.
+- [x] **Ore is whole units** (integers) at the yard, in ships, in reservations and in settlement. Fractional accumulation stays inside the production model; only whole units leave it.
+- [x] **Hosting budget: $2/month on Firebase Blaze, US East.** ⚠ Google budgets only send alerts; they do not cap spend. Design the scheduler for a small fixed number of jobs and measure reads/writes per tick before deploying.
+- [x] **Engineering may propose and simulate missing coefficients** (hire/habitat cost, NPC offer formula, buyer budgets), documented with evidence like C01-LIFT-02.
+- [x] **`main` is the GitHub Pages branch.** AI budget (Q-05) deferred; AI stays off. Q-06 admin identity still open (needs your Firebase project/UID when we deploy).
+
+**Tension to resolve (simple fix proposed):** with 0 coin, the first upgrade (15 coin) needs a first sale, and a 150-unit Hauler at ~5 units/min takes ~30 min to fill. T01-01 ("first purchase within 30 seconds") can't hold. Proposed: allow a partial-load paid departure so the first sale happens within ~1 minute, and tune the first NPC offer so that sale covers the first upgrade. Needs your OK because it changes the "5-minute first session" feel.
 
 ---
 

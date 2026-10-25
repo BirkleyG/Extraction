@@ -39,3 +39,5 @@ Sources checked: [Functions getting started](https://firebase.google.com/docs/fu
 - 25 October 2026: CEO answered Q-08: “Yes—tune provisional values and report evidence.” C-01 calibration work is authorized within approved caps/accounting/principles.
 
 - 25 October 2026: CEO authorizes more parallel subagents for faster progress, using cheaper models where practical. Separate implementation, focused model review and browser QA; avoid duplicate broad work.
+
+- 25 October 2026: CEO answered Phase 0 (see Build-Checklist): starting coin 0; catch-up grant 20% of median cumulative earnings; ore in whole units; hosting budget $2/month on Firebase Blaze (US East); engineering may tune missing coefficients; Pages branch is main; AI budget Q-05 deferred. Event priority table delegated to engineering (recorded in checklist; to be copied into section 17 when implemented).
