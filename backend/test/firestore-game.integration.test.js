@@ -8,6 +8,7 @@ import { GameService } from '../src/game-service.js';
 
 assert.equal(process.env.FIREBASE_PROJECT_ID, 'demo-extraction');
 const sha = (v) => createHash('sha256').update(v).digest('hex');
+const enc = (v) => Buffer.from(JSON.stringify(v)).toString('base64url');
 const app = initializeApp({ projectId: 'demo-extraction' }, `game-${randomUUID()}`);
 const db = getFirestore(app);
 const now = new Date();
@@ -199,4 +200,94 @@ test('Firestore scheduler persists zero-client earnings and duplicate ticks do n
   assert.equal(after.doc.shipmentCounter, before.doc.shipmentCounter);
   const ledger = await db.collection('worlds').doc(sha(worldId)).collection('owners').doc(sha('worker-owner')).collection('months').doc(monthId).collection('ledger').get();
   assert.equal(ledger.size, after.doc.shipmentCounter);
+});
+
+// ---------------------------------------------------------------------------------------------------------
+// Release A2 parity: the paid-departure transaction with the finite premium market, fleet and dock queue on real Firestore.
+// ---------------------------------------------------------------------------------------------------------
+const { generateWorld: genWorld } = await import('../src/world.js');
+const { createProductionState: mkProduction } = await import('../src/production.js');
+const { marketPath: marketDocPath } = await import('../src/market-view.js');
+const { ownerPath: ownerDocPath } = await import('../src/game-service.js');
+const { replayLedger: replay } = await import('../src/ledger.js');
+
+const premiumPlanet = (premium) => ({
+  ...genWorld({ seed: `a2-seed-${randomUUID()}`, monthId, players: 3 }), cosmeticSeed: 'c', weatherSeed: `ws-${randomUUID()}`,
+  refineries: ['refinery-1', 'refinery-2', 'refinery-3'].map((id, i) => ({ id, name: id, distance: 1 + i, bidPerUnit: 40, unloadUnitsPerMinute: 1000, docks: 2, premium: { fundsMax: 80, refillPerHour: 0, storageCapacity: 1000, drainPerHour: 0, ...premium } })),
+});
+async function a2World(owners, premium) {
+  const worldId = await world(owners);
+  const t0 = Date.now();
+  const game = new GameService(new FirestoreGameRepository(db), { npcBuyers: buyers });
+  await game.storePlanet({ worldId, monthId, planet: premiumPlanet(premium) });
+  const versions = {};
+  for (const o of owners) {
+    const e = await game.enroll(cmd(0), ctx(worldId, o, t0));
+    versions[o] = (await game.setPolicy(cmd(e.version, { auto: false }), ctx(worldId, o, t0))).version;
+  }
+  // rare ore on the yard with exact mass accounting, no weather, so the race is about money and slots only
+  const repo = new FirestoreGameRepository(db);
+  for (const o of owners) {
+    await repo.transact(async (tx) => {
+      const d = await tx.getDoc(ownerDocPath(worldId, o, monthId));
+      d.env = null; d.oreTiers['ore-9'] = 'rare';
+      d.production.surface.unitsByOre.push({ oreId: 'ore-9', units: 4 }); d.production.initialUnitsByOre.push({ oreId: 'ore-9', units: 4 });
+      d.production = mkProduction(d.production);
+      await tx.putDoc(ownerDocPath(worldId, o, monthId), d);
+    }, { worldId, ownerId: o, monthId });
+  }
+  return { worldId, game, versions, repo, t0 };
+}
+const walletOf = async (worldId, uid) => (await db.collection('worlds').doc(sha(worldId)).collection('owners').doc(sha(uid)).collection('months').doc(monthId).collection('ledger').get()).docs.map((d) => d.data());
+
+test('Firestore A2: two owners race the last premium coin across service instances; exactly one is paid it, ledger replays exactly (T18-11)', async () => {
+  const { worldId, versions, t0 } = await a2World(['p1', 'p2'], { fundsMax: 80 });
+  const s1 = new GameService(new FirestoreGameRepository(db), { npcBuyers: buyers });
+  const s2 = new GameService(new FirestoreGameRepository(db), { npcBuyers: buyers });
+  const out = await Promise.all([
+    s1.dispatch(cmd(versions.p1, { destinationId: 'refinery-1', units: 4 }), ctx(worldId, 'p1', t0 + 60_000)),
+    s2.dispatch(cmd(versions.p2, { destinationId: 'refinery-1', units: 4 }), ctx(worldId, 'p2', t0 + 60_000)),
+  ]);
+  assert.deepEqual(out.map((o) => o.shipment.payment).sort((a, b) => a - b), [160, 240]);
+  const reader = new FirestoreGameRepository(db);
+  const market = await reader.transact((tx) => tx.getDoc(marketDocPath(worldId, monthId, 'refinery-1')), { worldId, ownerId: 'system', monthId, readOnly: true });
+  assert.equal(market.premiumFunds, 0);
+  for (const uid of ['p1', 'p2']) {
+    const entries = (await walletOf(worldId, uid)).map(({ id, ownerId, monthId: m, timestamp, type, reference, postings }) => ({ id, ownerId, monthId: m, timestamp, type, reference, postings }));
+    const bal = replay(entries).balances.get(`owner:${enc(uid)}:${enc(monthId)}:spendable`);
+    const view = await s1.ownerView(uid, monthId, ctx(worldId, uid, t0 + 60_000));
+    assert.equal(bal, view.spendable);
+  }
+});
+
+test('Firestore A2: racing the last storage slot never over-fills the refinery', async () => {
+  const { worldId, versions, t0 } = await a2World(['q1', 'q2'], { fundsMax: 1_000_000, storageCapacity: 5 });
+  const s1 = new GameService(new FirestoreGameRepository(db), { npcBuyers: buyers });
+  const s2 = new GameService(new FirestoreGameRepository(db), { npcBuyers: buyers });
+  const out = await Promise.all([
+    s1.dispatch(cmd(versions.q1, { destinationId: 'refinery-1', units: 4 }), ctx(worldId, 'q1', t0 + 60_000)),
+    s2.dispatch(cmd(versions.q2, { destinationId: 'refinery-1', units: 4 }), ctx(worldId, 'q2', t0 + 60_000)),
+  ]);
+  assert.equal(out.reduce((a, o) => a + o.shipment.cargo.reduce((s, l) => s + l.premiumUnits, 0), 0), 5);
+  const market = await new FirestoreGameRepository(db).transact((tx) => tx.getDoc(marketDocPath(worldId, monthId, 'refinery-1')), { worldId, ownerId: 'system', monthId, readOnly: true });
+  assert.equal(market.storageUsed, 5);
+});
+
+test('Firestore A2: a rejected dispatch mutates nothing (ledger, owner, market) and a duplicate settles once', async () => {
+  const { worldId, game, versions, t0 } = await a2World(['r1'], { fundsMax: 80 });
+  const repo = new FirestoreGameRepository(db);
+  const snap = async () => JSON.stringify([(await walletOf(worldId, 'r1')).length, await repo.transact(async (tx) => [await tx.getDoc(ownerDocPath(worldId, 'r1', monthId)), await tx.getDoc(marketDocPath(worldId, monthId, 'refinery-1'))], { worldId, ownerId: 'r1', monthId, readOnly: true })]);
+  const at = t0 + 60_000;
+  await game.settleThrough({ worldId, ownerId: 'r1', monthId, toSec: Math.floor(at / 1000) });
+  const before = await snap();
+  await assert.rejects(game.dispatch(cmd(versions.r1, { destinationId: 'nowhere' }), ctx(worldId, 'r1', at)), code('UNKNOWN_DESTINATION'));
+  await assert.rejects(game.dispatch(cmd(versions.r1, { destinationId: 'refinery-1', units: 9999 }), ctx(worldId, 'r1', at)), code('INSUFFICIENT_STOCK'));
+  await assert.rejects(game.dispatch(cmd(versions.r1, { destinationId: 'refinery-1', shipId: 'ship-4' }), ctx(worldId, 'r1', at)), code('UNKNOWN_SHIP'));
+  assert.equal(await snap(), before);
+  const sale = cmd(versions.r1, { destinationId: 'refinery-1', units: 4 });
+  const [a, b] = await Promise.all([game.dispatch(sale, ctx(worldId, 'r1', at)), new GameService(new FirestoreGameRepository(db), { npcBuyers: buyers }).dispatch(sale, ctx(worldId, 'r1', at))]);
+  assert.deepEqual(a, b);
+  assert.equal((await walletOf(worldId, 'r1')).filter((e) => e.type === 'NPC_RAW_PURCHASE').length, 1, 'one payment, never paid again on arrival');
+  await game.settleThrough({ worldId, ownerId: 'r1', monthId, toSec: Math.floor(at / 1000) + 3600 });
+  assert.equal((await walletOf(worldId, 'r1')).filter((e) => e.type === 'NPC_RAW_PURCHASE' && e.reference === sale.requestId).length, 1);
 });

@@ -55,3 +55,14 @@ Sources checked: [Functions getting started](https://firebase.google.com/docs/fu
 ## Industry and browser-runtime direction · 26 October 2026
 
 The CEO asks for refineries, stations, global economies, all Release A features, responsive browser execution, approximately 30-second state polling, playtesting and connected dynamic AI. Engineering is implementing this in reviewable slices without blocking on questions. Local industry/home-safety previews and browser simulation are permitted; shared coin/trades remain server-validated. Existing paid-service ceilings remain in effect; BYOK AI uses explicit requests and no-key fallbacks. Full Release A/B acceptance is not inferred from adding preview tabs.
+
+## Release A2 interpretation checkpoint · 26 October 2026
+
+Recommendations below are **not approved rules**; the implemented behavior is provisional and listed so the CEO can overrule it.
+
+| ID | Decision needed | Recommendation / what A2 does now | Blocks | Answer |
+|---|---|---|---|---|
+| Q-11 | Coin price of an additional ship (section 05 gives only the ratios and "Freighter ~1.8x")? | A2 prices Hauler and Cruiser at 3,000 and Freighter at 5,400 (C-02 provisional), fleet cap 24 hulls. Calibrate with the A4 harness. | Fleet affordability tuning. | Pending |
+| Q-12 | (a) Section 03 says surplus miners are "ignored" with "!" — may players hire above shaft capacity? (b) Are ore hardness tool gates and mythic specialized equipment in A2? | (a) A2 allows hiring up to habitat capacity, ignores the surplus and shows "!" (previous code refused such hires). (b) Not implemented: veins can be mined at any dig level until a tool/equipment rule is approved. | Hardness gating, mythic equipment. | Pending |
+| Q-13 | Q-10 says computer-run raw buyers have no budget; section 02 says exhaustible NPC premium budgets must not become unlimited premium demand. | A2 keeps the base bid unlimited (Q-10) and makes only the rare/mythic *premium* finite (funds token bucket + premium storage, market-driven by fill level). Common ore is unaffected. | Whether rare ore should have any finite NPC demand at all. | Pending |
+| Q-14 | Shared refinery state (premium funds, docks) depends on commit order across owners; offline catch-up is committed in settlement order. | Accept: ledger/replay remain exact per owner; premium split between owners follows commit order. A per-owner quota would remove the order dependence at the cost of realism. | A4 fairness review. | Pending |
