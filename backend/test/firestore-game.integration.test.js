@@ -174,3 +174,29 @@ test('invite-only join, month preparation and scheduler tick over HTTP', async (
     assert.equal(tick.status, 200);
   } finally { await new Promise((r, j) => server.close((e) => (e ? j(e) : r()))); }
 });
+
+test('Firestore scheduler persists zero-client earnings and duplicate ticks do not pay twice', async () => {
+  const { WorldAdmin } = await import('../src/world-admin.js');
+  const worldId = await world(['worker-owner']);
+  const t0 = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1) + 3600_000;
+  const repository = new FirestoreGameRepository(db);
+  const game = new GameService(repository, { npcBuyers: buyers });
+  await game.enroll(cmd(0), ctx(worldId, 'worker-owner', t0));
+  const nowMs = t0 + 12 * 3600_000;
+  const makeAdmin = () => {
+    const admin = new WorldAdmin({ firestore: db, repository, game, seedSecret: 'emulator-worker-seed-only' });
+    admin.rollover = async () => ({ monthId, closed: [] });
+    return admin;
+  };
+  const result = await makeAdmin().tick({ worldId, nowMs });
+  assert.equal(result.done, true);
+  const before = await game.ownerView('worker-owner', monthId, ctx(worldId, 'worker-owner', nowMs));
+  assert(before.spendable > 0);
+  assert.equal(before.doc.simSecond, Math.floor(nowMs / 1000));
+  await Promise.all([makeAdmin().tick({ worldId, nowMs }), makeAdmin().tick({ worldId, nowMs })]);
+  const after = await game.ownerView('worker-owner', monthId, ctx(worldId, 'worker-owner', nowMs));
+  assert.equal(after.spendable, before.spendable);
+  assert.equal(after.doc.shipmentCounter, before.doc.shipmentCounter);
+  const ledger = await db.collection('worlds').doc(sha(worldId)).collection('owners').doc(sha('worker-owner')).collection('months').doc(monthId).collection('ledger').get();
+  assert.equal(ledger.size, after.doc.shipmentCounter);
+});

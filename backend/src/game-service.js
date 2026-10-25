@@ -177,18 +177,25 @@ export class GameService {
    */
   async settleThrough({ worldId = 'default', ownerId, monthId, toSec, closing = false }) {
     for (let batch = 0; batch < 200; batch += 1) {
-      const done = await this.repository.transact(async (tx) => {
-        const scope = { worldId, actorId: ownerId, monthId };
-        const doc = await tx.getDoc(ownerPath(worldId, ownerId, monthId));
-        if (!doc || doc.closedAtMs) return true;
-        const settled = settleAuto(doc, this.npcBuyers, toSec, { maxDepartures: MAX_DEPARTURES_PER_TX, maxTicks: MAX_COMMAND_CATCHUP_TICKS });
-        for (const d of settled.departures) await this.#postDeparture(tx, scope, d, `auto:${d.number}`, d.atSecond * 1000);
-        if (settled.departures.length || settled.state.simSecond !== doc.simSecond) await tx.putDoc(ownerPath(worldId, ownerId, monthId), await this.#withPeak(tx, scope, settled.state, settled.departures.at(-1)?.atSecond * 1000 ?? toSec * 1000));
-        return settled.done && (settled.departures.length < MAX_DEPARTURES_PER_TX);
-      }, { worldId, ownerId, monthId, requestId: `settle-${monthId}`, closing });
+      const done = await this.settleBatch({ worldId, ownerId, monthId, toSec, closing });
       if (done) return;
     }
     fail('CATCHING_UP', 'Backlog too large to settle in one pass');
+  }
+
+  /** One durable, bounded worker checkpoint. False means retry on the next scheduler invocation. */
+  async settleBatch({ worldId = 'default', ownerId, monthId, toSec, closing = false }) {
+    if (!monthPattern.test(monthId) || !Number.isSafeInteger(toSec) || toSec < 0) fail('INVALID_CLOCK');
+    return this.repository.transact(async (tx) => {
+      const scope = { worldId, actorId: ownerId, monthId };
+      const doc = await tx.getDoc(ownerPath(worldId, ownerId, monthId));
+      if (!doc) fail('NOT_ENROLLED');
+      if (doc.closedAtMs) return true;
+      const settled = settleAuto(doc, this.npcBuyers, toSec, { maxDepartures: MAX_DEPARTURES_PER_TX, maxTicks: MAX_COMMAND_CATCHUP_TICKS });
+      for (const d of settled.departures) await this.#postDeparture(tx, scope, d, `auto:${d.number}`, d.atSecond * 1000);
+      if (settled.departures.length || settled.state.simSecond !== doc.simSecond) await tx.putDoc(ownerPath(worldId, ownerId, monthId), await this.#withPeak(tx, scope, settled.state, settled.departures.at(-1)?.atSecond * 1000 ?? toSec * 1000));
+      return settled.done && (settled.departures.length < MAX_DEPARTURES_PER_TX);
+    }, { worldId, ownerId, monthId, requestId: `settle-${monthId}`, closing });
   }
 
   /** Track the highest coin-on-hand total and when it was first reached (tie-break: who reached an amount first). */

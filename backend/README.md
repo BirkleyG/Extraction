@@ -121,3 +121,9 @@ The browser sandbox uses `withdrawSurfaceUnits` for real surface-to-ship transfe
 - `POST /v1/worlds/:world/commands/{enroll|buyUpgrade|hire|buyShaft|dispatch}` – JSON commands with `requestId` + `expectedVersion`. The server sets the month and clock; unknown fields are rejected.
 
 Run against the local emulators (never production): start Auth/Firestore emulators, create the world and owner membership documents with `npm run bootstrap:world -- <world> <uid> <YYYY-MM>`, then `WORLD_ID=<world> npm run start:game` with the same emulator environment variables as the ledger server. Closing a month is `new MonthCloser(repository).close({ worldId, monthId, nowMs })` after the boundary (a scheduled trigger is still to be wired; see the build checklist). NPC bids/budgets in `src/npc.js` are provisional (C-02).
+
+## Scheduled progress checkpoint · 26 October 2026
+
+`POST /internal/tick` now runs `WorldAdmin.tick`: prepare/close months, read the current month's enrolled roster, then persist one bounded automatic-shipping settlement transaction per owner (up to 10). Each owner checkpoint and its payments commit together. Retries and concurrent ticks cannot pay the same departure twice. Partial or failed owners return `done: false` and resume from their last committed checkpoint on a later tick; other owners can still advance. No collection scan or per-player scheduler job is added. The internal shared-secret header remains required.
+
+The existing hourly scheduler can invoke this path after the updated backend is deployed. **Committing this code does not update Cloud Run.** This session does not provision infrastructure or deploy the runtime. Month-close processing retains its existing workload and still needs production timeout/cost measurement; this is not a general durable event queue or Release A certification.
