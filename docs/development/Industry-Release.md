@@ -38,3 +38,5 @@ Follow-up unit coverage: **68 local tests pass**, including automated sale sourc
 Browser timing verified one passive refresh at about 31 seconds over a 35-second observation, even when takeoff ETA was one second; commands/focus trigger immediate reconciliation. A real module worker completed a one-hour catch-up while 97 animation frames and 157 ten-millisecond heartbeat callbacks ran. Reload during a persisted intermediate worker checkpoint resumed exactly to the same one-hour state, with no duplicate sales, output or incidents. These are development measurements, not production latency guarantees.
 
 **AI verification:** schema, timeout, retry and deterministic fallback paths are tested with mocked providers. No live paid AI request was made; real provider content requires the player's configured key and an explicit request. The public no-key path is verified.
+
+The minimap now renders on paused/reduced-motion startup and refreshes when switching view or planet, even when the visual clock is frozen.

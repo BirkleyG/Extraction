@@ -660,9 +660,11 @@ function drawScene() {
   const t = reducedMotion || paused ? 0 : performance.now() / 1000;
   if (view === 'map') renderMap(canvas, ctx, { planet, regionId, t, cam: camMap, selected: mapSel });
   else renderScene(canvas, ctx, { state, planet, region: region(), t, frac: paused || reducedMotion ? 0 : Math.min(1, (performance.now() - lastTickMs) / 1000), oreIndex, cam: camSide });
-  if (t - miniT > 0.5) { miniT = t; drawMini(); }
+  const thumbnailKey = `${view}|${planet.id}|${regionId}`;
+  if (thumbnailKey !== miniKey || t - miniT > 0.5) { miniKey = thumbnailKey; miniT = t; drawMini(); }
 }
-let miniT = 0;
+let miniT = -Infinity;
+let miniKey = '';
 function drawMini() {
   const mc = $('#mini'); if (!mc) return;
   const dpr = window.devicePixelRatio || 1; const W = Math.round(96 * dpr); const H = Math.round(76 * dpr);

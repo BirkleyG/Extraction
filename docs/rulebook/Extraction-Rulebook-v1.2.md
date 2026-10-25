@@ -1680,7 +1680,7 @@ The legacy pixel interface remains the visual contract. Industry and Colony tabs
 
 ### Public industry playtest and automation follow-up · 26 October 2026
 
-PR #16 is merged and publicly verified: refinery/stock/sale/contract, infantry arrival, no-key Maker and mobile/save behavior all passed. Added optional automatic refinery exports after playtesting identified repeated manual selling as a chore. Follow-up invariant coverage includes automatic revenue, self-transfer, full-wallet waits and escrow archive reconciliation; 68 local tests pass. Exact worker catch-up/reload and approximately 30-second online polling were browser-verified. Live paid AI execution and full Release A/B acceptance are not claimed. [Detailed evidence and scope](../development/Industry-Release.md).
+PR #16 is merged and publicly verified: refinery/stock/sale/contract, infantry arrival, no-key Maker and mobile/save behavior all passed. Added optional automatic refinery exports after playtesting identified repeated manual selling as a chore. Minimap thumbnails refresh with paused/reduced-motion view changes. Follow-up invariant coverage includes automatic revenue, self-transfer, full-wallet waits and escrow archive reconciliation; 68 local tests pass. Exact worker catch-up/reload and approximately 30-second online polling were browser-verified. Live paid AI execution and full Release A/B acceptance are not claimed. [Detailed evidence and scope](../development/Industry-Release.md).
 
 ## 23 — Advanced Combat and AI Military Command
 
