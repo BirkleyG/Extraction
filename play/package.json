@@ -1,0 +1,8 @@
+{
+  "name": "extraction-local-playtest",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/model.test.mjs"
+  }
+}

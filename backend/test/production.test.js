@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ProductionError, advanceProductionSeconds, createProductionState, liftRatePerMinute, shaftRatePerMinute, tickProductionSecond } from '../src/production.js';
+import { ProductionError, advanceProductionSeconds, createProductionState, liftRatePerMinute, shaftRatePerMinute, tickProductionSecond, withdrawSurfaceUnits } from '../src/production.js';
 
 const shaft = (overrides = {}) => ({
   shaftNumber: 1, oreId: 'iron', digLevel: 1, bunkhouseLevel: 0, workersAssigned: 5, cartLevel: 0,
@@ -142,4 +142,27 @@ test('catch-up budget preserves all remaining seconds without a fixed offline ca
   assert.equal(result.processedSeconds, 10);
   assert.equal(result.remainingSeconds, horizonSeconds - 10);
   assert.equal(result.state.elapsedSeconds, 10);
+});
+
+
+test('one-hour ore flow tolerates bounded accumulated roundoff without losing stock', () => {
+  const base = initial({ syntheticDownstreamDrain: { unitsPerSecond: 0.02 } });
+  const result = advanceProductionSeconds(base, { seconds: 3600, maxSteps: 3600 });
+  assert.equal(result.state.elapsedSeconds, 3600);
+  totalsByOre(result.state);
+  assert.throws(() => createProductionState({ ...result.state, surface: { ...result.state.surface, unitsByOre: [{ oreId: 'iron', units: 100 }] } }), code('MASS_BALANCE'));
+});
+
+test('real surface withdrawal tracks external stock, preserves history and rejects overdrafts atomically', () => {
+  const base = initial();
+  const grown = advanceProductionSeconds(base, { seconds: 60, maxSteps: 60 }).state;
+  const snapshot = JSON.stringify(grown);
+  const next = withdrawSurfaceUnits(grown, 'iron', 1);
+  assert.equal(next.externalTransfersByOre[0].units, 1);
+  assert.equal(next.syntheticDownstreamDrain.drainedByOre.length, 0);
+  assert.deepEqual(next.cumulativeMinedByOre, grown.cumulativeMinedByOre);
+  assert.equal(JSON.stringify(grown), snapshot);
+  assert.throws(() => withdrawSurfaceUnits(next, 'iron', 999), code('INSUFFICIENT_STOCK'));
+  assert.throws(() => withdrawSurfaceUnits(next, 'iron', -1), code('INVALID_AMOUNT'));
+  tickProductionSecond(next);
 });

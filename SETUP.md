@@ -105,3 +105,7 @@ firebase emulators:start --only auth,firestore --project demo-msc   # uses fireb
 
 and temporarily add `emulator: { host: '127.0.0.1', auth: 9099, firestore: 8080 }` next to `firebase` in `js/config.js`
 (with dummy `apiKey`/`projectId`/`appId` values).
+
+## Current playable development build
+
+The new [browser sandbox](https://birkleyg.github.io/Extraction/play/) needs no Firebase setup. This guide applies to the [preserved original prototype](https://birkleyg.github.io/Extraction/prototype/) only. The new backend is not connected to Pages yet; see [backend/README.md](backend/README.md). Pages publishes `main`, so development branch merges do not publish automatically.

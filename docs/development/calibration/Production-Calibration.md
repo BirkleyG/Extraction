@@ -105,7 +105,7 @@ The early fixture has one shaft at dig level 1, five assigned workers, cart leve
 
 The low-lift case shows shaft-buffer accumulation; the full-yard case blocks lift movement even at high lift level; the high-lift case uses all 30 explicitly assigned shafts and seven ore IDs. Buffer size, surface capacity, loading, fleet capacity, and synthetic drain rates are fixture values. In particular, no storage base is inferred from requiring the entire one-second production burst to fit in a buffer.
 
-The largest observed floating-point mass residual across the summarized flow fixtures is 4.263e-14 units. The helper checks each ore using the tolerance 128 * Number.EPSILON * max(1, absolute accounted units, absolute physical units), checked independently per ore. This is only a tiny floating-point residual in ore-unit fixtures; no coin is simulated, and coin remains subject to exact integer ledger accounting.
+The largest observed floating-point mass residual across the summarized flow fixtures is 4.263e-14 units. The helper checks each ore using the tolerance max(128 * EPSILON, gamma_n) * max(1, absolute accounted units, absolute physical units), where gamma_n = n*EPSILON/(1-n*EPSILON), n=256*(elapsedSeconds+1), checked independently per ore. This is only a tiny floating-point residual in ore-unit fixtures; no coin is simulated, and coin remains subject to exact integer ledger accounting.
 
 ## Month horizon bookkeeping
 

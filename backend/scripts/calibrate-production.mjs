@@ -248,7 +248,7 @@ function makeReport() {
     chunkReplay: { seconds: 600, catchupMaxSteps: 600, oneSecondTicks: 600, finalFixtureStateEqual: chunkReplayEqual },
     massBalance: {
       maxObservedAbsoluteResidualUnits: maxMassBalanceResidual,
-      acceptanceTolerance: '128 * Number.EPSILON * max(1, absolute accounted units, absolute physical units), checked independently per ore',
+      acceptanceTolerance: 'max(128 * EPSILON, gamma_n) * max(1, absolute accounted units, absolute physical units), where gamma_n = n*EPSILON/(1-n*EPSILON), n=256*(elapsedSeconds+1), checked independently per ore',
       scope: 'floating-point ore-unit fixture only; coin is not modeled and remains subject to exact integer ledger accounting',
     },
     monthHorizonBookkeeping,

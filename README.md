@@ -1,40 +1,41 @@
-# Mineshaft Capital
+# Extraction Tycoon
 
-> **Extraction Tycoon development:** this guide describes the legacy browser prototype. It does not deploy the v1.2 trusted simulation or satisfy competitive multiplayer acceptance. See the [current rulebook](docs/rulebook/Extraction-Rulebook-v1.2.md), [Buildout Plan](docs/development/Buildout-Plan.md), and [Questions for the Boss](docs/development/Questions-for-the-Boss.md).
+**[Play the development sandbox](https://birkleyg.github.io/Extraction/play/)** · [Original prototype](https://birkleyg.github.io/Extraction/prototype/)
 
-A darkly funny, pixel-art mining empire you play with your friends. Everyone colonises the same procedurally generated planet,
-digs shafts, hires crews, ships ore, trades, fights monsters, talks to alien tribes, and races for the most coin before the
-month ends. The month's winner dreams up next month's planet.
+Mine ore, hire crews, open shafts, upgrade the lift, and ship to test buyers. Sales pay at departure. The animated mine runs immediately; no Firebase project, account or API key is needed to try it.
 
-**Play it:** open `index.html` for single-player, or follow [SETUP.md](SETUP.md) to host it for you and your friends (about 10 minutes, free).
+The current Pages build is a **single-player development sandbox with browser-local saves**. It uses the new production flow model and provisional C-01 lift curve. It is not the authoritative multiplayer release. The original prototype and its separate browser saves remain available at `/prototype/`.
 
-## Features
+Open **Local developer tools** to fast-forward, add explicit test coins or reset only the sandbox save. Prices, buyer budgets, starting coin and incomplete upgrade lines in this build are test fixtures, not certified game balance. No month competition is active.
 
-- Zoomable pixel-art cutaway of your mine and a top-down planet map with regions, herds, weather and tribes
-- Crews, refineries, cargo ships, a species skill tree with six archetypes
-- Real-time shared world: leaderboard, event feed, watch other players' colonies
-- Monthly seasons; the winner prompts the next planet
-- **Optional AI, bring your own key** (Claude or OpenAI): tribe diplomacy, species design, planet generation. Keys never leave your browser.
+## Run locally
 
-## Project layout
+From the repository root:
 
-```
-index.html          page shell
-css/style.css       all styling
-js/game.js          the game (state, simulation, rendering, UI, AI layer)
-js/backend.js       multiplayer adapter (Firebase Firestore + anonymous auth) with the interface the game expects
-js/config.js        your Firebase web config (empty = single-player)
-firestore.rules     database security rules (paste into the Firebase console)
-firebase.json       local emulator config for development
-SETUP.md            hosting + Firebase + BYOK guide
+```sh
+python3 -m http.server 8000
 ```
 
-There is no build step and no dependencies to install. Firebase's SDK is loaded from Google's CDN only when `js/config.js` is filled in.
+Visit http://localhost:8000/play/ for the sandbox or http://localhost:8000/prototype/ for the original prototype. Serve the repository root so the shared production ES module can load.
 
-## Credits
+## Development and tests
 
-Originally built as a Claude artifact; moved to a standalone GitHub Pages site.
+Node 24.19.0 is pinned in `.nvmrc`.
 
-## Authoritative backend development
+```sh
+npm --prefix play test
+npm --prefix backend ci
+npm --prefix backend test
+npm --prefix backend run test:integration
+```
 
-The first A1 accounting foundation is developed separately from the browser prototype. See [backend/README.md](backend/README.md) for local setup and tests. It is not yet a deployed server or connected to gameplay.
+The Firebase emulator tests additionally require Java 21. See [backend setup](backend/README.md) for the authenticated local API/demo and [SETUP.md](SETUP.md) for the original prototype's Firebase guide. Production Firebase deployment and its spending ceiling remain separate decisions.
+
+## Specification and progress
+
+- [Maintained rulebook](docs/rulebook/Extraction-Rulebook-v1.2.md)
+- [Buildout plan](docs/development/Buildout-Plan.md)
+- [Questions for the Boss](docs/development/Questions-for-the-Boss.md)
+- [Production calibration evidence](docs/development/calibration/Production-Calibration.md)
+
+GitHub Pages publishes `main`, root directory. Publishing changes must reach `main`; merging into a development/specification branch alone does not update the playable site. Future playable changes should target that published integration branch and pass the model/backend checks before deployment.

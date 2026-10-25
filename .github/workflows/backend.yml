@@ -4,12 +4,18 @@ on:
   push:
     paths:
       - 'backend/**'
+      - 'play/**'
+      - 'index.html'
+      - 'prototype/**'
       - 'docs/development/calibration/**'
       - '.nvmrc'
       - '.github/workflows/backend.yml'
   pull_request:
     paths:
       - 'backend/**'
+      - 'play/**'
+      - 'index.html'
+      - 'prototype/**'
       - 'docs/development/calibration/**'
       - '.nvmrc'
       - '.github/workflows/backend.yml'
@@ -33,6 +39,8 @@ jobs:
       - name: Install locked backend dependencies
         working-directory: backend
         run: npm ci
+      - name: Test playable sandbox transactions
+        run: npm --prefix play test
       - name: Test accounting and command invariants
         working-directory: backend
         run: npm test

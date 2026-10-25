@@ -38,7 +38,15 @@ function add(map, id, amount, label) {
   map.set(id, next);
 }
 function totalRows(rows) { return rows.reduce((sum, row) => { const next = sum + row.units; finite(next, 'inventory total'); return next; }, 0); }
-function closeEnough(left, right) { return Math.abs(left - right) <= 128 * Number.EPSILON * Math.max(1, Math.abs(left), Math.abs(right)); }
+function closeEnough(left, right, elapsedSeconds) {
+  // Nonnegative floating ore flows accumulate rounding across ticks. Use the
+  // standard gamma_n forward-error bound, conservatively budgeting 256 rounded
+  // operations per ore/tick. Coin accounting never uses this tolerance.
+  const roundoff = 256 * (elapsedSeconds + 1) * Number.EPSILON;
+  if (!Number.isFinite(roundoff) || roundoff >= 1) fail('OVERFLOW', 'Ore precision budget exhausted');
+  const tolerance = Math.max(128 * Number.EPSILON, roundoff / (1 - roundoff));
+  return Math.abs(left - right) <= tolerance * Math.max(1, Math.abs(left), Math.abs(right));
+}
 
 /** C-01 shaft throughput. All rates are units/minute; workers are explicitly assigned. */
 export function shaftRatePerMinute(config) {
@@ -99,15 +107,16 @@ function checkConservation(state) {
   const mined = rowMap(state.cumulativeMinedByOre);
   const drained = rowMap(state.syntheticDownstreamDrain.drainedByOre);
   const surface = rowMap(state.surface.unitsByOre);
+  const external = rowMap(state.externalTransfersByOre);
   for (const shaft of state.shafts) add(surface, shaft.oreId, 0, 'surface units');
-  const ids = new Set([...initial.keys(), ...mined.keys(), ...drained.keys(), ...surface.keys(), ...state.shafts.map((shaft) => shaft.oreId)]);
+  const ids = new Set([...initial.keys(), ...mined.keys(), ...drained.keys(), ...surface.keys(), ...external.keys(), ...state.shafts.map((shaft) => shaft.oreId)]);
   for (const id of ids) {
     const lhs = (initial.get(id) ?? 0) + (mined.get(id) ?? 0);
     const rhs = state.shafts.filter((shaft) => shaft.oreId === id).reduce((sum, shaft) => sum + shaft.bufferUnits, 0)
-      + (surface.get(id) ?? 0) + (drained.get(id) ?? 0);
+      + (surface.get(id) ?? 0) + (drained.get(id) ?? 0) + (external.get(id) ?? 0);
     finite(lhs, 'accounted units');
     finite(rhs, 'physical units');
-    if (!closeEnough(lhs, rhs)) fail('MASS_BALANCE', `Unit conservation failed for ore ${id}: ${lhs} != ${rhs}`);
+    if (!closeEnough(lhs, rhs, state.elapsedSeconds)) fail('MASS_BALANCE', `Unit conservation failed for ore ${id}: ${lhs} != ${rhs}`);
   }
 }
 
@@ -136,8 +145,9 @@ export function createProductionState(config) {
   };
   const cumulativeMinedByOre = cloneRows(config.cumulativeMinedByOre ?? [], 'mined totals');
   const initialUnitsByOre = cloneRows(config.initialUnitsByOre ?? [], 'initial totals');
+  const externalTransfersByOre = cloneRows(config.externalTransfersByOre ?? [], 'external transfers');
   if (config.initialUnitsByOre === undefined) {
-    if (cumulativeMinedByOre.length || syntheticDownstreamDrain.drainedByOre.length) fail('INVALID_STATE', 'Restored flow state requires initialUnitsByOre');
+    if (cumulativeMinedByOre.length || syntheticDownstreamDrain.drainedByOre.length || externalTransfersByOre.length) fail('INVALID_STATE', 'Restored flow state requires initialUnitsByOre');
     const initial = rowMap(surface.unitsByOre);
     for (const shaft of shafts) add(initial, shaft.oreId, shaft.bufferUnits, 'initial inventory');
     initialUnitsByOre.push(...rowsFromMap(initial));
@@ -150,6 +160,7 @@ export function createProductionState(config) {
     syntheticDownstreamDrain,
     initialUnitsByOre,
     cumulativeMinedByOre,
+    externalTransfersByOre,
     elapsedSeconds: integer(config.elapsedSeconds ?? 0, 0, MAX, 'elapsedSeconds'),
   };
   checkConservation(state);
@@ -208,6 +219,7 @@ export function tickProductionSecond(inputState) {
     syntheticDownstreamDrain: { unitsPerSecond: state.syntheticDownstreamDrain.unitsPerSecond, drainedByOre: rowsFromMap(drained).filter((row) => row.units > 0) },
     initialUnitsByOre: state.initialUnitsByOre.map((row) => ({ ...row })),
     cumulativeMinedByOre: rowsFromMap(mined).filter((row) => row.units > 0),
+    externalTransfersByOre: state.externalTransfersByOre.map((row) => ({ ...row })),
     elapsedSeconds: state.elapsedSeconds + 1,
   };
   checkConservation(next);
@@ -222,4 +234,28 @@ export function advanceProductionSeconds(inputState, { seconds, maxSteps }) {
   const processedSeconds = Math.min(seconds, maxSteps);
   for (let step = 0; step < processedSeconds; step += 1) state = tickProductionSecond(state);
   return { state, processedSeconds, remainingSeconds: seconds - processedSeconds };
+}
+
+
+/** Transfer real surface stock out of this flow model, e.g. into ship cargo.
+ * The caller must commit its corresponding cargo/reservation atomically.
+ * This function neither sells inventory nor creates a synthetic drain/payment.
+ */
+export function withdrawSurfaceUnits(inputState, requestedOreId, units) {
+  const id = oreId(requestedOreId);
+  finite(units, 'withdrawal units', { min: 0, strict: true });
+  const state = createProductionState(inputState);
+  const inventory = rowMap(state.surface.unitsByOre);
+  const available = inventory.get(id) ?? 0;
+  if (units > available) fail('INSUFFICIENT_STOCK', 'Not enough surface ore');
+  inventory.set(id, available - units);
+  const external = rowMap(state.externalTransfersByOre);
+  add(external, id, units, 'external transfer units');
+  const next = {
+    ...state,
+    surface: { ...state.surface, unitsByOre: rowsFromMap(inventory).filter((row) => row.units > 0) },
+    externalTransfersByOre: rowsFromMap(external),
+  };
+  checkConservation(next);
+  return next;
 }
