@@ -9,118 +9,101 @@ import {
 
 const code = (name) => (error) => error?.code === name;
 
-function loadedStockState({ units = 2, buyerFunds = 30000, buyerCapacity = 120 } = {}) {
+function yardState({ units = 200, ore = 'ferrite', auto = true } = {}) {
   const state = createGameState();
-  state.autoLaunch = false;
-  state.buyers[0].funds = buyerFunds;
-  state.buyers[0].capacityUnits = buyerCapacity;
+  state.autoLaunch = auto;
   state.production = {
     ...state.production,
-    surface: { capacityUnits: 100, unitsByOre: [{ oreId: 'ferrite', units }] },
-    initialUnitsByOre: [{ oreId: 'ferrite', units }],
+    surface: { capacityUnits: 1000, unitsByOre: [{ oreId: ore, units }] },
+    initialUnitsByOre: [{ oreId: ore, units }],
     cumulativeMinedByOre: [],
   };
   return validateGameState(state);
 }
 
-test('paid departure removes real stock, debits the finite buyer, reserves capacity and credits exactly once', () => {
-  const before = loadedStockState({ units: 2, buyerFunds: 500, buyerCapacity: 1 });
-  const loading = dispatchNow(before);
-  assert.equal(loading.coins, before.coins);
-  assert.equal(loading.buyers[0].funds, before.buyers[0].funds);
-  assert.equal(loading.shipments.length, 0, 'loading alone is not a sale');
-  const loaded = advanceGame(loading, 1, 1).state;
-  assert(loaded.ship.cargoUnits >= 1);
-  assert.equal(loaded.coins, before.coins);
-  assert.equal(loaded.shipments.length, 0);
-  const after = dispatchNow(loaded);
-  const shipment = after.shipments[0];
-  assert.equal(shipment.units, 1);
-  assert.equal(shipment.payment, 40);
-  assert.equal(after.coins, 40);
-  assert.equal(after.buyers[0].funds, 460);
-  assert.equal(after.buyers[0].reservedUnits, 1);
-  assert.equal(after.ship.cargoUnits, loaded.ship.cargoUnits - shipment.units);
-  assert.equal(after.shipmentStatusById[shipment.id], 'IN_TRANSIT');
+test('Launch now sells the starter ore at once: paid at takeoff, ship away, arrival never pays again', () => {
+  const before = createGameState();
   assert.equal(before.coins, 0);
-  assert.equal(before.production.surface.unitsByOre[0].units, 2);
-  assert(Object.isFrozen(shipment));
-
+  assert.equal(before.buyers, undefined, 'computer-run buyers have no budget to track');
+  const after = dispatchNow(before);
+  const shipment = after.shipments[0];
+  assert.equal(shipment.units, 5);
+  assert.equal(shipment.payment, 200);
+  assert.equal(after.coins, 200);
+  assert.equal(after.shipmentStatusById[shipment.id], 'IN_TRANSIT');
+  assert(after.ship.readyAtSecond > after.simSeconds, 'the hauler is away');
+  assert.throws(() => dispatchNow(after), code('SHIP_BUSY'));
+  assert.equal(before.coins, 0, 'input state is never mutated');
   const ledgerCount = after.ledger.length;
-  const walletAfterDeparture = after.coins;
   const arrived = advanceGame(after, shipment.arrivalAtSecond - after.simSeconds, 300).state;
   assert.equal(arrived.shipmentStatusById[shipment.id], 'DELIVERED');
-  assert.equal(arrived.coins, walletAfterDeparture);
+  assert.equal(arrived.coins, after.coins);
   assert.equal(arrived.ledger.length, ledgerCount, 'arrival creates no second payment');
-  assert.equal(arrived.buyers[0].reservedUnits, 0);
-  assert.equal(arrived.buyers[0].inventoryUnits, 1);
 });
 
-test('automatic partial cargo launches at one unit and pays at departure', () => {
-  const state = createGameState();
-  const next = advanceGame(state, 60, 300).state;
-  assert.equal(next.shipments.length, 1);
-  assert(next.shipments[0].units >= 1);
-  assert.equal(next.shipments[0].state, 'PAID_AT_DEPARTURE');
-  assert(next.coins > state.coins);
-  assert(next.shipments[0].departureAtSecond > 0 && next.shipments[0].departureAtSecond <= 60);
-  assert.equal(next.ship.cargoUnits, 0, 'full buyer terms consume the complete loaded cargo without quantized dust');
+test('auto mode takes off only when the hold is full, with exactly a full load', () => {
+  let state = yardState({ units: 400 });
+  state = advanceGame(state, 100, 300).state;
+  assert.equal(state.shipments.length, 0, 'not full yet, so it keeps loading');
+  assert(state.ship.cargoUnits > 90 && state.ship.cargoUnits < 150);
+  state = advanceGame(state, 80, 300).state;
+  assert.equal(state.shipments.length, 1);
+  assert.equal(state.shipments[0].units, 150);
+  assert.equal(state.shipments[0].payment, 6000);
+  assert.equal(state.shipments[0].state, 'PAID_AT_DEPARTURE');
+  assert.equal(state.ship.cargoUnits, 0);
 });
 
-test('a stranded sub-unit load clears as a paid partial sale when its ore has no future source', () => {
-  const state = createGameState();
-  const oldShipment = {
-    id: 'shipment-old', oreId: 'ferrite', units: 1, unitPrice: 40, payment: 40,
-    destinationId: 'frontier-refinery', departureAtSecond: 0, arrivalAtSecond: 121,
-    shipReadyAtSecond: 241, tripSeconds: 241, state: 'PAID_AT_DEPARTURE',
-  };
-  state.coins += 40;
-  state.totalExternalEarnings = 40;
-  state.buyers[0].funds -= 40;
-  state.buyers[0].inventoryUnits = 1;
-  state.shipments.push(oldShipment);
-  state.shipmentStatusById[oldShipment.id] = 'DELIVERED';
-  state.ledger.push({ id: 'local-00000002', atSecond: 0, type: 'NPC_RAW_PURCHASE', amount: 40, ownerDelta: 40, externalDelta: -40, externalAccount: 'source:NPC:frontier-refinery', description: 'Prior paid fixture shipment' });
-  state.nextRecordId = 3;
-  state.workersHired = 0;
-  state.selectedDestinationId = 'cinder-buyer';
+test('with auto off the hauler never leaves by itself; Launch now sends a partial load', () => {
+  let state = yardState({ units: 400, auto: false });
+  state = advanceGame(state, 300, 300).state;
+  assert.equal(state.shipments.length, 0);
+  assert.equal(state.ship.cargoUnits, 150, 'it loaded the full hold and waits');
+  const sent = dispatchNow(state);
+  assert.equal(sent.shipments.length, 1);
+  assert.equal(sent.shipments[0].units, 150);
+  const small = dispatchNow(yardState({ units: 12, auto: false }));
+  assert.equal(small.shipments[0].units, 12);
+  assert.equal(small.shipments[0].payment, 480);
+  assert(small.ship.readyAtSecond > small.simSeconds + small.shipments[0].tripSeconds - 1, 'the rush-loading time is added to the next trip');
+});
+
+test('Launch now with nothing to send fails without changing the state', () => {
+  const empty = yardState({ units: 0 });
+  assert.throws(() => dispatchNow(empty), code('NOT_ENOUGH_STOCK'));
+});
+
+test('a stranded partial load (ore can no longer arrive) is sent by auto mode instead of waiting forever', () => {
+  const state = yardState({ units: 0 });
   state.ship.cargoOreId = 'ferrite';
-  state.ship.cargoUnits = 0.304;
-  state.ship.loading = true;
+  state.ship.cargoUnits = 30;
+  state.workersHired = 0;
   state.production = createProductionState({
     ...state.production,
     shafts: state.production.shafts.map((shaft) => ({ ...shaft, workersAssigned: 0, bufferUnits: 0 })),
-    surface: { capacityUnits: 100, unitsByOre: [{ oreId: 'cobalt', units: 20 }] },
-    initialUnitsByOre: [{ oreId: 'cobalt', units: 20 }, { oreId: 'ferrite', units: 0.304 }],
+    surface: { capacityUnits: 1000, unitsByOre: [] },
+    initialUnitsByOre: [{ oreId: 'ferrite', units: 30 }],
     cumulativeMinedByOre: [],
-    externalTransfersByOre: [{ oreId: 'ferrite', units: 0.304 }],
+    externalTransfersByOre: [{ oreId: 'ferrite', units: 30 }],
   });
   const launched = advanceGame(validateGameState(state), 1, 1).state;
-  assert.equal(launched.shipments.length, 2);
-  assert.deepEqual(launched.shipments[0], oldShipment);
-  assert.equal(launched.shipments[1].destinationId, 'cinder-buyer');
-  assert.equal(launched.shipments[1].units, 0.304);
-  assert.equal(launched.shipments[1].payment, 19);
-  assert.equal(launched.coins, 59);
-  assert.equal(launched.ship.cargoUnits, 0);
+  assert.equal(launched.shipments.length, 1);
+  assert.equal(launched.shipments[0].units, 30);
 });
 
-test('manual destination selection is pre-departure only and cannot overspend a buyer fixture', () => {
-  let state = loadedStockState({ units: 10 });
+test('computer-run buyers never run out: selling is limited only by ore and the ship; pick a buyer before launch', () => {
+  let state = yardState({ units: 800, auto: false });
   state = selectDestination(state, 'cinder-buyer');
-  state.buyers[1].funds = 800;
-  state.buyers[1].capacityUnits = 36;
-  state = validateGameState(state);
-  const beforeCoins = state.coins;
-  const loading = dispatchNow(state);
-  assert.equal(loading.coins, beforeCoins);
-  state = advanceGame(loading, 1, 1).state;
-  const dispatched = dispatchNow(state);
-  const shipment = dispatched.shipments[0];
-  assert.equal(shipment.destinationId, 'cinder-buyer');
-  assert(shipment.payment <= 800);
-  assert.equal(dispatched.buyers[1].funds, 800 - shipment.payment);
-  assert.equal(dispatched.coins, beforeCoins + shipment.payment);
+  let total = 0;
+  for (let trip = 0; trip < 5; trip += 1) {
+    state = advanceGame(state, state.ship.readyAtSecond > state.simSeconds ? state.ship.readyAtSecond - state.simSeconds : 1, 5000).state;
+    state = dispatchNow(state);
+    total += state.shipments.at(-1).payment;
+  }
+  assert.equal(state.shipments.length, 5);
+  assert(state.shipments.every((x) => x.destinationId === 'cinder-buyer' && x.unitPrice === 64));
+  assert.equal(state.coins, total);
+  assert(total >= 5 * 150 * 64 - 64 * 5);
 });
 
 test('unaffordable system purchase fails atomically; valid purchases burn coin', () => {

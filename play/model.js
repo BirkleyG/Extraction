@@ -1,7 +1,7 @@
 import { createProductionState, liftRatePerMinute, shaftRatePerMinute, tickProductionSecond, withdrawSurfaceUnits } from '../backend/src/production.js';
 import { tierOf } from './upgrades.js';
 
-export const SAVE_KEY = 'extraction_playtest_v2';
+export const SAVE_KEY = 'extraction_playtest_v3';
 export const SAVE_VERSION = 1;
 export const BASE_LIFT_GROWTH = 1.0316;
 export const ORES = Object.freeze([
@@ -14,8 +14,8 @@ export const ORES = Object.freeze([
   { id: 'mythic', name: 'Mythic', color: '#ee9d58', value: 4 },
 ]);
 export const DESTINATIONS = Object.freeze([
-  Object.freeze({ id: 'frontier-refinery', name: 'Frontier Refinery', detail: 'Near · steady bid', distance: 1, basePrice: 40, unloadUnitsPerMinute: 1500, budget: 1_000_000_000, capacity: 1_000_000, accent: '#e7a15a' }),
-  Object.freeze({ id: 'cinder-buyer', name: 'Cinder Bay Buyer', detail: 'Far · premium bid', distance: 3, basePrice: 64, unloadUnitsPerMinute: 900, budget: 250_000_000, capacity: 250_000, accent: '#66bfd0' }),
+  Object.freeze({ id: 'frontier-refinery', name: 'Frontier Refinery', detail: 'Near · steady bid', distance: 1, basePrice: 40, unloadUnitsPerMinute: 1500, accent: '#e7a15a' }),
+  Object.freeze({ id: 'cinder-buyer', name: 'Cinder Bay Buyer', detail: 'Far · premium bid', distance: 3, basePrice: 64, unloadUnitsPerMinute: 900, accent: '#66bfd0' }),
 ]);
 
 
@@ -202,13 +202,6 @@ function changeCoin(state, delta, type, description, externalAccount) {
 
 export function createGameState(siteOptions) {
   const site = makeSite(siteOptions);
-  const buyers = DESTINATIONS.map((destination) => ({
-    id: destination.id,
-    funds: destination.budget,
-    capacityUnits: destination.capacity,
-    inventoryUnits: 0,
-    reservedUnits: 0,
-  }));
   const state = {
     schemaVersion: SAVE_VERSION,
     simSeconds: 0,
@@ -222,7 +215,6 @@ export function createGameState(siteOptions) {
     site,
     veins: generateVeins(site, 1),
     shaftMined: {},
-    buyers,
     selectedDestinationId: DESTINATIONS[0].id,
     autoLaunch: true,
     shipments: [],
@@ -230,7 +222,7 @@ export function createGameState(siteOptions) {
     ledger: [],
     nextRecordId: 1,
     log: [],
-    notice: 'The mine is live with zero coin. Your first whole unit of ore sells at takeoff — spend it on digging.',
+    notice: 'The mine is live with zero coin. Press Launch now to sell your starter ore, then spend it on digging.',
   };
   return state;
 }
@@ -241,11 +233,6 @@ function findShaft(state, shaftNumber) {
   return shaft;
 }
 
-function buyerFor(state, destinationId = state.selectedDestinationId) {
-  const buyer = state.buyers.find((item) => item.id === destinationId);
-  if (!buyer) fail('UNKNOWN_DESTINATION');
-  return buyer;
-}
 function destinationFor(id) {
   const destination = DESTINATIONS.find((item) => item.id === id);
   if (!destination) fail('UNKNOWN_DESTINATION');
@@ -283,32 +270,17 @@ function preferredCargoOre(state, destinationId) {
   })[0]?.oreId ?? null;
 }
 
-function computeDispatch(state, destinationId, allowPartial = false) {
+/** Pay the cargo aboard at takeoff. NPC buyers never run out of coin or room, so the only limits are the ship and the ore. */
+function computeDispatch(state, destinationId, extraLoadSeconds = 0) {
   const destination = destinationFor(destinationId);
-  const buyer = buyerFor(state, destinationId);
   if (state.ship.readyAtSecond > state.simSeconds) return { state, result: null, reason: 'ship-busy' };
-  const capacityFree = buyer.capacityUnits - buyer.inventoryUnits - buyer.reservedUnits;
   const cargoOreId = state.ship.cargoOreId;
-  const yardUnits = state.ship.cargoUnits;
-  if (!cargoOreId || yardUnits < (allowPartial ? 0.001 : 1)) return { state, result: null, reason: 'not-enough-loaded-cargo' };
+  const units = state.ship.cargoUnits;
+  if (!cargoOreId || units < 1e-9) return { state, result: null, reason: 'no-cargo' };
   const price = priceFor(destination, cargoOreId);
-  const fullPayment = roundHalfUp(yardUnits * price);
-  const canSellAll = yardUnits <= capacityFree && Number.isSafeInteger(fullPayment) && fullPayment > 0 && fullPayment <= buyer.funds;
-  let units = canSellAll
-    ? yardUnits
-    : Math.min(state.ship.capacityUnits, yardUnits, capacityFree, buyer.funds / price);
-  let payment = roundHalfUp(units * price);
-  if (payment > buyer.funds) {
-    units = Math.max(0, units - Number.EPSILON * Math.max(1, units) * 4);
-    payment = roundHalfUp(units * price);
-  }
-  if (units < (allowPartial ? 0.001 : 1)) return { state, result: null, reason: capacityFree < (allowPartial ? 0.001 : 1) ? 'buyer-full' : buyer.funds < price ? 'buyer-out-of-funds' : 'not-enough-stock' };
-  if (!Number.isSafeInteger(payment) || payment <= 0 || payment > buyer.funds) fail('INVALID_PAYMENT');
+  const payment = roundHalfUp(units * price);
+  if (!Number.isSafeInteger(payment) || payment < 1) return { state, result: null, reason: 'no-cargo' };
   const next = clone(state);
-  const nextBuyer = buyerFor(next, destinationId);
-
-  nextBuyer.funds -= payment;
-  nextBuyer.reservedUnits += units;
   changeCoin(next, payment, 'NPC_RAW_PURCHASE', `${destination.name} paid at departure`, `source:NPC:${destinationId}`);
   next.totalExternalEarnings = addSafe(next.totalExternalEarnings, payment, 'external earnings');
   const now = next.simSeconds;
@@ -316,64 +288,64 @@ function computeDispatch(state, destinationId, allowPartial = false) {
   const unloadSeconds = units / destination.unloadUnitsPerMinute * 60;
   const arrivalAtSecond = now + Math.ceil(travelOneWaySeconds + unloadSeconds);
   const tripSeconds = Math.ceil(2 * travelOneWaySeconds + unloadSeconds);
-  next.ship.readyAtSecond = now + tripSeconds;
-  next.ship.cargoUnits = Math.max(0, next.ship.cargoUnits - units);
-  if (next.ship.cargoUnits < 1e-9) { next.ship.cargoUnits = 0; next.ship.cargoOreId = null; }
+  next.ship.readyAtSecond = now + tripSeconds + extraLoadSeconds;
+  next.ship.cargoUnits = 0;
+  next.ship.cargoOreId = null;
   next.ship.loading = false;
   const shipmentId = `shipment-${String(next.nextRecordId).padStart(8, '0')}`;
   const shipment = Object.freeze({
-    id: shipmentId,
-    oreId: cargoOreId,
-    units,
-    unitPrice: price,
-    payment,
-    destinationId,
-    departureAtSecond: now,
-    arrivalAtSecond,
-    shipReadyAtSecond: next.ship.readyAtSecond,
-    tripSeconds,
-    state: 'PAID_AT_DEPARTURE',
+    id: shipmentId, oreId: cargoOreId, units, unitPrice: price, payment, destinationId,
+    departureAtSecond: now, arrivalAtSecond, shipReadyAtSecond: next.ship.readyAtSecond, tripSeconds, state: 'PAID_AT_DEPARTURE',
   });
   next.shipments.push(shipment);
   next.shipmentStatusById[shipmentId] = 'IN_TRANSIT';
-  appendLog(next, `${units.toFixed(3)} ${ore(cargoOreId).name} departed to ${destination.name}; ${payment} coin paid at takeoff.`, 'sale');
+  appendLog(next, `${units.toFixed(1)} units of ${ore(cargoOreId).name} took off for ${destination.name}; ${payment} coin paid at takeoff.`, 'sale');
   return { state: next, result: shipment, reason: 'launched' };
 }
 
+/** Normal loading: the pad moves ore from the yard into the hold at the pad's loading rate. */
 function loadOneSecond(state) {
-  if (state.ship.readyAtSecond > state.simSeconds || !state.ship.loading) return state;
+  if (state.ship.readyAtSecond > state.simSeconds) return state;
   const next = clone(state);
   const cargoOreId = next.ship.cargoOreId ?? preferredCargoOre(next, next.selectedDestinationId);
-  if (!cargoOreId) return next;
-  const available = availableSurface(next, cargoOreId);
   const room = Math.max(0, next.ship.capacityUnits - next.ship.cargoUnits);
+  const available = cargoOreId ? availableSurface(next, cargoOreId) : 0;
   const amount = Math.min(available, room, next.ship.loadingUnitsPerMinute / 60);
-  if (amount <= 0) return next;
+  next.ship.loading = amount > 1e-9;
+  if (amount <= 1e-9) return next;
   next.production = withdrawSurfaceUnits(next.production, cargoOreId, amount);
   next.ship.cargoOreId = cargoOreId;
   next.ship.cargoUnits += amount;
   return next;
 }
 
-function hasFutureOreForStandardLoad(state, cargoOreId) {
-  const currentStock = availableSurface(state, cargoOreId);
-  if (currentStock + state.ship.cargoUnits >= 1) return true;
-  const surfaceTotalUnits = state.production.surface.unitsByOre.reduce((sum, row) => sum + row.units, 0);
-  const surfaceHasRoom = state.production.surface.capacityUnits - surfaceTotalUnits > 1e-9;
-  if (!surfaceHasRoom) return false;
-  return state.production.shafts.some((shaft) => shaft.oreId === cargoOreId && (shaft.bufferUnits > 0 || shaftRatePerMinute(shaft) > 0));
+/** Instant top-up used by "Launch now": the hold is filled from the yard at once; the time it would have taken to load is added before the next trip. */
+function rushLoad(state) {
+  const next = clone(state);
+  const cargoOreId = next.ship.cargoOreId ?? preferredCargoOre(next, next.selectedDestinationId);
+  if (!cargoOreId) return { state: next, loaded: 0 };
+  const amount = Math.min(availableSurface(next, cargoOreId), Math.max(0, next.ship.capacityUnits - next.ship.cargoUnits));
+  if (amount <= 1e-9) return { state: next, loaded: 0 };
+  next.production = withdrawSurfaceUnits(next.production, cargoOreId, amount);
+  next.ship.cargoOreId = cargoOreId;
+  next.ship.cargoUnits += amount;
+  return { state: next, loaded: amount };
 }
 
+/** The cargo ore has stopped arriving (vein dry, shaft idle) so waiting for a full hold would wait forever. */
+function cargoStranded(state) {
+  const id = state.ship.cargoOreId;
+  if (!id || state.ship.cargoUnits < 1e-9 || availableSurface(state, id) >= 1e-9) return false;
+  return !state.production.shafts.some((shaft) => shaft.workersAssigned > 0 && ((miningVein(state, shaft.shaftNumber)?.oreId ?? state.site.commonOreId) === id || shaft.bufferUnits > 1e-9 && shaft.oreId === id));
+}
+
+/** Auto mode: load continuously and take off the moment the hold is full (or the ore can no longer arrive). */
 function launchIfReady(state) {
   if (state.ship.readyAtSecond > state.simSeconds) return state;
-  const next = clone(state);
-  if (next.autoLaunch && next.ship.cargoUnits < 1 && !next.ship.loading && preferredCargoOre(next, next.selectedDestinationId)) next.ship.loading = true;
-  let loaded = loadOneSecond(next);
-  // Keep loading while at least one whole unit waits on the yard and the hold has room: a Hauler should not leave for a 4-minute round trip with one unit when five are ready.
-  const moreToLoad = loaded.ship.cargoOreId && availableSurface(loaded, loaded.ship.cargoOreId) >= 1 && loaded.ship.cargoUnits < loaded.ship.capacityUnits - 1e-9;
-  if (loaded.autoLaunch && loaded.ship.cargoUnits > 0 && !moreToLoad) {
-    const allowPartial = loaded.ship.cargoUnits < 1 && !hasFutureOreForStandardLoad(loaded, loaded.ship.cargoOreId);
-    const result = computeDispatch(loaded, loaded.selectedDestinationId, allowPartial);
+  let loaded = loadOneSecond(state);
+  const full = loaded.ship.cargoUnits >= loaded.ship.capacityUnits - 1e-9;
+  if (loaded.autoLaunch && loaded.ship.cargoUnits > 0 && (full || cargoStranded(loaded))) {
+    const result = computeDispatch(loaded, loaded.selectedDestinationId);
     if (result.result) loaded = result.state;
   }
   return loaded;
@@ -383,11 +355,8 @@ function arriveShipments(state) {
   const next = clone(state);
   for (const shipment of next.shipments) {
     if (next.shipmentStatusById[shipment.id] !== 'IN_TRANSIT' || shipment.arrivalAtSecond > next.simSeconds) continue;
-    const buyer = buyerFor(next, shipment.destinationId);
-    buyer.reservedUnits = Math.max(0, buyer.reservedUnits - shipment.units);
-    buyer.inventoryUnits += shipment.units;
     next.shipmentStatusById[shipment.id] = 'DELIVERED';
-    appendLog(next, `${shipment.units.toFixed(3)} ${ore(shipment.oreId).name} delivered. No second payment was made.`, 'arrival');
+    appendLog(next, `${shipment.units.toFixed(1)} units of ${ore(shipment.oreId).name} delivered. No second payment was made.`, 'arrival');
   }
   return next;
 }
@@ -514,23 +483,15 @@ export function setAutoLaunch(inputState, value) {
   return next;
 }
 
+/** "Launch now": take off with whatever the hold and the yard can supply right now, without waiting for a full load. */
 export function dispatchNow(inputState) {
   const state = validateGameState(inputState);
   if (state.ship.readyAtSecond > state.simSeconds) fail('SHIP_BUSY');
-  if (state.ship.cargoUnits > 0) {
-    const result = computeDispatch(state, state.selectedDestinationId, true);
-    if (!result.result) fail(result.reason.toUpperCase().replaceAll('-', '_'));
-    return validateGameState(result.state);
-  }
-  if (state.ship.cargoUnits < 1) {
-    if (!preferredCargoOre(state, state.selectedDestinationId)) fail('NOT_ENOUGH_STOCK');
-    const next = clone(state);
-    next.ship.loading = true;
-    appendLog(next, 'Cargo loading started. Ore remains unpaid until launch.', 'load');
-    return validateGameState(next);
-  }
-  const result = computeDispatch(state, state.selectedDestinationId);
-  if (!result.result) fail(result.reason.toUpperCase().replaceAll('-', '_'));
+  const rushed = rushLoad(state);
+  if (rushed.state.ship.cargoUnits < 1e-9) fail('NOT_ENOUGH_STOCK');
+  const extra = Math.ceil(rushed.loaded / rushed.state.ship.loadingUnitsPerMinute * 60);
+  const result = computeDispatch(rushed.state, rushed.state.selectedDestinationId, extra);
+  if (!result.result) fail('NOT_ENOUGH_STOCK');
   return validateGameState(result.state);
 }
 
@@ -583,26 +544,15 @@ export function validateGameState(input) {
   safeInt(input.sourceGrants, 'source grants');
   safeInt(input.totalExternalEarnings, 'earnings');
   safeInt(input.workersHired, 'workersHired');
-  if (!Array.isArray(input.buyers) || !Array.isArray(input.shipments) || !Array.isArray(input.ledger) || !Array.isArray(input.log) || !Array.isArray(input.production?.shafts)) fail('INVALID_SAVE');
+  if (!Array.isArray(input.shipments) || !Array.isArray(input.ledger) || !Array.isArray(input.log) || !Array.isArray(input.production?.shafts)) fail('INVALID_SAVE');
   if (!input.upgrades || typeof input.upgrades !== 'object' || !input.shipmentStatusById || typeof input.shipmentStatusById !== 'object') fail('INVALID_SAVE');
   for (const key of ['habitat', 'yard', 'shipCapacity', 'shipSpeed', 'loading']) safeInt(input.upgrades[key], `upgrade ${key}`);
-  if (Object.keys(input.upgrades).length !== 5 || input.upgrades.habitat > 10 || Object.values(input.upgrades).some((value) => value > 1000) || typeof input.autoLaunch !== 'boolean') fail('INVALID_SAVE');
+  if (Object.keys(input.upgrades).length !== 5 || input.upgrades.habitat > 1000 || Object.values(input.upgrades).some((value) => value > 1000) || typeof input.autoLaunch !== 'boolean') fail('INVALID_SAVE');
   destinationFor(input.selectedDestinationId);
   const production = createProductionState(input.production);
   if (production.shafts.some((shaft, index) => shaft.shaftNumber !== index + 1 || !ore(shaft.oreId))) fail('INVALID_SAVE', 'Shaft order or ore is invalid');
-  if (production.shafts.reduce((sum, shaft) => sum + shaft.workersAssigned, 0) !== input.workersHired || input.workersHired > 10 + 5 * input.upgrades.habitat) fail('INVALID_SAVE', 'Worker assignments do not match the crew pool');
+  if (production.shafts.reduce((sum, shaft) => sum + shaft.workersAssigned, 0) !== input.workersHired || input.workersHired > habitatCapacity(input.upgrades.habitat)) fail('INVALID_SAVE', 'Worker assignments do not match the crew pool');
   if (production.syntheticDownstreamDrain.unitsPerSecond !== 0 || production.syntheticDownstreamDrain.drainedByOre.length !== 0) fail('INVALID_SAVE', 'Synthetic drain must remain disabled in the playtest');
-  if (input.buyers.some((buyer) => !buyer || typeof buyer !== 'object')) fail('INVALID_SAVE', 'Buyer fixture is malformed');
-  const buyerIds = input.buyers.map((buyer) => buyer.id);
-  if (buyerIds.length !== DESTINATIONS.length || new Set(buyerIds).size !== buyerIds.length || DESTINATIONS.some((destination) => !buyerIds.includes(destination.id))) fail('INVALID_SAVE', 'Buyer fixture set is invalid');
-  for (const buyer of input.buyers) {
-    if (!buyer || !DESTINATIONS.some((destination) => destination.id === buyer.id)) fail('INVALID_SAVE');
-    safeInt(buyer.funds, 'buyer funds');
-    number(buyer.capacityUnits, 'buyer capacity');
-    number(buyer.inventoryUnits, 'buyer inventory');
-    number(buyer.reservedUnits, 'buyer reservations');
-    if (buyer.inventoryUnits + buyer.reservedUnits > buyer.capacityUnits + 1e-9) fail('INVALID_SAVE');
-  }
   if (!input.ship || number(input.ship.capacityUnits, 'ship capacity', Number.MIN_VALUE) <= 0 || number(input.ship.speedPerMinute, 'ship speed', Number.MIN_VALUE) <= 0 || number(input.ship.loadingUnitsPerMinute, 'loading rate', Number.MIN_VALUE) <= 0) fail('INVALID_SAVE');
   safeInt(input.ship.readyAtSecond, 'ship ready time');
   number(input.ship.cargoUnits, 'ship cargo');
