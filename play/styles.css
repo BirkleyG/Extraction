@@ -243,3 +243,8 @@ h3{margin:28px 0 12px}
 @media (max-width:860px){.layout{grid-template-columns:1fr}.tabbody{padding:16px 16px 48px}.mapbtn{width:76px;height:60px}.stage-tag{display:none}}
 .vein{background:var(--ink);border:2px solid var(--line);padding:8px 10px;display:flex;flex-direction:column;gap:6px;margin:6px 0}
 .vein.blocked{border-color:var(--bad)}.vein.mining{border-color:var(--ok)}.vein.empty{opacity:.6}
+
+/* hover tips */
+#gtip{position:fixed;z-index:50;max-width:300px;padding:9px 11px;background:#0d0818;color:#f1e8d5;border:2px solid var(--accent,#ff9d4d);font-size:14px;line-height:1.4;pointer-events:none;box-shadow:0 6px 18px #000a}
+[data-tip]{cursor:help}
+[data-tip] button,[data-tip] input{cursor:pointer}

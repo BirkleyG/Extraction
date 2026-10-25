@@ -5,3 +5,8 @@ export { createLedgerHttpServer } from './http.js';
 export { ProductionError, advanceProductionSeconds, createProductionState, liftRatePerMinute, shaftRatePerMinute, tickProductionSecond } from './production.js';
 export { EventKernelError, createEventState, createStepRng, runEventBatch } from './events.js';
 export { withdrawSurfaceUnits } from './production.js';
+export { CURVES, UpgradeError, bulkPrice, nextLevelPrice, quote, shaftPrice, padPrice, dockPrice, outpostSitePrice } from './upgrades.js';
+export { generateWorld, siteValue, WorldError } from './world.js';
+export { GameService } from './game-service.js';
+export { FirestoreGameRepository } from './firestore-game-repository.js';
+export { createGameHttpServer } from './game-http.js';

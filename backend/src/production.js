@@ -259,3 +259,57 @@ export function withdrawSurfaceUnits(inputState, requestedOreId, units) {
   checkConservation(next);
   return next;
 }
+
+const sumRows = (rows) => rows.reduce((sum, row) => sum + row.units, 0);
+const deltaRows = (after, before) => {
+  const prior = rowMap(before);
+  return rowsFromMap(rowMap(after)).map(({ oreId: id, units }) => ({ oreId: id, units: units - (prior.get(id) ?? 0) })).filter((row) => Math.abs(row.units) > 0);
+};
+
+/**
+ * Catch up using the same one-second tick, but extrapolate once the flow is provably steady: two consecutive
+ * ticks leave every shaft buffer unchanged and produce identical surface/mined deltas, and the yard has room.
+ * Results match the plain one-second loop within the ore-unit tolerance (verified by tests; coin is never involved).
+ * `maxTicks` bounds explicitly simulated ticks; extrapolated seconds are not counted against it.
+ */
+export function advanceProductionFast(inputState, { seconds, maxTicks = 100_000 }) {
+  integer(seconds, 0, MAX, 'seconds');
+  integer(maxTicks, 1, MAX, 'maxTicks');
+  let state = createProductionState(inputState);
+  let remaining = seconds;
+  let ticks = 0;
+  let previous = null;
+  while (remaining > 0 && ticks < maxTicks) {
+    const before = state;
+    state = tickProductionSecond(state);
+    remaining -= 1;
+    ticks += 1;
+    const surfaceDelta = deltaRows(state.surface.unitsByOre, before.surface.unitsByOre);
+    const minedDelta = deltaRows(state.cumulativeMinedByOre, before.cumulativeMinedByOre);
+    const buffersSame = state.shafts.every((shaft, i) => Math.abs(shaft.bufferUnits - before.shafts[i].bufferUnits) <= 1e-12 * Math.max(1, shaft.bufferCapacityUnits));
+    const sig = JSON.stringify({ surfaceDelta, minedDelta });
+    const steady = buffersSame && previous !== null && previous === sig;
+    previous = sig;
+    if (!steady || remaining < 2) continue;
+    const perTick = sumRows(surfaceDelta);
+    const free = state.surface.capacityUnits - sumRows(state.surface.unitsByOre);
+    // Leave a safety margin of one tick so the transition tick is simulated explicitly.
+    const room = perTick > 0 ? Math.floor(free / perTick) - 1 : remaining;
+    const jump = Math.min(remaining, room);
+    if (jump < 2) continue;
+    const surface = rowMap(state.surface.unitsByOre);
+    const mined = rowMap(state.cumulativeMinedByOre);
+    for (const { oreId: id, units } of surfaceDelta) add(surface, id, units * jump, 'surface units');
+    for (const { oreId: id, units } of minedDelta) add(mined, id, units * jump, 'mined units');
+    state = {
+      ...state,
+      surface: { capacityUnits: state.surface.capacityUnits, unitsByOre: rowsFromMap(surface).filter((row) => row.units > 0) },
+      cumulativeMinedByOre: rowsFromMap(mined).filter((row) => row.units > 0),
+      elapsedSeconds: state.elapsedSeconds + jump,
+    };
+    state = createProductionState(state);
+    remaining -= jump;
+    previous = null;
+  }
+  return { state, processedSeconds: seconds - remaining, remainingSeconds: remaining };
+}

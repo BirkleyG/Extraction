@@ -112,3 +112,12 @@ The CEO authorized provisional C-01 tuning. Candidate **C01-LIFT-02** uses lift 
 This flow model cannot dispatch shipments, create money or change a player’s live colony. Habitat pools, automatic worker assignment, depletion, hazards, loading/fleet behavior, buyer budgets, prices, upgrade purchases and economic balance are still separate work. Floating ore quantities are checked with a documented numerical tolerance; coin accounting remains exact. The month-length rows execute only 60 preview ticks and retain the remaining duration; they are not completed month simulations.
 
 The browser sandbox uses `withdrawSurfaceUnits` for real surface-to-ship transfers, preserving cumulative production and recording external transfers separately from the synthetic study drain. Long-running ore fixtures use an accumulated-operation roundoff bound; exact coin settlement never uses that allowance.
+
+## Game server (A2/A3 slice)
+
+`src/game-server.js` serves the mine → NPC buyer loop:
+
+- `GET  /v1/worlds/:world/state` – filtered owner read model (allowlisted fields only).
+- `POST /v1/worlds/:world/commands/{enroll|buyUpgrade|hire|buyShaft|dispatch}` – JSON commands with `requestId` + `expectedVersion`. The server sets the month and clock; unknown fields are rejected.
+
+Run against the local emulators (never production): start Auth/Firestore emulators, create the world and owner membership documents with `npm run bootstrap:world -- <world> <uid> <YYYY-MM>`, then `WORLD_ID=<world> npm run start:game` with the same emulator environment variables as the ledger server. Closing a month is `new MonthCloser(repository).close({ worldId, monthId, nowMs })` after the boundary (a scheduled trigger is still to be wired; see the build checklist). NPC bids/budgets in `src/npc.js` are provisional (C-02).

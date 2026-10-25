@@ -5,6 +5,7 @@ on:
     paths:
       - 'backend/**'
       - 'play/**'
+      - 'online/**'
       - 'index.html'
       - 'prototype/**'
       - 'docs/development/calibration/**'
@@ -14,6 +15,7 @@ on:
     paths:
       - 'backend/**'
       - 'play/**'
+      - 'online/**'
       - 'index.html'
       - 'prototype/**'
       - 'docs/development/calibration/**'
@@ -57,3 +59,5 @@ jobs:
           node --check js/game.js
           node --check js/backend.js
           node --check js/config.js
+      - name: Check online client syntax
+        run: node --check online/app.js

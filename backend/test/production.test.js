@@ -166,3 +166,29 @@ test('real surface withdrawal tracks external stock, preserves history and rejec
   assert.throws(() => withdrawSurfaceUnits(next, 'iron', -1), code('INVALID_AMOUNT'));
   tickProductionSecond(next);
 });
+
+test('fast catch-up equals the one-second loop within ore tolerance across steady, lift-bound, yard-full and idle flows', async () => {
+  const { advanceProductionFast } = await import('../src/production.js');
+  const near = (a, b) => Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
+  const units = (rows) => Object.fromEntries(rows.map((r) => [r.oreId, r.units]));
+  const cases = {
+    steady: initial({ lift: { level: 200, baseRatePerMinute: 2, curve: 'exponential', growth: 1.0316 } }),
+    liftBound: initial({ lift: { level: 1, baseRatePerMinute: 0.5, curve: 'exponential', growth: 1.0316 }, shafts: [shaft({ workersAssigned: 20, bunkhouseLevel: 2, bufferCapacityUnits: 30 })] }),
+    yardFull: initial({ surface: { capacityUnits: 40 } }),
+    idle: initial({ shafts: [shaft({ workersAssigned: 0 })] }),
+  };
+  for (const [name, state] of Object.entries(cases)) {
+    for (const seconds of [1, 2, 61, 3600]) {
+      let slow = createProductionState(state);
+      for (let i = 0; i < seconds; i += 1) slow = tickProductionSecond(slow);
+      const fast = advanceProductionFast(state, { seconds }).state;
+      assert.equal(fast.elapsedSeconds, slow.elapsedSeconds, `${name} ${seconds}`);
+      const s = units(slow.surface.unitsByOre); const f = units(fast.surface.unitsByOre);
+      for (const id of new Set([...Object.keys(s), ...Object.keys(f)])) assert(near(s[id] ?? 0, f[id] ?? 0), `${name} ${seconds} surface ${id}: ${s[id]} vs ${f[id]}`);
+      const sm = units(slow.cumulativeMinedByOre); const fm = units(fast.cumulativeMinedByOre);
+      for (const id of new Set([...Object.keys(sm), ...Object.keys(fm)])) assert(near(sm[id] ?? 0, fm[id] ?? 0), `${name} ${seconds} mined ${id}`);
+    }
+  }
+  const month = advanceProductionFast(cases.steady, { seconds: 31 * 86400, maxTicks: 1000 });
+  assert.equal(month.remainingSeconds, 0, 'a 31-day catch-up fits a tiny explicit-tick budget');
+});

@@ -1,5 +1,5 @@
 import {
-  HARDNESS, ORES, DESTINATIONS, SAVE_KEY, TOUGH_TERRAINS, toolHardness, veinStatus, advanceGame, buyNextShaft, createGameState, currentLiftRate, currentRates, shaftRateFor,
+  HARDNESS, ORES, DESTINATIONS, SAVE_KEY, TOUGH_TERRAINS, toolHardness, veinStatus, advanceGame, buyNextShaft, createGameState, currentLiftRate, currentRates, shaftRateFor, habitatCapacity, hireCost,
   dispatchNow, grantDevCoins, hireWorkers, purchaseUpgrade, selectDestination,
   setAutoLaunch, stepGame, upgradeCost, validateGameState,
 } from './model.js';
@@ -8,6 +8,70 @@ import { TIERS, tierOf } from './upgrades.js';
 import { TERRAINS, aiReady, aiSettings, generatePlanet, loadHistory, loadPlanet, recordPlanet, saveAiSettings, savePlanet, askJSON } from './planet.js';
 
 const $ = (selector) => document.querySelector(selector);
+
+/* ---- plain-language glossary shown as hover tips ---- */
+const GLOSSARY = {
+  unit: 'UNIT — one standard crate of ore. Everything is counted in units: how fast you mine (units/min), what sits in the yard, what the hauler carries (150 to start) and what buyers pay (coin per unit). Example: 150 units of Ferrite at 40 ◉ each pays 6,000 ◉.',
+  coin: 'COIN (◉) — your money. You spend it on upgrades; the player with the most coin at the end of the month wins. Buildings and ore in the yard do not count.',
+  yard: 'ORE YARD — surface storage where mined ore waits for the hauler. The number is units now / units it can hold. If the yard fills up, the lift stops.',
+  rate: 'ORE PER MINUTE — how many units your crews dig per minute right now, limited by the lift. More miners, a deeper dig level and carts all raise it.',
+  sold: 'SOLD SO FAR — all the coin buyers have paid you this run. Payment arrives the moment the hauler takes off, not when it lands.',
+  time: 'SIM TIME — how long this mine has been running. It keeps running while you are away.',
+  hold: 'HOLD — how many units the hauler can carry in one trip (150 at the start). Bigger holds mean fewer trips for the same ore.',
+  launch: 'LAUNCH NOW — send the hauler off immediately with whatever ore is aboard plus what is waiting in the yard, even if the hold is not full. You are paid at takeoff.',
+  auto: 'AUTO TAKE-OFF — the hauler loads ore as it is mined and leaves on its own the moment the hold is full. Turn it off to launch only by hand.',
+  au: 'AU — the distance unit on the map. Trip time = 2 × distance ÷ hauler speed, plus unloading. Farther buyers cost more time but may pay more per unit.',
+  bid: 'PRICE PER UNIT — what this buyer pays for each unit of ore. Total pay = units × price. Rarer ore is worth more than Ferrite.',
+  endless: 'These computer-run buyers never run out of coin or room, so you can always sell. Their prices are fixed test values for now.',
+  takeoff: 'You are paid when the hauler takes off. Nothing more is paid on arrival, and the cargo can no longer be changed or lost.',
+  crew: 'CREW — miners you have hired. Each shaft holds up to 10 miners (+5 per bunkhouse level), and the habitat limits your total crew.',
+  loadrate: 'LOADING RATE — units per minute the launch pad moves from the yard into the hold. It only matters when you press Launch now (it adds loading time to the next trip).',
+};
+const tip = (text) => ` data-tip="${text.replaceAll('&', '&amp;').replaceAll('"', '&quot;')}"`;
+const UPGRADE_TIPS = {
+  dig: 'DIG RATE — how many units each miner digs per minute in this shaft. Each level adds a little; tiers are cosmetic names for milestones.',
+  lift: 'LIFT — hauls ore from the shafts to the surface (units per minute). If it is slower than your mining, ore backs up in the shafts and output is wasted.',
+  yard: 'SURFACE YARD — how many units of ore can wait for the hauler. Bigger yard = the lift never stalls while the hauler is away.',
+  shipSpeed: 'HAULER SPEED — faster round trips, so you are paid more often.',
+  shipCapacity: 'CARGO CAPACITY — units per trip. With auto take-off the hauler leaves when this fills.',
+  loading: 'PAD LOADING — units per minute moved from the yard onto the hauler.',
+  habitat: 'HABITAT — beds for your whole crew. You cannot hire past it.',
+  bunkhouse: 'BUNKHOUSE — +5 miner slots in this shaft.',
+  cart: 'CARTS — raise how much of the dig reaches the lift (utilization) in this shaft.',
+};
+
+/* ---- hover tips: any element with data-tip explains itself (tap on touch screens) ---- */
+const tipBox = document.createElement('div');
+tipBox.id = 'gtip'; tipBox.setAttribute('role', 'tooltip'); tipBox.hidden = true;
+document.body.append(tipBox);
+let tipAnchor = null; let tipTimer = 0;
+function hideTip() { tipBox.hidden = true; tipAnchor = null; clearTimeout(tipTimer); }
+function showTip(target) {
+  tipAnchor = target; tipBox.textContent = target.getAttribute('data-tip'); tipBox.hidden = false;
+  const r = target.getBoundingClientRect(); const w = tipBox.offsetWidth; const h = tipBox.offsetHeight;
+  const left = Math.min(Math.max(8, r.left + r.width / 2 - w / 2), window.innerWidth - w - 8);
+  const top = r.bottom + 8 + h > window.innerHeight ? Math.max(8, r.top - h - 8) : r.bottom + 8;
+  tipBox.style.left = `${left}px`; tipBox.style.top = `${top}px`;
+}
+let mouseX = 0; let mouseY = 0;
+document.addEventListener('mousemove', (e) => { mouseX = e.clientX; mouseY = e.clientY; });
+/** a re-render replaces the hovered element; keep the tip attached to whatever is now under the pointer */
+function syncTip() {
+  if (!tipAnchor) return;
+  if (document.contains(tipAnchor)) { tipBox.textContent = tipAnchor.getAttribute('data-tip'); return; }
+  const t = document.elementFromPoint(mouseX, mouseY)?.closest?.('[data-tip]');
+  if (t) showTip(t); else hideTip();
+}
+document.addEventListener('mouseover', (e) => { const t = e.target.closest?.('[data-tip]'); if (t && t !== tipAnchor) showTip(t); else if (!t) hideTip(); });
+document.addEventListener('focusin', (e) => { const t = e.target.closest?.('[data-tip]'); if (t) showTip(t); });
+document.addEventListener('focusout', hideTip);
+document.addEventListener('scroll', hideTip, true);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideTip(); });
+document.addEventListener('click', (e) => { const t = e.target.closest?.('[data-tip]'); if (t && matchMedia('(pointer: coarse)').matches) { showTip(t); clearTimeout(tipTimer); tipTimer = setTimeout(hideTip, 5000); } });
+for (const [selector, key] of [['.stat.coin', 'coin'], ['#hSurface', 'yard'], ['#hEarned', 'sold'], ['#hTime', 'time'], ['#hRate', 'rate']]) {
+  const el = document.querySelector(selector); const host = el?.closest('.stat') ?? el; host?.setAttribute('data-tip', GLOSSARY[key]);
+}
+
 const canvas = $('#cv');
 const ctx = canvas.getContext('2d', { alpha: false });
 const formatter = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
@@ -97,9 +161,7 @@ function messageFor(error) {
     NO_WORKER_CAPACITY: 'Open habitat or shaft bunks before hiring more miners.',
     AT_CAP: 'This line is already at its cap.',
     SHIP_BUSY: 'The hauler is still returning to the pad.',
-    NOT_ENOUGH_STOCK: 'The yard needs at least 1 unit for a launch.',
-    BUYER_FULL: 'That buyer has no free receiving capacity.',
-    BUYER_OUT_OF_FUNDS: 'That buyer has spent its finite fixture budget.',
+    NOT_ENOUGH_STOCK: 'There is no ore in the hold or the yard to launch yet.',
     INVALID_PAYMENT: 'The local transaction could not be balanced.',
   };
   return messages[error?.code] || error?.message || 'The action could not be completed.';
@@ -175,7 +237,7 @@ function effectText(type, n = 1) {
       shipSpeed: (st) => `${st.ship.speedPerMinute.toFixed(2)} AU/min`,
       shipCapacity: (st) => `${fmtUnits(st.ship.capacityUnits)} unit hold`,
       loading: (st) => `${fmtUnits(st.ship.loadingUnitsPerMinute)} units/min loaded`,
-      habitat: (st) => `${10 + 5 * st.upgrades.habitat} crew beds`,
+      habitat: (st) => `${habitatCapacity(st.upgrades.habitat)} crew beds`,
       bunkhouse: (st) => `${10 + 5 * st.production.shafts.find((q) => q.shaftNumber === n).bunkhouseLevel} crew in this shaft`,
       cart: (st) => `${fmtUnits(st.production.shafts.find((q) => q.shaftNumber === n).bufferCapacityUnits)} unit shaft buffer`,
     }[type];
@@ -191,7 +253,7 @@ function upgradeCard(type, n = 1, opts = {}) {
   const left = tier.next ? Math.max(0, tier.next.at - level) : 0;
   const bulk = opts.bulk ? `<div class="bulk">${['10', 'max'].map((c) => `<button data-buy="${type}" data-count="${c}" data-shaft="${n}" type="button">${c === 'max' ? 'MAX' : `×${c}`}</button>`).join('')}</div>` : '';
   const can = cost !== null && state.coins >= cost;
-  return `<div class="up2${flash}"><div class="up2-ico">${tier.icon}</div><div class="up2-main">
+  return `<div class="up2${flash}"${tip(UPGRADE_TIPS[type] || '')}><div class="up2-ico">${tier.icon}</div><div class="up2-main">
       <div class="up2-title"><b>${tier.label}</b><span>${safeText(tier.name)}</span><em>LV ${level}</em></div>
       <div class="up2-effect">${safeText(effectText(type, n))}</div>
       <div class="meter tier"><i style="width:${Math.round(tier.progress * 100)}%"></i></div>
@@ -206,7 +268,7 @@ function costButton(type, shaftNumber = 1) {
 
 const TABS = [['sell', 'Sell'], ['upgrades', 'Upgrades'], ['shafts', 'Shafts'], ['planet', 'Planet'], ['records', 'Records'], ['tools', 'Tools']];
 const shaftCost = () => (state.production.shafts.length >= 30 ? null : Math.floor(120 * 2.4 ** state.production.shafts.length + 0.5));
-const crewCap = () => 10 + 5 * state.upgrades.habitat;
+const crewCap = () => habitatCapacity(state.upgrades.habitat);
 const buyBtn = (attrs, label, cost, cls = '') => `<button class="buy ${cls}" ${attrs} type="button"${cost === null ? ' disabled' : ''}>${label}<br>${cost === null ? 'CAPPED' : `${fmt(cost)} ◉`}</button>`;
 
 /* ---- veins: announce when the crew reaches, can't break, or exhausts one ---- */
@@ -255,38 +317,48 @@ function renderTabs() {
 }
 
 function shipStatus() {
-  if (state.ship.readyAtSecond > state.simSeconds) return `Hauler returning · ${formatClock(state.ship.readyAtSecond - state.simSeconds)}`;
-  if (state.ship.loading) return `Loading · ${fmtUnits(state.ship.cargoUnits)} u unpaid`;
-  if (state.ship.cargoUnits >= 1) return `${fmtUnits(state.ship.cargoUnits)} u aboard, unpaid`;
-  return 'Ready at pad';
+  if (state.ship.readyAtSecond > state.simSeconds) return `Hauler away · back in ${formatClock(state.ship.readyAtSecond - state.simSeconds)}`;
+  if (state.ship.cargoUnits >= state.ship.capacityUnits - 1e-9) return 'Hold full';
+  if (state.ship.loading) return 'Loading ore from the yard';
+  return state.ship.cargoUnits >= 1 ? 'Waiting for more ore' : 'Ready at the pad';
+}
+
+/** units (and their value) that "Launch now" would send this second */
+function launchPreview() {
+  const aboard = state.ship.cargoUnits;
+  const id = state.ship.cargoOreId ?? state.production.surface.unitsByOre.filter((r) => r.units > 0).map((r) => r.oreId)[0] ?? null;
+  const yardUnits = id ? (state.production.surface.unitsByOre.find((r) => r.oreId === id)?.units ?? 0) : 0;
+  const units = Math.min(state.ship.capacityUnits, aboard + yardUnits);
+  const d = DESTINATIONS.find((x) => x.id === state.selectedDestinationId);
+  return { units, id, pay: id ? Math.floor(units * d.basePrice * oreById(id).value + 0.5) : 0 };
 }
 
 function tabSell() {
-  const buyer = state.buyers.find((b) => b.id === state.selectedDestinationId);
-  const canLoad = state.ship.cargoUnits >= 1 || state.production.surface.unitsByOre.some((r) => r.units > 0);
-  const free = buyer ? buyer.capacityUnits - buyer.inventoryUnits - buyer.reservedUnits : 0;
-  const can = state.ship.readyAtSecond <= state.simSeconds && canLoad && buyer && free >= 1 && buyer.funds >= 1 && !catchingUp;
-  const label = state.ship.cargoUnits >= 1 ? 'Launch loaded cargo' : state.ship.loading ? 'Loading…' : state.autoLaunch ? 'Launch now' : 'Load cargo & launch';
+  const preview = launchPreview();
+  const ready = state.ship.readyAtSecond <= state.simSeconds;
+  const can = ready && preview.units >= 0.5 && !catchingUp;
+  const holdPct = Math.round(Math.min(1, state.ship.cargoUnits / state.ship.capacityUnits) * 100);
   const rows = DESTINATIONS.map((d) => {
-    const b = state.buyers.find((x) => x.id === d.id);
     const sel = d.id === state.selectedDestinationId;
     const price = Math.floor(d.basePrice * oreById('ferrite').value + 0.5);
-    return `<div class="row ${sel ? 'sel' : ''}"><div><div class="t"><span class="pick"></span>${safeText(d.name)} <span class="own">${fmt(price)}</span></div><div class="d">${safeText(d.detail)} · ${d.distance} AU · ${fmtUnits(Math.max(0, b.capacityUnits - b.inventoryUnits - b.reservedUnits))} u free</div><div class="e">◉ ${fmt(b.funds)} to spend</div></div><button class="buy ${sel ? 'ok' : 'ghost'} sm" data-destination="${d.id}" type="button">${sel ? 'Selected' : 'Sell here'}</button></div>`;
+    const trip = Math.ceil(2 * d.distance / state.ship.speedPerMinute * 60);
+    return `<div class="row ${sel ? 'sel' : ''}"><div><div class="t"><span class="pick"></span>${safeText(d.name)} <span class="own"${tip(GLOSSARY.bid)}>${fmt(price)} ◉ / unit</span></div><div class="d"><span${tip(GLOSSARY.au)}>${d.distance} AU away</span> · about ${formatClock(trip)} round trip</div><div class="e"${tip(GLOSSARY.endless)}>Buys every unit · never runs out</div></div><button class="buy ${sel ? 'ok' : 'ghost'} sm" data-destination="${d.id}" type="button">${sel ? 'Selected' : 'Sell here'}</button></div>`;
   }).join('');
-  return `<h2>Where to sell</h2><p class="lede">Departure is the paid sale. Buyers have finite funds, so spread your cargo around.</p>
+  return `<h2>Where to sell</h2><p class="lede">Ore is counted in <b${tip(GLOSSARY.unit)}>units</b> (one unit = one crate). Buyers pay <b>coin per unit</b> the moment the hauler takes off.</p>
     <h3>Hauler</h3>
-    <div class="row"><div><div class="t">${safeText(shipStatus())}</div><div class="d">${fmtUnits(state.ship.capacityUnits)} u hold · ${state.ship.speedPerMinute.toFixed(2)} AU/min</div></div><button class="buy" data-act="launch" type="button"${can ? '' : ' disabled'}>${label} ↗</button></div>
-    <label class="toggle" style="margin:10px 0"><input type="checkbox" data-act="auto"${state.autoLaunch ? ' checked' : ''}${catchingUp ? ' disabled' : ''}> Auto-launch first partial load</label>
+    <div class="row"><div><div class="t">${safeText(shipStatus())}</div><div class="d"${tip(GLOSSARY.hold)}>Hold: ${fmtUnits(state.ship.cargoUnits)} / ${fmtUnits(state.ship.capacityUnits)} units · ${state.ship.speedPerMinute.toFixed(2)} AU/min</div><div class="meter" style="margin-top:6px"><i style="width:${holdPct}%"></i></div></div><button class="buy ready" data-act="launch" type="button"${can ? '' : ' disabled'}${tip(GLOSSARY.launch)}>LAUNCH NOW ↗<br>${preview.units >= 0.5 ? `${fmtUnits(preview.units)} u → ${fmt(preview.pay)} ◉` : 'no ore yet'}</button></div>
+    <label class="toggle" style="margin:10px 0"${tip(GLOSSARY.auto)}><input type="checkbox" data-act="auto"${state.autoLaunch ? ' checked' : ''}${catchingUp ? ' disabled' : ''}> Take off automatically when the hold is full</label>
     <h3>Buyers</h3><div class="rows">${rows}</div>
-    <div class="note">Offers and budgets are playtest fixtures, not certified balance.</div>`;
+    <div class="note"${tip(GLOSSARY.takeoff)}>You are paid at takeoff — never again on arrival. Prices are playtest fixtures, not certified balance.</div>`;
 }
 
 function tabUpgrades() {
-  const hireDisabled = state.workersHired >= crewCap() || state.coins < 20;
+  const hirePrice = hireCost(state.workersHired);
+  const hireDisabled = state.workersHired >= crewCap() || state.coins < hirePrice;
   return `<h2>Reinvest</h2><p class="lede">Dig deeper. Keep the lift moving. Every upgrade is a local test curve, and each one changes how the mine looks.</p>
     <h3>Mine</h3><div class="rows">
       <div class="row"><div><div class="t">Open a new shaft</div><div class="d">${state.production.shafts.length} / 30 open · a new tunnel off the main shaft</div></div>${buyBtn('data-act="shaft"', '＋ Shaft', shaftCost())}</div>
-      <div class="row"><div><div class="t">Hire a miner</div><div class="d">${state.workersHired} / ${crewCap()} crew</div><div class="meter" style="margin-top:6px"><i style="width:${fillFraction(state.workersHired, crewCap())}%"></i></div></div><button class="buy ok" data-act="hire" type="button"${hireDisabled ? ' disabled' : ''}>＋ Miner<br>${state.workersHired >= crewCap() ? 'NEEDS BUNKS' : '20 ◉'}</button></div>
+      <div class="row"><div><div class="t">Hire a miner</div><div class="d">${state.workersHired} / ${crewCap()} crew</div><div class="meter" style="margin-top:6px"><i style="width:${fillFraction(state.workersHired, crewCap())}%"></i></div></div><button class="buy ok" data-act="hire" type="button"${hireDisabled ? ' disabled' : ''}>＋ Miner<br>${state.workersHired >= crewCap() ? 'NEEDS BUNKS' : `${fmt(hirePrice)} ◉`}</button></div>
     </div>
     <h3>The lift and the pick</h3><div class="rows">${upgradeCard('lift', 1, { bulk: true })}${upgradeCard('dig', 1, { bulk: true })}</div>
     <h3>Surface</h3><div class="rows">${upgradeCard('yard', 1, { bulk: true })}${upgradeCard('habitat')}</div>
@@ -377,6 +449,7 @@ function render() {
   if (active && active.closest && active.closest('#tabbody') && active.matches('input[type=text],input[type=password],input[type=number],textarea,select')) { renderPending = true; return; }
   body.innerHTML = { sell: tabSell, upgrades: tabUpgrades, shafts: tabShafts, planet: tabPlanet, records: tabRecords, tools: tabTools }[tab]();
   body.scrollTop = top;
+  syncTip();
   drawScene();
 }
 let renderPending = false;
@@ -501,7 +574,7 @@ document.addEventListener('click', (event) => {
       askJSON('Reply with only this JSON: {"ok":true}').then((r) => toast(r && r.ok ? 'Connection works.' : 'Connected, but the reply was odd.', r && r.ok ? 'success' : 'error')).catch((e) => toast(e.message, 'error'));
       break;
     }
-    case 'launch': apply(dispatchNow, state.ship.cargoUnits >= 1 ? 'Paid cargo left the pad.' : 'Unpaid cargo loading started.'); break;
+    case 'launch': apply(dispatchNow, 'Hauler launched — paid at takeoff.'); break;
     case 'shaft': if (apply(buyNextShaft, 'Shaft opened. A new tunnel is being dug.')) { addFx(...FX_SPOTS.shaft.slice(0, 2), 'NEW SHAFT', '#5ee6a8'); blip([392, 523, 659]); } else blip([140]); break;
     case 'hire': if (apply((current) => hireWorkers(current, 1), 'Miner hired and assigned.')) { addFx(80, -30, '+1 MINER', '#5ee6a8'); blip([587, 784]); } else blip([140]); break;
     case 'grant': {
