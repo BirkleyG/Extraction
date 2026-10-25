@@ -39,7 +39,8 @@ export class FirestoreGameRepository {
       const world = worldSnap.exists ? worldSnap.data() : null;
       if (!world || world.worldId !== worldId) fail('WORLD_NOT_FOUND');
       if (world.status !== 'active') fail('WORLD_CLOSED');
-      if (world.activeMonthId !== monthId) fail('STALE_MONTH');
+      // The closer may finish an older month after the world has already moved on to the next one.
+      if (closing ? world.activeMonthId < monthId : world.activeMonthId !== monthId) fail('STALE_MONTH');
       if (!system && (!memberSnap.exists || memberSnap.data().uid !== ownerId || memberSnap.data().status !== 'active')) fail('FORBIDDEN');
       const now = this.clock();
       // Closing a finished month runs after its boundary, so only the closer may bypass the wall-clock month check.

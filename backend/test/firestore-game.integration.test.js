@@ -124,3 +124,44 @@ test('HTTP game API with emulator-issued ID tokens end to end on Firestore', asy
     assert.equal((await call('commands/dispatch', { requestId: 'h4', expectedVersion: up.body.version, destinationId: 'near' })).status, 409, 'ship is away');
   } finally { await new Promise((r, j) => server.close((e) => (e ? j(e) : r()))); }
 });
+
+test('invite-only join, month preparation and scheduler tick over HTTP', async () => {
+  const { getAuth } = await import('firebase-admin/auth');
+  const { createGameHttpServer } = await import('../src/game-http.js');
+  const { WorldAdmin } = await import('../src/world-admin.js');
+  const { DEFAULT_NPC_BUYERS } = await import('../src/npc.js');
+  const signup = async () => {
+    const r = await fetch(`http://${process.env.FIREBASE_AUTH_EMULATOR_HOST}/identitytoolkit.googleapis.com/v1/accounts:signUp?key=fake-api-key`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: `${randomUUID()}@example.test`, password: 'integration-password-123', returnSecureToken: true }) });
+    return r.json();
+  };
+  const a = await signup(); const b = await signup(); const c = await signup();
+  const worldId = `join-${randomUUID()}`;
+  const repo = new FirestoreGameRepository(db);
+  const game = new GameService(repo, { npcBuyers: DEFAULT_NPC_BUYERS });
+  const admin = new WorldAdmin({ firestore: db, game, repository: repo, inviteCode: 'friends-2026', maxMembers: 2, seedSecret: 'test-seed-secret-0123456789', players: 4 });
+  const server = createGameHttpServer({ auth: getAuth(app), game, admin, internalToken: 'internal-secret-xyz' });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const call = async (path, token, body, headers = {}) => {
+      const r = await fetch(`${base}${path}`, { method: body ? 'POST' : 'GET', headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(body ? { 'Content-Type': 'application/json' } : {}), ...headers }, body: body ? JSON.stringify(body) : undefined });
+      return { status: r.status, body: await r.json() };
+    };
+    const w = `/v1/worlds/${worldId}`;
+    assert.equal((await call(`${w}/join`, a.idToken, { inviteCode: 'wrong' })).status, 403);
+    assert.equal((await call(`${w}/state`, a.idToken)).status, 404, 'unknown world');
+    assert.equal((await call(`${w}/join`, a.idToken, { inviteCode: 'friends-2026' })).status, 200);
+    assert.equal((await call(`${w}/join`, a.idToken, { inviteCode: 'friends-2026' })).status, 200, 'idempotent');
+    assert.equal((await call(`${w}/join`, b.idToken, { inviteCode: 'friends-2026' })).status, 200);
+    assert.equal((await call(`${w}/join`, c.idToken, { inviteCode: 'friends-2026' })).status, 409, 'world is full');
+    assert.equal((await call(`${w}/commands/enroll`, c.idToken, { requestId: 'x', expectedVersion: 0 })).status, 403, 'non-member cannot act');
+    const enrolled = await call(`${w}/commands/enroll`, a.idToken, { requestId: 'en1', expectedVersion: 0 });
+    assert.equal(enrolled.status, 200);
+    const state = await call(`${w}/state`, a.idToken);
+    assert.equal(state.status, 200);
+    assert.equal(state.body.offers.length, 3);
+    assert.equal((await call('/internal/tick', null, { worldId }, { 'x-internal-token': 'nope' })).status, 401);
+    const tick = await call('/internal/tick', null, { worldId }, { 'x-internal-token': 'internal-secret-xyz' });
+    assert.equal(tick.status, 200);
+  } finally { await new Promise((r, j) => server.close((e) => (e ? j(e) : r()))); }
+});

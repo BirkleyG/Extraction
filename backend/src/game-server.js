@@ -7,6 +7,7 @@ import { createGameHttpServer } from './game-http.js';
 import { DEFAULT_NPC_BUYERS } from './npc.js';
 import { generateWorld } from './world.js';
 import { validateRuntimeEnvironment } from './server.js';
+import { WorldAdmin } from './world-admin.js';
 
 const monthOf = (ms) => `${new Date(ms).getUTCFullYear()}-${String(new Date(ms).getUTCMonth() + 1).padStart(2, '0')}`;
 
@@ -14,9 +15,14 @@ export function buildGameServer(env = process.env) {
   const runtime = validateRuntimeEnvironment(env);
   const app = initializeApp({ projectId: runtime.projectId, ...(runtime.emulator ? {} : { credential: applicationDefault() }) }, `extraction-game-${runtime.projectId}`);
   const firestore = getFirestore(app);
-  const game = new GameService(new FirestoreGameRepository(firestore), { npcBuyers: DEFAULT_NPC_BUYERS });
-  const server = createGameHttpServer({ auth: getAuth(app), game, allowOrigin: env.ALLOW_ORIGIN || null });
-  return { server, game, firestore };
+  const repository = new FirestoreGameRepository(firestore);
+  const game = new GameService(repository, { npcBuyers: DEFAULT_NPC_BUYERS });
+  const admin = env.WORLD_SEED_SECRET ? new WorldAdmin({
+    firestore, game, repository, inviteCode: env.INVITE_CODE || null, seedSecret: env.WORLD_SEED_SECRET,
+    maxMembers: Number(env.MAX_MEMBERS || 10), players: Number(env.WORLD_PLAYERS || 10),
+  }) : null;
+  const server = createGameHttpServer({ auth: getAuth(app), game, admin, internalToken: env.INTERNAL_TOKEN || null, allowOrigin: env.ALLOW_ORIGIN || null });
+  return { server, game, firestore, admin };
 }
 
 /** Idempotent month setup for a world: generated planet (server-only) and NPC buyer budgets. */
@@ -27,11 +33,10 @@ export async function prepareMonth(game, { worldId, monthId, seed, players, nowM
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   try {
-    const { server, game } = buildGameServer();
-    const worldId = process.env.WORLD_ID;
-    if (worldId) await prepareMonth(game, { worldId, monthId: monthOf(Date.now()), seed: process.env.WORLD_SEED ?? `${worldId}-${monthOf(Date.now())}`, players: Number(process.env.WORLD_PLAYERS ?? 10), nowMs: Date.now() });
+    const { server } = buildGameServer();
     const port = Number(process.env.PORT || 8788);
-    server.listen(port, '127.0.0.1', () => process.stdout.write(`Game server listening on 127.0.0.1:${port}\n`));
+    // Cloud Run requires listening on all interfaces; local development stays loopback-only.
+    server.listen(port, process.env.K_SERVICE ? '0.0.0.0' : '127.0.0.1', () => process.stdout.write(`Game server listening on 127.0.0.1:${port}\n`));
   } catch (error) {
     process.stderr.write(`Game server startup failed: ${error.message}\n`);
     process.exitCode = 1;
