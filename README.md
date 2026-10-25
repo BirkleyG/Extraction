@@ -6,6 +6,8 @@ Mine ore, hire crews, open shafts, upgrade the lift, and ship to test buyers. Sa
 
 The current Pages build is a **single-player development sandbox with browser-local saves**. It uses the new production flow model and provisional C-01 lift curve. It is not the authoritative multiplayer release. The original prototype and its separate browser saves remain available at `/prototype/`.
 
+The scene reuses the original game's pixel sprites and look. Each planet (a built-in one, an improvised one, or one dreamed up by your own Claude/OpenAI key under **Tools**) picks its own sky, moons, rock layers, ore names/colours and a ring of regions with distinct topography (mesa, dunes, glacier, volcanic, swamp, crystal, fungal, canyon, salt flats). Planets are presentation only in this sandbox; they do not change rates, prices or the ledger.
+
 Open **Local developer tools** to fast-forward, add explicit test coins or reset only the sandbox save. Prices, buyer budgets, starting coin and incomplete upgrade lines in this build are test fixtures, not certified game balance. No month competition is active.
 
 ## Run locally
