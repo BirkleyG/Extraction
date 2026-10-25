@@ -6,6 +6,10 @@ Mine ore, hire crews, open shafts, upgrade the lift, and ship to test buyers. Sa
 
 The current Pages build is a **single-player development sandbox with browser-local saves**. It uses the new production flow model and provisional C-01 lift curve. It is not the authoritative multiplayer release. The original prototype and its separate browser saves remain available at `/prototype/`.
 
+The scene reuses the original game's pixel sprites and look. Each planet is built around one central theme (for example a candy world, a haunted bone-yard, a dead neon city) and picks its own sky, moons, rock layers, ore names/colours and a ring of 5-7 regions. There are 39 region landscapes: 27 earthlike (mesa, dunes, glacier, volcanic, swamp, canyon, salt flats, temperate forest, jungle, savanna, tundra, taiga, prairie, alpine peaks, island chain, sea cliffs, lake country, hoodoo badlands, moor, autumn woodland, scrubland, red-rock arches, waterfall cliffs, geyser basin, palm oasis, rice terraces, redwoods) and 12 alien or sci-fi (crystal spires, fungal forest, floating islands, bone forest, neon ruins, tendril jungle, mirror desert, hive towers, black monoliths, reality rifts, scrap titans, watcher fields).
+
+AI is the default way to make a planet: under **Tools** add your own Claude or OpenAI key, then **Planet → Ask the Maker**. The prompt makes the AI choose a theme first and read a summary of earlier planets (kept in this browser) so each one is new. With no key the Maker improvises from one of twelve built-in themes instead, avoiding recently used ones. Planets are presentation only in this sandbox; they do not change rates, prices or the ledger.
+
 Open **Local developer tools** to fast-forward, add explicit test coins or reset only the sandbox save. Prices, buyer budgets, starting coin and incomplete upgrade lines in this build are test fixtures, not certified game balance. No month competition is active.
 
 ## Run locally

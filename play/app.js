@@ -3,9 +3,11 @@ import {
   dispatchNow, grantDevCoins, hireWorkers, purchaseUpgrade, selectDestination,
   setAutoLaunch, stepGame, upgradeCost, validateGameState,
 } from './model.js';
+import { renderScene } from './scene.js';
+import { TERRAINS, aiReady, aiSettings, generatePlanet, loadHistory, loadPlanet, recordPlanet, saveAiSettings, savePlanet, askJSON } from './planet.js';
 
 const $ = (selector) => document.querySelector(selector);
-const canvas = $('#mine-scene');
+const canvas = $('#cv');
 const ctx = canvas.getContext('2d', { alpha: false });
 const formatter = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
 let state;
@@ -15,10 +17,21 @@ let catchupRemaining = 0;
 let catchingUp = false;
 let catchupKind = 'offline';
 let savedAtMs = Date.now();
-let selectedRecordTab = 'ledger';
-let moreOperationsOpen = false;
+let tab = 'sell';
 let resetPromptOpen = false;
+let grantValue = '10000';
 let toastTimer;
+let world = loadPlanet();
+let planet = world.planet;
+let regionId = world.regionId;
+let planetBusy = false;
+let lastTickMs = performance.now();
+const region = () => planet.regions.find((r) => r.id === regionId) || planet.regions[0];
+const oreIndex = (id) => ORES.findIndex((o) => o.id === id);
+/* The planet decides what the ores are called and look like. Rates and values stay with the model. */
+function skinOres() { ORES.forEach((o, i) => { const p = planet.ores[i]; o.name = p.name; o.color = p.color; o.cat = p.cat; }); }
+skinOres();
+if (!loadHistory().length) recordPlanet(planet);
 
 function formatClock(seconds) {
   const hours = Math.floor(seconds / 3600);
@@ -70,9 +83,10 @@ function save() {
 function toast(message, tone = '') {
   const element = $('#toast');
   element.textContent = message;
-  element.className = `toast show ${tone}`;
+  element.hidden = false;
+  element.style.borderColor = tone === 'error' ? 'var(--bad)' : tone === 'success' ? 'var(--ok)' : '';
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { element.className = 'toast'; }, 2600);
+  toastTimer = setTimeout(() => { element.hidden = true; }, 2600);
 }
 
 function messageFor(error) {
@@ -102,254 +116,182 @@ function apply(action, success) {
 
 function costButton(type, shaftNumber = 1) {
   const cost = upgradeCost(state, type, shaftNumber);
-  return cost === null ? `<span class="capped-label">CAPPED</span>` : `<span class="upgrade-cost">${fmt(cost)} <i>◉</i></span>`;
+  return cost === null ? 'CAPPED' : `${fmt(cost)} ◉`;
 }
 
-function renderMetrics() {
-  $('#coin-value').textContent = fmt(state.coins);
-  $('#earned-value').textContent = fmt(state.totalExternalEarnings);
-  $('#surface-value').textContent = fmtUnits(surfaceTotal());
-  $('#surface-capacity').textContent = `yard capacity · ${fmtUnits(state.production.surface.capacityUnits)}`;
-  $('#production-value').textContent = fmtUnits(totalRate());
-  $('#time-value').textContent = formatClock(state.simSeconds);
-  $('#crew-value').textContent = `${state.workersHired} miners · ${state.production.shafts.length} shaft${state.production.shafts.length === 1 ? '' : 's'}`;
-  $('#shaft-count').textContent = `${String(state.production.shafts.length).padStart(2, '0')} / 30`;
-  $('#lift-label').textContent = `LV ${state.production.lift.level}`;
-  $('#depth-label').textContent = String(Math.max(...state.production.shafts.map((shaft) => shaft.digLevel))).padStart(2, '0');
-  $('#lift-rate').innerHTML = `${fmtUnits(liftRate())} <small>units/min</small>`;
-  const yardRatio = state.production.surface.capacityUnits ? surfaceTotal() / state.production.surface.capacityUnits : 0;
-  const maxBuffer = Math.max(0, ...state.production.shafts.map((shaft) => shaft.bufferCapacityUnits ? shaft.bufferUnits / shaft.bufferCapacityUnits : 0));
-  $('#storage-alert').classList.toggle('hidden', yardRatio < 0.9);
-  $('#buffer-alert').classList.toggle('hidden', maxBuffer < 0.9);
-  $('#ship-status').innerHTML = state.ship.readyAtSecond > state.simSeconds
-    ? `<i class="status-dot busy"></i> RETURNING · ${formatClock(state.ship.readyAtSecond - state.simSeconds)}`
-    : state.ship.loading
-      ? `<i class="status-dot busy"></i> LOADING · ${fmtUnits(state.ship.cargoUnits)} UNPAID`
-      : state.ship.cargoUnits >= 1
-        ? `<i class="status-dot busy"></i> ${fmtUnits(state.ship.cargoUnits)} UNPAID ABOARD`
-        : `<i class="status-dot"></i> READY AT PAD`;
-  $('#auto-ship-state').textContent = state.autoLaunch ? 'AUTO-LAUNCH ON' : 'MANUAL LAUNCH';
-  $('#auto-launch').checked = state.autoLaunch;
-  $('#crew-capacity').textContent = `${state.workersHired} / ${habitatCapacity(state.upgrades.habitat)}`;
-  $('#crew-bar-fill').style.width = `${fillFraction(state.workersHired, habitatCapacity(state.upgrades.habitat))}%`;
-  $('#record-count').textContent = `${state.ledger.length} ENTRIES`;
-  const selectedBuyer = state.buyers.find((buyer) => buyer.id === state.selectedDestinationId);
-  const canLoad = state.ship.cargoUnits >= 1 || state.production.surface.unitsByOre.some((row) => row.units > 0);
-  const buyerCanReceive = selectedBuyer && selectedBuyer.capacityUnits - selectedBuyer.inventoryUnits - selectedBuyer.reservedUnits >= 1 && selectedBuyer.funds >= 1;
-  $('#launch-button').disabled = state.ship.readyAtSecond > state.simSeconds || !canLoad || !buyerCanReceive || catchingUp;
-  $('#launch-button').innerHTML = state.ship.readyAtSecond > state.simSeconds
-    ? `Hauler returning · ${formatClock(state.ship.readyAtSecond - state.simSeconds)} <span>⌛</span>`
-    : state.ship.cargoUnits >= 1
-      ? `Launch loaded cargo · ${fmtUnits(state.ship.cargoUnits)} u <span>↗</span>`
-      : state.ship.loading
-        ? `Loading cargo… <span>⌛</span>`
-        : state.autoLaunch
-          ? `Auto-load begins at 1 unit <span>↗</span>`
-          : `Load cargo to launch <span>↗</span>`;
-  $('#run-state').textContent = catchingUp ? 'CATCHING UP' : paused ? 'MINE PAUSED' : 'MINE RUNNING';
-  $('#pause-button').innerHTML = paused ? '▶ <span>Resume</span>' : 'Ⅱ <span>Pause</span>';
-  $('#pause-button').setAttribute('aria-pressed', String(paused));
-  $('#recovery-banner').textContent = recovering;
-  $('#recovery-banner').classList.toggle('hidden', !recovering);
-  $('#catchup-banner').classList.toggle('hidden', !catchingUp);
-  $('#catchup-remaining').textContent = fmt(catchupRemaining);
-  document.querySelectorAll('button').forEach((button) => { if (button.id !== 'pause-button') button.disabled = catchingUp; });
-  $('#auto-launch').disabled = catchingUp;
-  $('#reset-confirm').classList.toggle('hidden', !resetPromptOpen);
-  $('#reset-button').classList.toggle('hidden', resetPromptOpen);
+const TABS = [['sell', 'Sell'], ['upgrades', 'Upgrades'], ['shafts', 'Shafts'], ['planet', 'Planet'], ['records', 'Records'], ['tools', 'Tools']];
+const shaftCost = () => (state.production.shafts.length >= 30 ? null : Math.floor(120 * 2.4 ** state.production.shafts.length + 0.5));
+const crewCap = () => habitatCapacity(state.upgrades.habitat);
+const buyBtn = (attrs, label, cost, cls = '') => `<button class="buy ${cls}" ${attrs} type="button"${cost === null ? ' disabled' : ''}>${label}<br>${cost === null ? 'CAPPED' : `${fmt(cost)} ◉`}</button>`;
+
+function renderHud() {
+  const rate = totalRate();
+  $('#hCoin').textContent = fmt(state.coins);
+  $('#hRate').textContent = `${fmtUnits(rate)} ore / min`;
+  $('#hSurface').textContent = `${fmtUnits(surfaceTotal())} / ${fmtUnits(state.production.surface.capacityUnits)}`;
+  $('#hEarned').textContent = fmt(state.totalExternalEarnings);
+  $('#hTime').textContent = formatClock(state.simSeconds);
+  $('#hLive').textContent = catchingUp ? 'CATCHING UP' : paused ? 'MINE PAUSED' : 'MINE RUNNING';
+  $('#hLive').classList.toggle('off', paused || catchingUp);
+  $('#pauseBtn').textContent = paused ? 'Resume' : 'Pause';
+  $('#pauseBtn').setAttribute('aria-pressed', String(paused));
+  const tag = $('#stageTag');
+  tag.innerHTML = `<b>${safeText(region().name.toUpperCase())}</b> · ${safeText(TERRAINS[region().terrain].label)} · ${state.production.shafts.length} shaft${state.production.shafts.length === 1 ? '' : 's'} · ${state.workersHired} miners · lift LV ${state.production.lift.level}`;
+  const yard = state.production.surface.capacityUnits ? surfaceTotal() / state.production.surface.capacityUnits : 0;
+  const buf = Math.max(0, ...state.production.shafts.map((s) => (s.bufferCapacityUnits ? s.bufferUnits / s.bufferCapacityUnits : 0)));
+  const banner = $('#banner');
+  const msg = catchingUp ? `CATCHING UP · ${fmt(catchupRemaining)} s left` : recovering || (yard >= 0.9 ? '! YARD FULL — launch cargo or expand the yard' : buf >= 0.9 ? '! SHAFT BUFFER FULL — upgrade the lift' : '');
+  banner.hidden = !msg;
+  banner.classList.toggle('bad', !catchingUp && !recovering && !!msg);
+  banner.textContent = msg;
+  const last = state.log.slice(-2).reverse();
+  $('#ticker').innerHTML = last.length ? last.map((e) => `<div>${formatClock(e.atSecond)} · ${safeText(e.message)}</div>`).join('') : '<div>The mine is quiet. Dig deeper, keep the lift moving, sell the ore.</div>';
 }
 
-function renderOffers() {
-  $('#offer-list').innerHTML = DESTINATIONS.map((destination) => {
-    const buyer = state.buyers.find((item) => item.id === destination.id);
-    const selected = destination.id === state.selectedDestinationId;
-    const price = Math.floor(destination.basePrice * oreById('ferrite').value + 0.5);
-    const capacityFree = buyer.capacityUnits - buyer.inventoryUnits - buyer.reservedUnits;
-    return `<button class="offer-card ${selected ? 'selected' : ''}" type="button" data-destination="${destination.id}" aria-pressed="${selected}">
-      <span class="offer-radio"></span><span class="offer-main"><strong>${safeText(destination.name)}</strong><small>${safeText(destination.detail)} · ${destination.distance} AU</small></span>
-      <span class="offer-price"><b>${fmt(price)}</b><small>coin / ferrite</small></span>
-      <span class="offer-reserve"><i>◉ ${fmt(buyer.funds)}</i><small>${fmtUnits(Math.max(0, capacityFree))} units free</small></span>
-    </button>`;
+function renderTabs() {
+  $('#tabs').innerHTML = TABS.map(([id, label]) => `<button class="tab" role="tab" data-tab="${id}" aria-selected="${tab === id}">${label}</button>`).join('');
+}
+
+function shipStatus() {
+  if (state.ship.readyAtSecond > state.simSeconds) return `Hauler returning · ${formatClock(state.ship.readyAtSecond - state.simSeconds)}`;
+  if (state.ship.loading) return `Loading · ${fmtUnits(state.ship.cargoUnits)} u unpaid`;
+  if (state.ship.cargoUnits >= 1) return `${fmtUnits(state.ship.cargoUnits)} u aboard, unpaid`;
+  return 'Ready at pad';
+}
+
+function tabSell() {
+  const buyer = state.buyers.find((b) => b.id === state.selectedDestinationId);
+  const canLoad = state.ship.cargoUnits >= 1 || state.production.surface.unitsByOre.some((r) => r.units > 0);
+  const free = buyer ? buyer.capacityUnits - buyer.inventoryUnits - buyer.reservedUnits : 0;
+  const can = state.ship.readyAtSecond <= state.simSeconds && canLoad && buyer && free >= 1 && buyer.funds >= 1 && !catchingUp;
+  const label = state.ship.cargoUnits >= 1 ? 'Launch loaded cargo' : state.ship.loading ? 'Loading…' : state.autoLaunch ? 'Launch now' : 'Load cargo & launch';
+  const rows = DESTINATIONS.map((d) => {
+    const b = state.buyers.find((x) => x.id === d.id);
+    const sel = d.id === state.selectedDestinationId;
+    const price = Math.floor(d.basePrice * oreById('ferrite').value + 0.5);
+    return `<div class="row ${sel ? 'sel' : ''}"><div><div class="t"><span class="pick"></span>${safeText(d.name)} <span class="own">${fmt(price)}</span></div><div class="d">${safeText(d.detail)} · ${d.distance} AU · ${fmtUnits(Math.max(0, b.capacityUnits - b.inventoryUnits - b.reservedUnits))} u free</div><div class="e">◉ ${fmt(b.funds)} to spend</div></div><button class="buy ${sel ? 'ok' : 'ghost'} sm" data-destination="${d.id}" type="button">${sel ? 'Selected' : 'Sell here'}</button></div>`;
   }).join('');
+  return `<h2>Where to sell</h2><p class="lede">Departure is the paid sale. Buyers have finite funds, so spread your cargo around.</p>
+    <h3>Hauler</h3>
+    <div class="row"><div><div class="t">${safeText(shipStatus())}</div><div class="d">${fmtUnits(state.ship.capacityUnits)} u hold · ${state.ship.speedPerMinute.toFixed(2)} AU/min</div></div><button class="buy" data-act="launch" type="button"${can ? '' : ' disabled'}>${label} ↗</button></div>
+    <label class="toggle" style="margin:10px 0"><input type="checkbox" data-act="auto"${state.autoLaunch ? ' checked' : ''}${catchingUp ? ' disabled' : ''}> Auto-launch first partial load</label>
+    <h3>Buyers</h3><div class="rows">${rows}</div>
+    <div class="note">Offers and budgets are playtest fixtures, not certified balance.</div>`;
 }
 
-function renderUpgrades() {
+function tabUpgrades() {
   const first = state.production.shafts[0];
-  const rows = [
-    ['dig', 'Dig rate', `Shaft 01 · LV ${first.digLevel}`, '╱'],
-    ['lift', 'Lift throughput', `LV ${state.production.lift.level} · grows 1.0316×`, '⇧'],
-    ['yard', 'Surface yard', `${fmtUnits(state.production.surface.capacityUnits)} unit capacity`, '▤'],
-    ['shipSpeed', 'Hauler speed', `${state.ship.speedPerMinute.toFixed(2)} AU/min`, '↗'],
+  const lines = [
+    ['dig', 'Dig rate', `Shaft 01 · LV ${first.digLevel}`],
+    ['lift', 'Lift throughput', `LV ${state.production.lift.level} · ${fmtUnits(liftRate())} units/min`],
+    ['yard', 'Surface yard', `${fmtUnits(state.production.surface.capacityUnits)} unit capacity`],
+    ['shipSpeed', 'Hauler speed', `${state.ship.speedPerMinute.toFixed(2)} AU/min`],
+    ['habitat', 'Habitat', `Crew cap ${crewCap()}`],
+    ['shipCapacity', 'Cargo capacity', `${fmtUnits(state.ship.capacityUnits)} units`],
+    ['loading', 'Pad loading', `${fmtUnits(state.ship.loadingUnitsPerMinute)} units/min`],
   ];
-  $('#upgrade-list').innerHTML = rows.map(([type, title, detail, icon]) => `
-    <div class="upgrade-row"><span class="upgrade-icon">${icon}</span><span class="upgrade-main"><strong>${title}</strong><small>${detail}</small></span><button class="buy-button" data-buy="${type}" data-shaft="1" type="button"><span>BUY 1</span>${costButton(type, 1)}</button></div>
-    <div class="bulk-row">${['1', '10', 'max'].map((count) => `<button data-buy="${type}" data-count="${count}" data-shaft="1" type="button">${count === 'max' ? 'MAX' : `×${count}`}</button>`).join('')}</div>`).join('');
-  $('#shaft-cost').textContent = state.production.shafts.length >= 30 ? 'CAPPED' : `${fmt(Math.floor(120 * 2.4 ** state.production.shafts.length + 0.5))} ◉`;
-  const hireLabel = state.workersHired >= habitatCapacity(state.upgrades.habitat) ? 'NEEDS CAPACITY' : `${fmt(hireCost(state.workersHired))} ◉`;
-  $('#hire-button').textContent = `Hire + miner · ${hireLabel}`;
-  $('#more-upgrades').innerHTML = moreOperationsOpen ? 'Hide operations <span>↑</span>' : 'More operations <span>↓</span>';
-  const operations = $('#operations-more');
-  operations.classList.toggle('hidden', !moreOperationsOpen);
-  if (moreOperationsOpen) renderOperations();
+  const bulk = new Set(['dig', 'lift', 'yard', 'shipSpeed']);
+  const rows = lines.map(([type, name, detail]) => `<div class="row"><div><div class="t">${name}</div><div class="d">${detail}</div>${bulk.has(type) ? `<div class="bulk">${['10', 'max'].map((c) => `<button data-buy="${type}" data-count="${c}" data-shaft="1" type="button">${c === 'max' ? 'MAX' : `×${c}`}</button>`).join('')}</div>` : ''}</div>${buyBtn(`data-buy="${type}" data-shaft="1"`, 'BUY 1', upgradeCost(state, type, 1))}</div>`).join('');
+  const hirePrice = hireCost(state.workersHired);
+  const hireDisabled = state.workersHired >= crewCap() || state.coins < hirePrice;
+  return `<h2>Reinvest</h2><p class="lede">Dig deeper. Keep the lift moving. Every upgrade here is a local test curve.</p>
+    <h3>Mine</h3><div class="rows">
+      <div class="row"><div><div class="t">Open a new shaft</div><div class="d">${state.production.shafts.length} / 30 open</div></div>${buyBtn('data-act="shaft"', '＋ Shaft', shaftCost())}</div>
+      <div class="row"><div><div class="t">Hire a miner</div><div class="d">${state.workersHired} / ${crewCap()} crew</div><div class="meter" style="margin-top:6px"><i style="width:${fillFraction(state.workersHired, crewCap())}%"></i></div></div><button class="buy ok" data-act="hire" type="button"${hireDisabled ? ' disabled' : ''}>＋ Miner<br>${state.workersHired >= crewCap() ? 'NEEDS BUNKS' : `${fmt(hirePrice)} ◉`}</button></div>
+    </div>
+    <h3>Operations</h3><div class="rows">${rows}</div>`;
 }
 
-function renderOperations() {
-  const controls = [
-    ['habitat', 'Habitat', `Crew cap ${habitatCapacity(state.upgrades.habitat)}`, 0],
-    ['shipCapacity', 'Cargo capacity', `${fmtUnits(state.ship.capacityUnits)} units`, 0],
-    ['loading', 'Pad loading', `${fmtUnits(state.ship.loadingUnitsPerMinute)} units/min`, 0],
-  ];
-  $('#operations-list').innerHTML = controls.map(([type, name, detail]) => `<div class="upgrade-row"><span class="upgrade-icon">⌁</span><span class="upgrade-main"><strong>${name}</strong><small>${detail}</small></span><button class="buy-button" data-buy="${type}" type="button"><span>BUY 1</span>${costButton(type)}</button></div>`).join('') + `
-    <div class="operation-note"><strong>Fixture curves</strong><span>Costs and capacity bases are local playtest values; they are not production defaults.</span></div>`;
-}
-
-function renderShafts() {
+function tabShafts() {
   const rates = currentRates(state);
-  $('#shaft-list').innerHTML = state.production.shafts.map((shaft) => {
-    const rate = rates.find((row) => row.shaftNumber === shaft.shaftNumber);
-    const percent = fillFraction(shaft.bufferUnits, shaft.bufferCapacityUnits);
-    const blocked = percent >= 90;
-    return `<article class="shaft-card">
-      <div class="shaft-card-top"><span class="shaft-index">${String(shaft.shaftNumber).padStart(2, '0')}</span><span class="ore-swatch" style="--ore:${rate.ore.color}"></span><strong>${rate.ore.name}</strong><span class="shaft-rate">${fmtUnits(rate.ratePerMinute)} <small>/ min</small></span></div>
-      <div class="shaft-meta"><span>${shaft.workersAssigned} / ${10 + shaft.bunkhouseLevel * 5} crew</span><span>${shaft.digLevel} dig · ${shaft.cartLevel} carts</span></div>
-      <div class="shaft-buffer"><span>BUFFER</span><div><i style="width:${percent}%"></i></div><b>${blocked ? '! ' : ''}${fmtUnits(shaft.bufferUnits)} / ${fmtUnits(shaft.bufferCapacityUnits)}</b></div>
-      <div class="shaft-actions"><button data-buy="dig" data-shaft="${shaft.shaftNumber}" type="button">Dig +1 · ${costButton('dig', shaft.shaftNumber)}</button><button data-buy="bunkhouse" data-shaft="${shaft.shaftNumber}" type="button">Bunks +1 · ${costButton('bunkhouse', shaft.shaftNumber)}</button><button data-buy="cart" data-shaft="${shaft.shaftNumber}" type="button">Cart +1 · ${costButton('cart', shaft.shaftNumber)}</button></div>
-    </article>`;
+  const cards = state.production.shafts.map((shaft) => {
+    const rate = rates.find((r) => r.shaftNumber === shaft.shaftNumber);
+    const pct = fillFraction(shaft.bufferUnits, shaft.bufferCapacityUnits);
+    const n = shaft.shaftNumber;
+    const up = (type, name, lv) => `<div class="up"><small>${name}</small><b>LV ${lv}</b>${buyBtn(`data-buy="${type}" data-shaft="${n}"`, '+1', upgradeCost(state, type, n))}</div>`;
+    return `<div class="shaft"><div class="shead"><b>SHAFT ${String(n).padStart(2, '0')}</b><span class="swatch2" style="--ore:${rate.ore.color}"></span><span>${safeText(rate.ore.name)}</span><span class="own" style="font-family:var(--f-mono);font-size:19px;color:var(--coin);margin-left:auto">${fmtUnits(rate.ratePerMinute)}/min</span></div>
+      <div class="d">${shaft.workersAssigned} / ${10 + shaft.bunkhouseLevel * 5} crew · buffer ${fmtUnits(shaft.bufferUnits)} / ${fmtUnits(shaft.bufferCapacityUnits)}</div>
+      <div class="meter ${pct >= 90 ? 'warn' : ''}"><i style="width:${pct}%"></i></div>
+      <div class="ups">${up('dig', 'Dig', shaft.digLevel)}${up('bunkhouse', 'Bunks', shaft.bunkhouseLevel)}${up('cart', 'Carts', shaft.cartLevel)}</div></div>`;
   }).join('');
+  return `<h2>Your shafts</h2><p class="lede">Each shaft digs its own ore. Watch the buffers: a full one stalls the shaft.</p><div class="rows">${cards}</div>`;
 }
 
-function renderRecords() {
-  document.querySelectorAll('[data-record-tab]').forEach((button) => button.classList.toggle('active', button.dataset.recordTab === selectedRecordTab));
-  if (selectedRecordTab === 'ledger') {
-    const entries = state.ledger.slice().reverse().slice(0, 10);
-    $('#record-list').innerHTML = entries.length ? entries.map((entry) => `<div class="record-row"><span class="record-mark ${entry.ownerDelta > 0 ? 'in' : 'out'}">${entry.ownerDelta > 0 ? '+' : '−'}</span><span class="record-text"><strong>${safeText(entry.description)}</strong><small>${formatClock(entry.atSecond)} · ${safeText(entry.type.replaceAll('_', ' '))}</small></span><b class="record-amount ${entry.ownerDelta > 0 ? 'positive' : ''}">${entry.ownerDelta > 0 ? '+' : '−'}${fmt(entry.amount)} ◉</b></div>`).join('') : '<p class="empty-state">No records yet.</p>';
-  } else if (selectedRecordTab === 'shipments') {
-    const shipments = state.shipments.slice().reverse().slice(0, 8);
-    $('#record-list').innerHTML = shipments.length ? shipments.map((shipment) => `<div class="record-row"><span class="cargo-mark">▰</span><span class="record-text"><strong>${fmtUnits(shipment.units)} ${safeText(oreById(shipment.oreId).name)} → ${safeText(destinationById(shipment.destinationId).name)}</strong><small>${state.shipmentStatusById[shipment.id] === 'DELIVERED' ? 'Delivered' : `ETA ${formatClock(Math.max(0, shipment.arrivalAtSecond - state.simSeconds))}`} · paid at departure</small></span><b class="record-amount positive">${fmt(shipment.payment)} ◉</b></div>`).join('') : '<p class="empty-state">The launch pad is waiting for its first cargo.</p>';
-  } else {
-    const entries = state.log.slice().reverse().slice(0, 10);
-    $('#record-list').innerHTML = entries.length ? entries.map((entry) => `<div class="record-row"><span class="event-mark">${entry.type === 'sale' ? '↗' : entry.type === 'arrival' ? '↓' : '·'}</span><span class="record-text"><strong>${safeText(entry.message)}</strong><small>${formatClock(entry.atSecond)}</small></span></div>`).join('') : '<p class="empty-state">No events yet.</p>';
-  }
+function tabPlanet() {
+  const rows = planet.regions.map((r) => {
+    const T = TERRAINS[r.terrain]; const sel = r.id === regionId;
+    return `<div class="row ${sel ? 'sel' : ''}"><div><div class="t"><span class="swatch2" style="--ore:${r.biome}"></span>${safeText(r.name)}</div><div class="d">${safeText(T.label)}${T.group === 'alien' ? ' · alien' : ''} · ${safeText(r.blurb)}</div></div><button class="buy ${sel ? 'ok' : 'ghost'} sm" data-region="${r.id}" type="button">${sel ? 'Here' : 'Visit'}</button></div>`;
+  }).join('');
+  const ores = planet.ores.map((o) => `<span class="chip"><i style="background:${o.color}"></i>${safeText(o.name)}</span>`).join('');
+  const th = planet.theme || { concept: '', motifs: [] };
+  const ready = aiReady();
+  const past = loadHistory().slice(-5).reverse().map((e) => `<div class="d">${safeText(e.name)} · ${safeText(e.concept)}</div>`).join('');
+  return `<h2>${safeText(planet.name)}</h2><p class="lede">${safeText(planet.tagline)}</p>
+    <div class="note"><b>THEME</b> · ${safeText(th.concept)}${th.mood ? ` <i>(${safeText(th.mood)})</i>` : ''}${th.motifs && th.motifs.length ? `<br>${th.motifs.map((m) => `<span class="pill sp">${safeText(m)}</span>`).join(' ')}` : ''}</div>
+    <p class="story">${safeText(planet.story)}</p>
+    <h3>Ores on this world</h3><div class="chips">${ores}</div>
+    <h3>Regions · pick the ground your mine sits on</h3><div class="rows">${rows}</div>
+    <div class="note">Regions change the landscape, weather and look. The sandbox's rates and prices don't depend on them yet.</div>
+    <h3>New planet</h3>
+    <label class="f">What should the Maker build? (optional)<textarea id="planetPrompt" maxlength="400" placeholder="A cold, pink planet of floating ice and screaming moons">${safeText(planetPromptValue)}</textarea></label>
+    <div class="btnrow"><button class="buy alt" data-act="newplanet-ai" type="button"${planetBusy ? ' disabled' : ''}>${planetBusy ? 'The Maker is thinking…' : ready ? 'Ask the Maker (AI)' : 'Ask the Maker'}</button></div>
+    <p class="lede">${ready ? 'The Maker invents a theme, builds the whole planet from it, and reads the planets before it so this one is new.' : 'No AI key yet, so the Maker will improvise from a theme. Add your own Claude or OpenAI key under Tools for full AI planets.'}</p>
+    ${past ? `<h3>Planets so far</h3><div class="rows">${past}</div>` : ''}`;
+}
+let planetPromptValue = '';
+
+function tabRecords() {
+  const ledger = state.ledger.slice().reverse().slice(0, 10).map((e) => `<div class="row"><div><div class="t">${safeText(e.description)}</div><div class="d">${formatClock(e.atSecond)} · ${safeText(e.type.replaceAll('_', ' '))}</div></div><div class="e" style="color:${e.ownerDelta > 0 ? 'var(--ok)' : 'var(--bad)'}">${e.ownerDelta > 0 ? '+' : '−'}${fmt(e.amount)} ◉</div></div>`).join('') || '<p class="lede">No records yet.</p>';
+  const cargo = state.shipments.slice().reverse().slice(0, 8).map((s) => `<div class="row"><div><div class="t">${fmtUnits(s.units)} ${safeText(oreById(s.oreId).name)} → ${safeText(destinationById(s.destinationId).name)}</div><div class="d">${state.shipmentStatusById[s.id] === 'DELIVERED' ? 'Delivered' : `ETA ${formatClock(Math.max(0, s.arrivalAtSecond - state.simSeconds))}`} · paid at departure</div></div><div class="e">${fmt(s.payment)} ◉</div></div>`).join('') || '<p class="lede">The launch pad is waiting for its first cargo.</p>';
+  const events = state.log.slice().reverse().slice(0, 10).map((e) => `<div>${formatClock(e.atSecond)} · ${safeText(e.message)}</div>`).join('') || '<p class="lede">No events yet.</p>';
+  return `<h2>Paper trail</h2><h3>Ledger · ${state.ledger.length} entries</h3><div class="rows">${ledger}</div><h3>Cargo</h3><div class="rows">${cargo}</div><h3>Events</h3><div class="feed">${events}</div>`;
+}
+
+function tabTools() {
+  const ai = aiSettings();
+  return `<h2>Dev tools</h2><p class="lede">Local sandbox only. No server, no month competition.</p>
+    <div class="devbox"><b>Fast-forward</b><p class="d">Runs the same one-second tick.</p><div class="btnrow"><button class="buy ghost sm" data-forward="60" type="button">1 min</button><button class="buy ghost sm" data-forward="600" type="button">10 min</button><button class="buy ghost sm" data-forward="3600" type="button">1 hour</button></div></div>
+    <div class="devbox"><b>Test grant</b><p class="d">Creates an explicit local source entry.</p><div class="btnrow"><input id="grant-amount" type="number" min="1" step="1" value="${safeText(grantValue)}" aria-label="Test grant amount"><button class="buy sm" data-act="grant" type="button">Add test coins</button></div></div>
+    <div class="devbox"><b>AI engine · bring your own key</b><p class="d">Used only to design planets. Your key stays in this browser and goes straight to the provider.</p>
+      <label class="f">Engine<select id="aiProvider"><option value="off"${ai.provider === 'off' ? ' selected' : ''}>Off</option><option value="anthropic"${ai.provider === 'anthropic' ? ' selected' : ''}>My Claude API key</option><option value="openai"${ai.provider === 'openai' ? ' selected' : ''}>My OpenAI API key</option></select></label>
+      <label class="f">API key<input type="password" id="aiKey" autocomplete="off" value="${safeText(ai.key || '')}" placeholder="paste key"></label>
+      <div class="btnrow"><button class="buy sm" data-act="ai-save" type="button">Save</button><button class="buy ghost sm" data-act="ai-test" type="button">Test connection</button></div></div>
+    <div class="devbox"><b>Reset sandbox</b><p class="d">Starts a new local save. The legacy prototype is untouched.</p>${resetPromptOpen ? '<div class="btnrow"><button class="buy danger sm" data-act="confirm-reset" type="button">Reset mine</button><button class="buy ghost sm" data-act="cancel-reset" type="button">Keep playing</button></div>' : '<div class="btnrow"><button class="buy ghost sm" data-act="reset" type="button">Reset local save…</button></div>'}</div>
+    <div class="note">Rates, offers, costs and buyer budgets are local test fixtures, not certified balance.</div>`;
 }
 
 function render() {
-  renderMetrics();
-  renderOffers();
-  renderUpgrades();
-  renderShafts();
-  renderRecords();
+  renderHud();
+  renderTabs();
+  const body = $('#tabbody');
+  const top = body.scrollTop;
+  const active = document.activeElement;
+  if (active && active.closest && active.closest('#tabbody') && active.matches('input[type=text],input[type=password],input[type=number],textarea,select')) { renderPending = true; return; }
+  body.innerHTML = { sell: tabSell, upgrades: tabUpgrades, shafts: tabShafts, planet: tabPlanet, records: tabRecords, tools: tabTools }[tab]();
+  body.scrollTop = top;
   drawScene();
 }
-
-function rect(x, y, width, height, color) { ctx.fillStyle = color; ctx.fillRect(Math.round(x), Math.round(y), Math.round(width), Math.round(height)); }
-function line(x1, y1, x2, y2, color, width = 1) { ctx.strokeStyle = color; ctx.lineWidth = width; ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); }
-function pixelText(text, x, y, color = '#d7cdb7', size = 9) { ctx.fillStyle = color; ctx.font = `bold ${size}px ui-monospace, monospace`; ctx.fillText(text, x, y); }
+let renderPending = false;
 
 function drawScene() {
-  if (!ctx || !state) return;
+  if (!state) return;
   const dpr = window.devicePixelRatio || 1;
-  const width = Math.max(300, canvas.clientWidth);
-  const height = Math.max(220, canvas.clientHeight || 370);
-  if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
-    canvas.width = Math.round(width * dpr);
-    canvas.height = Math.round(height * dpr);
-  }
-  ctx.setTransform(dpr * width / 960, 0, 0, dpr * height / 440, 0, 0);
-  ctx.imageSmoothingEnabled = false;
-  rect(0, 0, 960, 440, '#111a19');
-  const sky = ctx.createLinearGradient(0, 0, 0, 218);
-  sky.addColorStop(0, '#192725'); sky.addColorStop(1, '#29312b');
-  ctx.fillStyle = sky; ctx.fillRect(0, 0, 960, 218);
-  for (let index = 0; index < 34; index += 1) {
-    const x = (index * 173 + 37) % 940;
-    const y = 18 + (index * 47 % 120);
-    rect(x, y, index % 5 === 0 ? 3 : 2, index % 5 === 0 ? 3 : 2, index % 3 === 0 ? '#a8a17b' : '#64766b');
-  }
-  rect(760, 26, 76, 76, '#d38d50'); rect(770, 36, 56, 56, '#e6a461'); rect(785, 50, 26, 26, '#f0bd72');
-  rect(0, 155, 150, 50, '#344039'); rect(0, 177, 200, 35, '#3b453e');
-  rect(120, 143, 70, 45, '#3a453e'); rect(150, 125, 46, 62, '#465048');
-  rect(505, 154, 165, 51, '#39443d'); rect(580, 135, 132, 69, '#465048'); rect(710, 167, 250, 45, '#354039');
-  rect(0, 206, 960, 15, '#c07748'); rect(0, 219, 960, 10, '#8f5639');
-  const strata = ['#42332a', '#342d27', '#2c3029', '#272a24', '#222722'];
-  strata.forEach((color, band) => {
-    rect(0, 229 + band * 42, 960, 42, color);
-    for (let x = (band * 19) % 60; x < 960; x += 72) rect(x, 238 + band * 42, 20 + (x % 11), 4, band % 2 ? '#554335' : '#394036');
-  });
-  // Lift tower and cage.
-  rect(118, 139, 8, 69, '#cf8750'); rect(125, 139, 40, 6, '#cf8750'); rect(158, 139, 6, 69, '#b16c45');
-  rect(130, 147, 5, 57, '#ddaa68'); rect(148, 147, 5, 57, '#ddaa68');
-  line(139, 147, 139, 338, '#8d8b70', 2);
-  const liftPhase = state.simSeconds % 18;
-  const cageY = 225 + (liftPhase < 9 ? liftPhase : 18 - liftPhase) * 11;
-  rect(126, cageY, 28, 16, '#dea05b'); rect(131, cageY + 4, 18, 7, '#503a2b');
-  // Tunnel mouths and descending shaft lines.
-  const shafts = state.production.shafts;
-  const shown = Math.min(shafts.length, 9);
-  shafts.slice(0, shown).forEach((shaft, index) => {
-    const x = 230 + index * 40;
-    rect(x - 9, 202, 20, 15, '#181d19');
-    rect(x - 6, 207, 14, 8, '#c07a47');
-    const depth = 248 + index * 16;
-    rect(x - 3, 220, 7, depth - 220, '#141b18');
-    rect(x + 4, 220, 2, depth - 220, '#766046');
-    rect(x - 8, depth, 18, 6, '#d18a4f');
-    const isActive = shaft.workersAssigned > 0;
-    if (isActive) {
-      const walk = (state.simSeconds * (shaft.shaftNumber % 3 + 1) + shaft.shaftNumber * 17) % 62;
-      const minerX = x - 6 + walk;
-      const minerY = depth - 20;
-      rect(minerX, minerY, 5, 9, '#e59b57'); rect(minerX + 1, minerY - 4, 4, 4, '#d7c5a0');
-      rect(minerX - 2, minerY + 9, 4, 3, '#24221d'); rect(minerX + 3, minerY + 9, 4, 3, '#24221d');
-      if (state.simSeconds % 3 === 0) rect(minerX + 8, minerY + 1, 3, 3, '#e8d56d');
-    }
-    const buffer = shaft.bufferUnits / Math.max(1, shaft.bufferCapacityUnits);
-    if (buffer > 0.05) { rect(x + 13, depth - 3 - buffer * 16, 4, buffer * 16, oreById(shaft.oreId).color); }
-  });
-  if (shafts.length > shown) pixelText(`+${shafts.length - shown} SHAFTS BELOW`, 223, 385, '#b9ad94', 8);
-  // Ore sorting yard, pixel bins.
-  rect(610, 175, 212, 25, '#574434'); rect(618, 157, 200, 40, '#8b6544'); rect(625, 162, 186, 31, '#382f26');
-  const bins = state.production.surface.unitsByOre;
-  const maxBin = Math.max(1, ...bins.map((item) => item.units));
-  for (let index = 0; index < Math.min(5, ORES.length); index += 1) {
-    const item = ORES[index];
-    const stock = bins.find((row) => row.oreId === item.id)?.units ?? 0;
-    const x = 631 + index * 35;
-    rect(x, 169, 25, 22, '#292a24');
-    rect(x + 2, 189 - Math.min(18, stock / maxBin * 18), 21, Math.min(18, stock / maxBin * 18), item.color);
-    rect(x, 191, 25, 3, '#c18d58');
-  }
-  rect(600, 200, 227, 8, '#d18b50');
-  // Loading gantry and single hauler.
-  rect(840, 157, 78, 7, '#c1794b'); rect(850, 164, 6, 45, '#c1794b'); rect(906, 164, 6, 45, '#c1794b');
-  rect(850, 202, 61, 6, '#deaa69');
-  const shipBusy = state.ship.readyAtSecond > state.simSeconds;
-  const shipX = shipBusy ? 838 - ((state.simSeconds * 5) % 500) : 863;
-  const shipY = shipBusy ? 124 + Math.sin(state.simSeconds / 4) * 3 : 180;
-  rect(shipX, shipY, 46, 13, '#6bb9c3'); rect(shipX + 7, shipY - 7, 24, 7, '#95cbd0'); rect(shipX + 14, shipY + 13, 20, 5, '#376f75');
-  rect(shipX + 37, shipY + 4, 12, 4, '#d99a59');
-  if (shipBusy) { line(shipX - 10, shipY + 8, shipX - 3, shipY + 8, '#e4aa68', 2); pixelText('PAID CARGO IN TRANSIT', 707, 114, '#a9d4d3', 8); }
-  pixelText('SHAFT / SURFACE', 27, 247, '#a9997e', 8);
-  pixelText('ORE YARD', 650, 151, '#e5c990', 8);
-  pixelText('LAUNCH PAD 01', 841, 224, '#d1b38b', 8);
-  pixelText(`${fmtUnits(totalRate())} U / MIN`, 28, 271, '#eed6ad', 9);
+  const W = Math.max(300, canvas.clientWidth); const H = Math.max(200, canvas.clientHeight || 400);
+  if (canvas.width !== Math.round(W * dpr) || canvas.height !== Math.round(H * dpr)) { canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr); }
+  renderScene(canvas, ctx, { state, planet, region: region(), t: performance.now() / 1000, frac: Math.min(1, (performance.now() - lastTickMs) / 1000), oreIndex });
 }
 
 function catchUpBatch() {
   if (catchupRemaining <= 0) {
-    catchingUp = false;
-    save();
-    render();
+    catchingUp = false; save(); render();
     toast(catchupKind === 'fast-forward' ? 'Fast-forward complete.' : 'Offline sandbox catch-up complete.', 'success');
     catchupKind = 'offline';
     return;
   }
   try {
     const batch = advanceGame(state, catchupRemaining, 300);
-    state = batch.state;
-    catchupRemaining = batch.remainingSeconds;
-    save();
-    render();
-    setTimeout(catchUpBatch, 0);
+    state = batch.state; catchupRemaining = batch.remainingSeconds;
+    save(); render(); setTimeout(catchUpBatch, 0);
   } catch {
     catchingUp = false;
     recovering = `${catchupKind === 'fast-forward' ? 'Fast-forward' : 'Offline catch-up'} stopped on invalid local state. The latest valid checkpoint is still saved.`;
@@ -357,67 +299,79 @@ function catchUpBatch() {
   }
 }
 
+function startForward(seconds) {
+  catchupRemaining += seconds; catchupKind = 'fast-forward'; catchingUp = true;
+  save(); render(); setTimeout(catchUpBatch, 0);
+}
+
 state = loadSave();
+renderTabs();
 render();
 if (recovering) toast(recovering, 'error');
 if (catchupRemaining > 0) { catchingUp = true; render(); setTimeout(catchUpBatch, 0); }
 
-let tickAccumulator = 0;
 window.setInterval(() => {
   if (catchingUp) return;
   if (paused) { save(); return; }
-  tickAccumulator += 1;
+  lastTickMs = performance.now();
   try { state = stepGame(state); }
   catch { paused = true; recovering = 'The local simulation paused after invalid state was detected.'; render(); return; }
-  if (tickAccumulator >= 1) {
-    tickAccumulator = 0;
-    save(); render();
-  }
+  save(); render();
 }, 1000);
 
 document.addEventListener('click', (event) => {
   const button = event.target.closest('button');
   if (!button) return;
-  if (button.id === 'pause-button') { paused = !paused; save(); render(); return; }
-  if (button.id === 'launch-button') {
-    const loaded = state.ship.cargoUnits >= 1;
-    apply(dispatchNow, loaded ? 'Paid cargo left the pad.' : 'Unpaid cargo loading started.'); return;
-  }
-  if (button.id === 'open-shaft-button') { apply(buyNextShaft, 'Shaft opened.'); return; }
-  if (button.id === 'hire-button') { apply((current) => hireWorkers(current, 1), 'Miner hired and assigned.'); return; }
-  if (button.id === 'more-upgrades') { moreOperationsOpen = !moreOperationsOpen; render(); return; }
-  if (button.id === 'grant-button') {
-    const amount = Number($('#grant-amount').value);
-    if (!Number.isSafeInteger(amount) || amount < 1) { toast('Enter a positive whole coin amount.', 'error'); return; }
-    apply((current) => grantDevCoins(current, amount), 'Local test grant recorded.'); return;
-  }
-  if (button.id === 'reset-button') { resetPromptOpen = true; $('#reset-confirm').classList.remove('hidden'); button.classList.add('hidden'); return; }
-  if (button.id === 'cancel-reset') { resetPromptOpen = false; $('#reset-confirm').classList.add('hidden'); $('#reset-button').classList.remove('hidden'); return; }
-  if (button.id === 'confirm-reset' && resetPromptOpen) {
-    state = createGameState(); paused = false; catchupRemaining = 0; catchingUp = false; catchupKind = 'offline'; resetPromptOpen = false; recovering = ''; save(); render(); toast('Fresh local mine opened.', 'success'); return;
-  }
+  if (button.id === 'pauseBtn') { paused = !paused; save(); render(); return; }
+  if (catchingUp) return;
+  if (button.dataset.tab) { tab = button.dataset.tab; render(); return; }
+  if (button.dataset.forward) { startForward(Number(button.dataset.forward)); return; }
   if (button.dataset.destination) { apply((current) => selectDestination(current, button.dataset.destination)); return; }
   if (button.dataset.buy) {
-    const rawCount = button.dataset.count || '1';
-    const count = rawCount === 'max' ? 'max' : Number(rawCount);
-    const shaftNumber = Number(button.dataset.shaft || 1);
-    apply((current) => purchaseUpgrade(current, button.dataset.buy, { shaftNumber, count }), 'Upgrade purchased.'); return;
-  }
-  if (button.dataset.forward) {
-    const seconds = Number(button.dataset.forward);
-    catchupRemaining += seconds;
-    catchupKind = 'fast-forward';
-    catchingUp = true;
-    save(); render(); setTimeout(catchUpBatch, 0);
+    const raw = button.dataset.count || '1';
+    apply((current) => purchaseUpgrade(current, button.dataset.buy, { shaftNumber: Number(button.dataset.shaft || 1), count: raw === 'max' ? 'max' : Number(raw) }), 'Upgrade purchased.');
     return;
   }
-  if (button.dataset.recordTab) { selectedRecordTab = button.dataset.recordTab; renderRecords(); }
+  if (button.dataset.region) { regionId = button.dataset.region; savePlanet(planet, regionId); render(); toast(`Now overlooking ${region().name}.`, 'success'); return; }
+  switch (button.dataset.act) {
+    case 'newplanet-ai': {
+      const prompt = ($('#planetPrompt') && $('#planetPrompt').value) || planetPromptValue; planetPromptValue = prompt; planetBusy = true; render();
+      generatePlanet(prompt).then(({ planet: p, how, error }) => {
+        planet = p; regionId = p.regions[0].id; skinOres(); savePlanet(planet, regionId);
+        toast(how === 'ai' ? `The Maker delivered ${planet.name}.` : `The Maker improvised ${planet.name}${error ? ` (${error})` : ''}.`, 'success');
+      }).finally(() => { planetBusy = false; render(); });
+      break;
+    }
+    case 'ai-save': { const key = $('#aiKey').value.trim(); saveAiSettings({ provider: $('#aiProvider').value, key, model: aiSettings().model }); toast('AI settings saved in this browser.', 'success'); render(); break; }
+    case 'ai-test': {
+      saveAiSettings({ provider: $('#aiProvider').value, key: $('#aiKey').value.trim(), model: aiSettings().model });
+      askJSON('Reply with only this JSON: {"ok":true}').then((r) => toast(r && r.ok ? 'Connection works.' : 'Connected, but the reply was odd.', r && r.ok ? 'success' : 'error')).catch((e) => toast(e.message, 'error'));
+      break;
+    }
+    case 'launch': apply(dispatchNow, state.ship.cargoUnits >= 1 ? 'Paid cargo left the pad.' : 'Unpaid cargo loading started.'); break;
+    case 'shaft': apply(buyNextShaft, 'Shaft opened.'); break;
+    case 'hire': apply((current) => hireWorkers(current, 1), 'Miner hired and assigned.'); break;
+    case 'grant': {
+      const amount = Number($('#grant-amount').value);
+      if (!Number.isSafeInteger(amount) || amount < 1) { toast('Enter a positive whole coin amount.', 'error'); break; }
+      grantValue = String(amount);
+      apply((current) => grantDevCoins(current, amount), 'Local test grant recorded.');
+      break;
+    }
+    case 'reset': resetPromptOpen = true; render(); break;
+    case 'cancel-reset': resetPromptOpen = false; render(); break;
+    case 'confirm-reset':
+      state = createGameState(); paused = false; catchupRemaining = 0; catchingUp = false; catchupKind = 'offline'; resetPromptOpen = false; recovering = '';
+      save(); render(); toast('Fresh local mine opened.', 'success'); break;
+    default:
+  }
 });
 
-$('#auto-launch').addEventListener('change', (event) => apply((current) => setAutoLaunch(current, event.target.checked)));
 document.addEventListener('change', (event) => {
-  if (event.target.matches('#grant-amount')) return;
+  if (event.target.matches('[data-act="auto"]')) apply((current) => setAutoLaunch(current, event.target.checked));
 });
+document.addEventListener('input', (event) => { if (event.target.id === 'grant-amount') grantValue = event.target.value; if (event.target.id === 'planetPrompt') planetPromptValue = event.target.value; });
+document.addEventListener('focusout', (event) => { if (renderPending) { renderPending = false; render(); } });
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && !paused) {
     const elapsed = Math.floor((Date.now() - savedAtMs) / 1000);
