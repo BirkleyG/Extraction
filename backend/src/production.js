@@ -80,6 +80,19 @@ export function liftRatePerMinute(config) {
   return finite(rate, 'lift rate');
 }
 
+// Section 04: below 5% of its size a vein's output falls in proportion (floored so it finishes in finite time).
+export const VEIN_TAPER_FRACTION = 0.05;
+export const VEIN_TAPER_FLOOR = 0.02;
+export function veinFactor(vein) {
+  if (!vein || vein.remaining <= 0) return 0;
+  return vein.remaining >= VEIN_TAPER_FRACTION * vein.size ? 1 : Math.max(VEIN_TAPER_FLOOR, vein.remaining / (VEIN_TAPER_FRACTION * vein.size));
+}
+const veinActive = (shaft) => shaft.vein !== undefined && shaft.vein.remaining > 0;
+/** The ore a shaft digs right now: its vein ore while the vein lasts, otherwise the common ore of its band (T04-02). */
+export const targetOre = (shaft) => (veinActive(shaft) ? shaft.vein.oreId : shaft.commonOreId);
+/** Units/minute the shaft is producing now (formula x vein taper), as shown on the shaft card. */
+export const effectiveShaftRatePerMinute = (shaft) => shaftRatePerMinute(shaft) * (veinActive(shaft) ? veinFactor(shaft.vein) : 1);
+
 function cloneShaft(shaft) {
   if (!isRecord(shaft)) fail('INVALID_CONFIG', 'Shaft configuration must be an object');
   const value = {
@@ -96,7 +109,17 @@ function cloneShaft(shaft) {
     buffsMultiplier: finite(shaft.buffsMultiplier, 'buffsMultiplier', { min: 0, strict: true }),
     bufferCapacityUnits: finite(shaft.bufferCapacityUnits, 'bufferCapacityUnits', { min: 0, strict: true }),
     bufferUnits: finite(shaft.bufferUnits ?? 0, 'bufferUnits'),
+    lightsLevel: integer(shaft.lightsLevel ?? 0, 0, 10, 'lightsLevel'),
+    supportsLevel: integer(shaft.supportsLevel ?? 0, 0, 10, 'supportsLevel'),
+    // The band's common ore; `oreId` is the ore currently in the buffer (the vein ore while a vein lasts, then the common ore).
+    commonOreId: oreId(shaft.commonOreId ?? shaft.oreId),
   };
+  if (shaft.vein !== undefined && shaft.vein !== null) {
+    if (!isRecord(shaft.vein)) fail('INVALID_CONFIG', 'vein must be an object');
+    const size = finite(shaft.vein.size, 'vein size', { min: 0, strict: true });
+    value.vein = { oreId: oreId(shaft.vein.oreId), size, remaining: finite(shaft.vein.remaining, 'vein remaining') };
+    if (value.vein.remaining > size) fail('INVALID_STATE', 'Vein remaining exceeds its size');
+  }
   if (value.bufferUnits > value.bufferCapacityUnits) fail('INVALID_STATE', 'Shaft buffer exceeds capacity');
   shaftRatePerMinute(value);
   return value;
@@ -182,10 +205,17 @@ export function tickProductionSecond(inputState) {
   }) / 60;
 
   for (const shaft of shafts) {
+    if (shaft.vein) shaft.vein = { ...shaft.vein };
+    // A shaft switches ore only with an empty buffer, so the lift flushes the old ore first and mass stays per-ore exact.
+    const target = targetOre(shaft);
+    if (target !== shaft.oreId) { if (shaft.bufferUnits === 0) shaft.oreId = target; else continue; }
     if (shaft.workersAssigned === 0 || shaft.bufferUnits >= shaft.bufferCapacityUnits) continue;
-    const perSecond = shaftRatePerMinute(shaft) / 60;
-    const amount = Math.min(perSecond, shaft.bufferCapacityUnits - shaft.bufferUnits);
+    const onVein = veinActive(shaft);
+    const perSecond = (shaftRatePerMinute(shaft) / 60) * (onVein ? veinFactor(shaft.vein) : 1);
+    const amount = Math.min(perSecond, shaft.bufferCapacityUnits - shaft.bufferUnits, onVein ? shaft.vein.remaining : Infinity);
+    if (amount <= 0) continue;
     shaft.bufferUnits += amount;
+    if (onVein) shaft.vein.remaining -= amount;
     add(mined, shaft.oreId, amount, 'mined units');
   }
 
@@ -294,7 +324,19 @@ export function advanceProductionFast(inputState, { seconds, maxTicks = 100_000 
     const perTick = sumRows(surfaceDelta);
     const free = state.surface.capacityUnits - sumRows(state.surface.unitsByOre);
     // Leave a safety margin of one tick so the transition tick is simulated explicitly.
-    const room = perTick > 0 ? Math.floor(free / perTick) - 1 : remaining;
+    let room = perTick > 0 ? Math.floor(free / perTick) - 1 : remaining;
+    // Extrapolate only while every vein stays in its full-output regime (above the taper threshold) and ore type is stable.
+    let veinStable = true;
+    const veinUse = state.shafts.map((shaft, i) => {
+      const was = before.shafts[i];
+      if (shaft.oreId !== was.oreId || targetOre(shaft) !== shaft.oreId) veinStable = false;
+      if (!shaft.vein) return 0;
+      const used = was.vein.remaining - shaft.vein.remaining;
+      if (used > 0) room = Math.min(room, Math.floor((shaft.vein.remaining - VEIN_TAPER_FRACTION * shaft.vein.size) / used) - 1);
+      if (shaft.vein.remaining < VEIN_TAPER_FRACTION * shaft.vein.size * 2 && shaft.vein.remaining > 0) veinStable = false;
+      return used;
+    });
+    if (!veinStable) continue;
     const jump = Math.min(remaining, room);
     if (jump < 2) continue;
     const surface = rowMap(state.surface.unitsByOre);
@@ -303,6 +345,7 @@ export function advanceProductionFast(inputState, { seconds, maxTicks = 100_000 
     for (const { oreId: id, units } of minedDelta) add(mined, id, units * jump, 'mined units');
     state = {
       ...state,
+      shafts: state.shafts.map((shaft, i) => (shaft.vein ? { ...shaft, vein: { ...shaft.vein, remaining: shaft.vein.remaining - veinUse[i] * jump } } : shaft)),
       surface: { capacityUnits: state.surface.capacityUnits, unitsByOre: rowsFromMap(surface).filter((row) => row.units > 0) },
       cumulativeMinedByOre: rowsFromMap(mined).filter((row) => row.units > 0),
       elapsedSeconds: state.elapsedSeconds + jump,

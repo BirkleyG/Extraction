@@ -4,7 +4,10 @@
 import { createHash } from 'node:crypto';
 import { LedgerError, ledgerTransactionId } from './ledger.js';
 import { UpgradeError, quote } from './upgrades.js';
-import { MineError, PURCHASABLE_LINES, addShaft, advanceOwner, applyLevel, chooseBuyer, createOwnerState, departureFor, getPolicy, hire, settleAuto, shipCapacityUnits, shaftLevelLine, surfaceUnits, tripEstimate } from './mine-engine.js';
+import { MineError, PURCHASABLE_LINES, addPad, addShaft, addShip, applyLevel, cargoPlan, chooseDestination, createOwnerState, departureFor, getPolicy, hire, settleAuto, shaftLevelLine, takeoffSecond, yardStock } from './mine-engine.js';
+import { POLICY_MODES, shipCapacityUnits } from './ships.js';
+import { MarketView, marketPath } from './market-view.js';
+import { assignVeins } from './environment.js';
 
 const fail = (code, message = code) => { throw new LedgerError(code, message); };
 const monthPattern = /^\d{4}-(0[1-9]|1[0-2])$/;
@@ -18,8 +21,10 @@ const PAYLOAD_KEYS = {
   buyUpgrade: ['line', 'shaftNumber', 'mode'],
   hire: ['count'],
   buyShaft: [],
-  dispatch: ['destinationId', 'units'],
-  setPolicy: ['auto', 'destinationId'],
+  buyPad: [],
+  buyShip: ['class'],
+  dispatch: ['destinationId', 'units', 'shipId'],
+  setPolicy: ['auto', 'destinationId', 'shipId', 'mode', 'preferred'],
 };
 const BASE_KEYS = ['monthId', 'requestId', 'expectedVersion'];
 export const monthEndMs = (monthId) => { const [y, m] = monthId.split('-').map(Number); return Date.UTC(y, m, 1); };
@@ -55,6 +60,24 @@ export class GameService {
     this.npcBuyers = npcBuyers;
   }
 
+  /** This planet's computer-run refineries (>= 3, generated with the planet) or the configured static buyers. */
+  async #refineries(tx, worldId, monthId) {
+    const planet = await tx.getDoc(planetPath(worldId, monthId));
+    return planet?.refineries?.length ? planet.refineries : this.npcBuyers;
+  }
+
+  /** Working market view: shared refinery premium funds/storage and dock queues, loaded inside the transaction. */
+  async #marketFor(tx, worldId, monthId, nowSec) {
+    const refineries = await this.#refineries(tx, worldId, monthId);
+    const states = {};
+    for (const r of refineries) states[r.id] = (await tx.getDoc(marketPath(worldId, monthId, r.id))) ?? undefined;
+    return new MarketView(refineries, states, 0); // lazily created refineries start full and idle; time only moves forward (asOfSec)
+  }
+
+  async #flushMarket(tx, worldId, monthId, market) {
+    for (const id of market.dirtyIds) await tx.putDoc(marketPath(worldId, monthId, id), market.state(id));
+  }
+
   /** Computer-run buyers have no budget or capacity to track (CEO decision Q-10), so there is nothing to seed. Kept for callers. */
   async seedNpcBuyers() { return undefined; }
 
@@ -62,6 +85,8 @@ export class GameService {
   buyUpgrade(command, context) { return this.#run('buyUpgrade', command, context); }
   hire(command, context) { return this.#run('hire', command, context); }
   buyShaft(command, context) { return this.#run('buyShaft', command, context); }
+  buyPad(command, context) { return this.#run('buyPad', command, context); }
+  buyShip(command, context) { return this.#run('buyShip', command, context); }
   dispatch(command, context) { return this.#run('dispatch', command, context); }
   setPolicy(command, context) { return this.#run('setPolicy', command, context); }
 
@@ -82,11 +107,12 @@ export class GameService {
       const stored = await tx.getDoc(ownerPath(worldId, ownerId, monthId));
       if (!stored) fail('NOT_ENROLLED');
       // Preview only: automatic takeoffs that have happened by now are computed (not saved) so the player sees current coin.
-      const settled = settleAuto(stored, this.npcBuyers, Math.floor(context.now / 1000), { maxDepartures: 1000 });
+      const market = await this.#marketFor(tx, worldId, monthId, Math.floor(context.now / 1000));
+      const settled = settleAuto(stored, market, Math.floor(context.now / 1000), { maxDepartures: 1000 });
       const earned = settled.departures.reduce((sum, d) => sum + d.payment, 0);
       const planet = await tx.getDoc(planetPath(worldId, monthId));
       return projectOwner({
-        doc: settled.state, cosmeticSeed: planet?.cosmeticSeed ?? `${worldId}|${monthId}`, offers: this.npcBuyers.map((b) => ({ id: b.id, name: b.name, bidPerUnit: b.bidPerUnit, distance: b.distance, unloadUnitsPerMinute: b.unloadUnitsPerMinute })),
+        doc: settled.state, cosmeticSeed: planet?.cosmeticSeed ?? `${worldId}|${monthId}`, market,
         nowMs: context.now, version: await tx.version(ownerId, monthId),
         spendable: (await tx.balance(ownerId, monthId, 'spendable')) + earned, escrow: await tx.balance(ownerId, monthId, 'escrow'),
         autoTakeoffs: settled.departures.length, catchingUp: !settled.done,
@@ -150,17 +176,26 @@ export class GameService {
     const start = planet.startSites[slot];
     const site = planet.sites.find((s) => s.id === start.siteId);
     const region = planet.regions.find((r) => r.id === site.regionId);
-    return { siteId: site.id, commonOreId: planet.ores[region.commonOreIndex].id, slot };
+    // Hidden truth stays in the owner document (never projected): weather seed, soil and the assigned veins (section 04).
+    const weatherSeed = createHash('sha256').update(`weather|${planet.weatherSeed ?? `${scope.worldId}|${scope.monthId}`}|${site.id}`).digest('hex');
+    return {
+      siteId: site.id, commonOreId: planet.ores[region.commonOreIndex].id, slot,
+      env: { soil: region.soil, soilHardness: region.soilHardness, weatherSeed, baseWeather: site.weather },
+      veinPlan: assignVeins({ seed: weatherSeed, ores: planet.ores, deposits: site.deposits }),
+      oreTiers: Object.fromEntries(planet.ores.map((o) => [o.id, o.tier])),
+    };
   }
 
   /** Bring the owner to `scope.nowSec`, posting a ledger entry for every automatic takeoff at its own second. */
   async #loadOwner(tx, scope, toSec = scope.nowSec) {
     const doc = await tx.getDoc(ownerPath(scope.worldId, scope.actorId, scope.monthId));
     if (!doc) fail('NOT_ENROLLED');
-    const settled = settleAuto(doc, this.npcBuyers, toSec, { maxDepartures: MAX_DEPARTURES_PER_TX, maxTicks: MAX_COMMAND_CATCHUP_TICKS });
+    const market = await this.#marketFor(tx, scope.worldId, scope.monthId, toSec);
+    const settled = settleAuto(doc, market, toSec, { maxDepartures: MAX_DEPARTURES_PER_TX, maxTicks: MAX_COMMAND_CATCHUP_TICKS });
     for (const d of settled.departures) await this.#postDeparture(tx, scope, d, `auto:${d.number}`, d.atSecond * 1000);
     if (!settled.done) fail('CATCHING_UP', 'Simulation is catching up; retry shortly');
-    return settled.state;
+    await this.#flushMarket(tx, scope.worldId, scope.monthId, market);
+    return { owner: settled.state, market };
   }
 
   async #postDeparture(tx, scope, shipment, reference, timestamp) {
@@ -191,8 +226,10 @@ export class GameService {
       const doc = await tx.getDoc(ownerPath(worldId, ownerId, monthId));
       if (!doc) fail('NOT_ENROLLED');
       if (doc.closedAtMs) return true;
-      const settled = settleAuto(doc, this.npcBuyers, toSec, { maxDepartures: MAX_DEPARTURES_PER_TX, maxTicks: MAX_COMMAND_CATCHUP_TICKS });
+      const market = await this.#marketFor(tx, worldId, monthId, toSec);
+      const settled = settleAuto(doc, market, toSec, { maxDepartures: MAX_DEPARTURES_PER_TX, maxTicks: MAX_COMMAND_CATCHUP_TICKS });
       for (const d of settled.departures) await this.#postDeparture(tx, scope, d, `auto:${d.number}`, d.atSecond * 1000);
+      await this.#flushMarket(tx, worldId, monthId, market);
       if (settled.departures.length || settled.state.simSecond !== doc.simSecond) await tx.putDoc(ownerPath(worldId, ownerId, monthId), await this.#withPeak(tx, scope, settled.state, settled.departures.at(-1)?.atSecond * 1000 ?? toSec * 1000));
       return settled.done && (settled.departures.length < MAX_DEPARTURES_PER_TX);
     }, { worldId, ownerId, monthId, requestId: `settle-${monthId}`, closing });
@@ -221,14 +258,14 @@ export class GameService {
       const site = (await this.#assignStartSite(tx, scope)) ?? context.startSite;
       if (!site || typeof site.siteId !== 'string' || typeof site.commonOreId !== 'string') fail('NO_START_SITE');
       if (await tx.getDoc(ownerPath(scope.worldId, scope.actorId, scope.monthId))) fail('ALREADY_ENROLLED');
-      const doc = createOwnerState({ ownerId: scope.actorId, monthId: scope.monthId, siteId: site.siteId, commonOreId: site.commonOreId, nowSec: scope.nowSec, slot: site.slot ?? 0 });
+      const doc = createOwnerState({ ownerId: scope.actorId, monthId: scope.monthId, siteId: site.siteId, commonOreId: site.commonOreId, nowSec: scope.nowSec, slot: site.slot ?? 0, env: site.env ?? null, veinPlan: site.veinPlan ?? [], oreTiers: site.oreTiers ?? {} });
       await tx.putDoc(ownerPath(scope.worldId, scope.actorId, scope.monthId), doc);
       const roster = (await tx.getDoc(rosterPath(scope.worldId, scope.monthId))) ?? { owners: [] };
       if (!roster.owners.includes(scope.actorId)) roster.owners.push(scope.actorId);
       await tx.putDoc(rosterPath(scope.worldId, scope.monthId), roster);
       return { ok: true, kind: 'enroll' };
     }
-    let owner = await this.#loadOwner(tx, scope);
+    let { owner, market } = await this.#loadOwner(tx, scope);
     const path = ownerPath(scope.worldId, scope.actorId, scope.monthId);
     let spent = 0;
     let extra = {};
@@ -249,41 +286,66 @@ export class GameService {
     } else if (scope.kind === 'buyShaft') {
       const r = addShaft(owner);
       owner = r.state; spent = r.cost; extra = { shaftCount: owner.production.shafts.length };
+    } else if (scope.kind === 'buyPad') {
+      const r = addPad(owner, scope.nowSec);
+      owner = r.state; spent = r.cost; extra = { pads: owner.pads };
+    } else if (scope.kind === 'buyShip') {
+      if (typeof p.class !== 'string') fail('UNKNOWN_SHIP_CLASS');
+      const r = addShip(owner, p.class, scope.nowSec);
+      owner = r.state; spent = r.cost; extra = { shipId: r.shipId, shipCount: owner.ships.length };
     } else if (scope.kind === 'dispatch') {
-      return this.#dispatch(tx, scope, owner, path);
+      return this.#dispatch(tx, scope, owner, path, market);
     } else if (scope.kind === 'setPolicy') {
-      if (p.auto !== undefined && typeof p.auto !== 'boolean') fail('INVALID_COMMAND', 'auto must be true or false');
-      if (p.destinationId !== undefined && p.destinationId !== null && !this.npcBuyers.some((b) => b.id === p.destinationId)) fail('UNKNOWN_DESTINATION');
-      const prior = getPolicy(owner);
-      owner = { ...owner, policy: { auto: p.auto ?? prior.auto, destinationId: p.destinationId === undefined ? prior.destinationId : p.destinationId } };
-      await tx.putDoc(path, owner);
-      return { ok: true, kind: 'setPolicy', policy: owner.policy };
+      return this.#setPolicy(tx, scope, owner, path, market);
     }
     await this.#spend(tx, scope, spent, scope.requestId);
     await tx.putDoc(path, await this.#withPeak(tx, scope, owner));
     return { ok: true, kind: scope.kind, spent, ...extra };
   }
 
+  async #setPolicy(tx, scope, owner, path, market) {
+    const p = scope.payload;
+    if (p.auto !== undefined && typeof p.auto !== 'boolean') fail('INVALID_COMMAND', 'auto must be true or false');
+    const known = (id) => market.get(id) !== null;
+    if (p.destinationId !== undefined && p.destinationId !== null && (typeof p.destinationId !== 'string' || !known(p.destinationId))) fail('UNKNOWN_DESTINATION');
+    if (p.mode !== undefined && !POLICY_MODES.includes(p.mode)) fail('INVALID_COMMAND', 'mode must be best, nearest, fixed or preferred');
+    if (p.preferred !== undefined && (!Array.isArray(p.preferred) || p.preferred.length > 12 || p.preferred.some((id) => typeof id !== 'string' || !known(id)))) fail('UNKNOWN_DESTINATION');
+    const ship = p.shipId === undefined ? null : owner.ships.find((s) => s.id === p.shipId);
+    if (p.shipId !== undefined && !ship) fail('UNKNOWN_SHIP');
+    const prior = ship ? ship.policy ?? getPolicy(owner) : getPolicy(owner);
+    const policy = { auto: p.auto ?? prior.auto, destinationId: p.destinationId === undefined ? prior.destinationId : p.destinationId };
+    if (p.mode !== undefined || prior.mode !== undefined) policy.mode = p.mode ?? prior.mode;
+    if (p.preferred !== undefined || prior.preferred !== undefined) policy.preferred = p.preferred ?? prior.preferred;
+    if (ship) ship.policy = policy; else owner = { ...owner, policy };
+    await tx.putDoc(path, owner);
+    return { ok: true, kind: 'setPolicy', policy, ...(ship ? { shipId: ship.id } : {}) };
+  }
+
   /** "Launch now": the same paid departure the automatic takeoff makes, forced with whatever whole units are on the yard. */
-  async #dispatch(tx, scope, owner, path) {
+  async #dispatch(tx, scope, owner, path, market) {
     const p = scope.payload;
     if (p.units !== undefined && (!Number.isSafeInteger(p.units) || p.units < 1)) fail('INVALID_UNITS');
-    if (owner.ship.readyAtSecond > scope.nowSec) fail('SHIP_BUSY');
-    const capacity = shipCapacityUnits(owner.levels.shipCapacity);
-    const stock = Math.floor(surfaceUnits(owner, owner.production.shafts[0].oreId) + 1e-6);
+    if (p.shipId !== undefined && typeof p.shipId !== 'string') fail('UNKNOWN_SHIP');
+    const ship = p.shipId === undefined ? owner.ships.find((s) => s.readyAtSecond <= scope.nowSec) ?? owner.ships[0] : owner.ships.find((s) => s.id === p.shipId);
+    if (!ship) fail('UNKNOWN_SHIP');
+    if (ship.readyAtSecond > scope.nowSec) fail('SHIP_BUSY');
+    if (takeoffSecond(owner, scope.nowSec) > scope.nowSec) fail('WEATHER_GROUNDED', 'Weather prevents takeoff; the cargo waits on the yard');
+    const capacity = shipCapacityUnits(owner, ship);
+    const stock = yardStock(owner);
     if (stock < 1) fail('NO_CARGO');
     if (p.units !== undefined && p.units > stock) fail('INSUFFICIENT_STOCK');
     if (p.units !== undefined && p.units > capacity) fail('EXCEEDS_SHIP_CAPACITY');
     const units = p.units ?? Math.min(capacity, stock);
-    let buyer;
+    const lines = cargoPlan(owner, units);
+    let destinationId;
     if (p.destinationId !== undefined) {
-      if (typeof p.destinationId !== 'string') fail('UNKNOWN_DESTINATION');
-      buyer = this.npcBuyers.find((b) => b.id === p.destinationId);
-      if (!buyer) fail('UNKNOWN_DESTINATION');
-    } else buyer = chooseBuyer(owner, this.npcBuyers, units);
-    const dep = departureFor(owner, buyer, units, scope.nowSec);
+      if (typeof p.destinationId !== 'string' || !market.get(p.destinationId)) fail('UNKNOWN_DESTINATION');
+      destinationId = p.destinationId;
+    } else destinationId = chooseDestination(owner, ship, market, lines, scope.nowSec).id;
+    const dep = departureFor(owner, ship.id, destinationId, lines, scope.nowSec, market);
     await this.#postDeparture(tx, scope, dep.shipment, scope.requestId, scope.nowMs);
     dep.shipment.requestId = scope.requestId;
+    await this.#flushMarket(tx, scope.worldId, scope.monthId, market);
     await tx.putDoc(path, await this.#withPeak(tx, scope, dep.state));
     return { ok: true, kind: 'dispatch', shipment: dep.shipment, plan: dep.plan };
   }
