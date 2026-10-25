@@ -50,7 +50,7 @@ Scope per section 22: mine, miners, raw-ore shipping to NPC refineries, independ
 ### A2 — Mine-to-buyer loop
 Rules: 03, 04, 05, 10, 02 (commercial departure). Tests: T03, T04, T05, T10, T18-03/11.
 - [ ] ⬜ **World generation (seeded):** 7 ores (2 common / 4 rare / 1 mythic), regions, home-site generation, equal-EV starts (T04-01, T11-01)
-- [ ] ⬜ **Upgrade engine** — one registered cost-curve table (section 10 families); buy 1/10/100/Max with exact summed rounded prices, cap + overflow checks inside the transaction (T10-01/03/04/08)
+- [x] 🟡 **Upgrade engine** (pure pricing done: `backend/src/upgrades.js`; transactional purchase endpoint still to do) — one registered cost-curve table (section 10 families); buy 1/10/100/Max with exact summed rounded prices, cap + overflow checks inside the transaction (T10-01/03/04/08)
 - [ ] ⬜ Mine structure: shafts 1–30 (cost `120×2.4^(k−1)`, hard stop at 31 — T03-05), dig, lift, buffers, surface yard, pads (cap 12)
 - [ ] ⬜ Shaft improvements: lights, supports, carts (utilization 0.25+0.075L), bunkhouse (capacity 10+5L)
 - [ ] ❓ Worker pool + auto-assignment + habitat capacity ("!" for wasted labor)
@@ -143,3 +143,6 @@ Rules: 03, 04, 05, 10, 02 (commercial departure). Tests: T03, T04, T05, T10, T18
 6. Rewire `play/` to call the server instead of the local model.
 7. Minimum defense, then simulator + balance pass (A3/A4).
 8. Release B, then C — each gated on the previous.
+
+## Progress log
+- 25 Oct: `upgrades.js` (registered curves, exact bulk pricing, Max, shaft/pad/dock/outpost prices; T10-01/03/07/08 covered) and `calibrate-early.mjs` + `C01-EARLY-01` profile (see [Early-Game-Calibration](calibration/Early-Game-Calibration.md)). 48 fast tests pass.

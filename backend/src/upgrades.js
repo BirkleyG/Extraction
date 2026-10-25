@@ -23,6 +23,7 @@ export const CURVES = Object.freeze({
   shipCapacity: curve(30, 1.02, 1000),
   padLoading: curve(30, 1.02, 1000),
   surfaceStorage: curve(50, 1.0195, 1000),
+  habitat: curve(50, 1.0195, 1000), // C-01 proposal: worker capacity = 10 + 2 per level (see habitatCapacity)
   refineryStorage: curve(50, 1.0195, 1000),
   stationSilo: curve(50, 1.0195, 1000),
   refineryProcessing: curve(100, 1.019, 1000),
@@ -138,3 +139,6 @@ function fixed(value) {
 export const shaftWorkerCapacity = (bunkhouseLevel) => 10 + 5 * bunkhouseLevel;
 export const cartUtilization = (cartLevel) => Math.min(1, 0.25 + 0.075 * cartLevel);
 export const supportHazardFactor = (supportLevel) => 100 ** (-supportLevel / 10);
+
+/** C-01 proposal: total miner pool capacity. 1000 levels reach 2010, covering 30 shafts x 60 workers. */
+export const habitatCapacity = (level) => 10 + 2 * level;

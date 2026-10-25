@@ -1602,3 +1602,7 @@ T23-01 same saved state, seed and tick produce identical results in watched/offl
 - **Each branch has its four specialty lines plus a shared protection line; where a specialty is already named armor, that line supplies protection and is not charged twice. No individual loadouts.**
 - T23-11: visible combat effects meet the reasonably graphic cartoon style while combat facts are identical with rendering disabled.
 
+
+### Early-game profile C01-EARLY-01 · 25 October 2026 (provisional)
+- CEO confirmed: starting coin 0; late-join grant 20% of median cumulative earnings; ore in whole units; engineering may tune missing coefficients. Adopted for development: NPC nearest-refinery bid 40 coin/unit, 1-unit minimum paid departure, NPC unload fixture 1,500 units/min, miner hire round(20×1.004^(owned−5)), habitat line 50×1.0195^L (cap 1000, capacity 10+2L). Evidence and caveats: [Early-game calibration](../development/calibration/Early-Game-Calibration.md). Not certified balance; the 10-level habitat cap implied elsewhere cannot staff 30 shafts and is superseded by this proposal pending review.
+- Same-timestamp event priority (engineering call): month close → hazards/ecology/combat → production → arrivals → departures/commands → contract deadlines → hourly market clear → news.
