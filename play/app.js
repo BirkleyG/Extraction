@@ -1,5 +1,5 @@
 import {
-  ORES, DESTINATIONS, SAVE_KEY, advanceGame, buyNextShaft, createGameState, currentLiftRate, currentRates,
+  ORES, DESTINATIONS, SAVE_KEY, advanceGame, buyNextShaft, createGameState, currentLiftRate, currentRates, habitatCapacity, hireCost,
   dispatchNow, grantDevCoins, hireWorkers, purchaseUpgrade, selectDestination,
   setAutoLaunch, stepGame, upgradeCost, validateGameState,
 } from './model.js';
@@ -130,8 +130,8 @@ function renderMetrics() {
         : `<i class="status-dot"></i> READY AT PAD`;
   $('#auto-ship-state').textContent = state.autoLaunch ? 'AUTO-LAUNCH ON' : 'MANUAL LAUNCH';
   $('#auto-launch').checked = state.autoLaunch;
-  $('#crew-capacity').textContent = `${state.workersHired} / ${10 + 5 * state.upgrades.habitat}`;
-  $('#crew-bar-fill').style.width = `${fillFraction(state.workersHired, 10 + 5 * state.upgrades.habitat)}%`;
+  $('#crew-capacity').textContent = `${state.workersHired} / ${habitatCapacity(state.upgrades.habitat)}`;
+  $('#crew-bar-fill').style.width = `${fillFraction(state.workersHired, habitatCapacity(state.upgrades.habitat))}%`;
   $('#record-count').textContent = `${state.ledger.length} ENTRIES`;
   const selectedBuyer = state.buyers.find((buyer) => buyer.id === state.selectedDestinationId);
   const canLoad = state.ship.cargoUnits >= 1 || state.production.surface.unitsByOre.some((row) => row.units > 0);
@@ -185,8 +185,8 @@ function renderUpgrades() {
     <div class="upgrade-row"><span class="upgrade-icon">${icon}</span><span class="upgrade-main"><strong>${title}</strong><small>${detail}</small></span><button class="buy-button" data-buy="${type}" data-shaft="1" type="button"><span>BUY 1</span>${costButton(type, 1)}</button></div>
     <div class="bulk-row">${['1', '10', 'max'].map((count) => `<button data-buy="${type}" data-count="${count}" data-shaft="1" type="button">${count === 'max' ? 'MAX' : `×${count}`}</button>`).join('')}</div>`).join('');
   $('#shaft-cost').textContent = state.production.shafts.length >= 30 ? 'CAPPED' : `${fmt(Math.floor(120 * 2.4 ** state.production.shafts.length + 0.5))} ◉`;
-  const hireCost = state.workersHired >= 10 + 5 * state.upgrades.habitat || state.coins < 20 ? 'NEEDS CAPACITY' : '20 ◉';
-  $('#hire-button').textContent = `Hire + miner · ${hireCost}`;
+  const hireLabel = state.workersHired >= habitatCapacity(state.upgrades.habitat) ? 'NEEDS CAPACITY' : `${fmt(hireCost(state.workersHired))} ◉`;
+  $('#hire-button').textContent = `Hire + miner · ${hireLabel}`;
   $('#more-upgrades').innerHTML = moreOperationsOpen ? 'Hide operations <span>↑</span>' : 'More operations <span>↓</span>';
   const operations = $('#operations-more');
   operations.classList.toggle('hidden', !moreOperationsOpen);
@@ -195,7 +195,7 @@ function renderUpgrades() {
 
 function renderOperations() {
   const controls = [
-    ['habitat', 'Habitat', `Crew cap ${10 + 5 * state.upgrades.habitat}`, 0],
+    ['habitat', 'Habitat', `Crew cap ${habitatCapacity(state.upgrades.habitat)}`, 0],
     ['shipCapacity', 'Cargo capacity', `${fmtUnits(state.ship.capacityUnits)} units`, 0],
     ['loading', 'Pad loading', `${fmtUnits(state.ship.loadingUnitsPerMinute)} units/min`, 0],
   ];

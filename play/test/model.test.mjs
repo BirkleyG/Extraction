@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createProductionState } from '../../backend/src/production.js';
 import {
   advanceGame, createGameState, dispatchNow, selectDestination, setAutoLaunch, stepGame,
-  validateGameState, purchaseUpgrade, buyNextShaft, currentLiftRate,
+  validateGameState, purchaseUpgrade, buyNextShaft, currentLiftRate, grantDevCoins,
 } from '../model.js';
 
 const code = (name) => (error) => error?.code === name;
@@ -35,13 +35,13 @@ test('paid departure removes real stock, debits the finite buyer, reserves capac
   const after = dispatchNow(loaded);
   const shipment = after.shipments[0];
   assert.equal(shipment.units, 1);
-  assert.equal(shipment.payment, 500);
-  assert.equal(after.coins, 1000);
-  assert.equal(after.buyers[0].funds, 0);
+  assert.equal(shipment.payment, 40);
+  assert.equal(after.coins, 40);
+  assert.equal(after.buyers[0].funds, 460);
   assert.equal(after.buyers[0].reservedUnits, 1);
   assert.equal(after.ship.cargoUnits, loaded.ship.cargoUnits - shipment.units);
   assert.equal(after.shipmentStatusById[shipment.id], 'IN_TRANSIT');
-  assert.equal(before.coins, 500);
+  assert.equal(before.coins, 0);
   assert.equal(before.production.surface.unitsByOre[0].units, 2);
   assert(Object.isFrozen(shipment));
 
@@ -69,17 +69,17 @@ test('automatic partial cargo launches at one unit and pays at departure', () =>
 test('a stranded sub-unit load clears as a paid partial sale when its ore has no future source', () => {
   const state = createGameState();
   const oldShipment = {
-    id: 'shipment-old', oreId: 'ferrite', units: 1, unitPrice: 500, payment: 500,
+    id: 'shipment-old', oreId: 'ferrite', units: 1, unitPrice: 40, payment: 40,
     destinationId: 'frontier-refinery', departureAtSecond: 0, arrivalAtSecond: 121,
     shipReadyAtSecond: 241, tripSeconds: 241, state: 'PAID_AT_DEPARTURE',
   };
-  state.coins += 500;
-  state.totalExternalEarnings = 500;
-  state.buyers[0].funds -= 500;
+  state.coins += 40;
+  state.totalExternalEarnings = 40;
+  state.buyers[0].funds -= 40;
   state.buyers[0].inventoryUnits = 1;
   state.shipments.push(oldShipment);
   state.shipmentStatusById[oldShipment.id] = 'DELIVERED';
-  state.ledger.push({ id: 'local-00000002', atSecond: 0, type: 'NPC_RAW_PURCHASE', amount: 500, ownerDelta: 500, externalDelta: -500, externalAccount: 'source:NPC:frontier-refinery', description: 'Prior paid fixture shipment' });
+  state.ledger.push({ id: 'local-00000002', atSecond: 0, type: 'NPC_RAW_PURCHASE', amount: 40, ownerDelta: 40, externalDelta: -40, externalAccount: 'source:NPC:frontier-refinery', description: 'Prior paid fixture shipment' });
   state.nextRecordId = 3;
   state.workersHired = 0;
   state.selectedDestinationId = 'cinder-buyer';
@@ -99,8 +99,8 @@ test('a stranded sub-unit load clears as a paid partial sale when its ore has no
   assert.deepEqual(launched.shipments[0], oldShipment);
   assert.equal(launched.shipments[1].destinationId, 'cinder-buyer');
   assert.equal(launched.shipments[1].units, 0.304);
-  assert.equal(launched.shipments[1].payment, 243);
-  assert.equal(launched.coins, 1243);
+  assert.equal(launched.shipments[1].payment, 19);
+  assert.equal(launched.coins, 59);
   assert.equal(launched.ship.cargoUnits, 0);
 });
 
@@ -123,7 +123,7 @@ test('manual destination selection is pre-departure only and cannot overspend a 
 });
 
 test('unaffordable system purchase fails atomically; valid purchases burn coin', () => {
-  const before = createGameState();
+  const before = grantDevCoins(createGameState(), 400);
   const oneShaft = buyNextShaft(before);
   assert.equal(oneShaft.production.shafts.length, 2);
   assert.throws(() => buyNextShaft(oneShaft), code('INSUFFICIENT_FUNDS'));
@@ -162,11 +162,10 @@ test('invalid or unsupported browser saves fail validation instead of entering s
   assert.throws(() => validateGameState({ ...state, production: { ...state.production, syntheticDownstreamDrain: { unitsPerSecond: 1, drainedByOre: [] } } }), code('INVALID_SAVE'));
 });
 
-test('starter wallet is exactly the recorded source grant and lift readout uses shared production math', () => {
+test('start is zero coin with no grant, and lift readout uses shared production math', () => {
   const state = createGameState();
-  assert.equal(state.coins, 500);
-  assert.equal(state.sourceGrants, 500);
-  assert.equal(state.ledger.length, 1);
-  assert.equal(state.ledger[0].amount, 500);
+  assert.equal(state.coins, 0);
+  assert.equal(state.sourceGrants, 0);
+  assert.equal(state.ledger.length, 0);
   assert.equal(currentLiftRate(state), 2 * 1.0316);
 });

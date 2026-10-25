@@ -11,6 +11,7 @@ Reproduce: `cd backend && node scripts/calibrate-early.mjs [--price=40 --hours=1
 | NPC raw bid, nearest refinery | **40 coin per unit** (before per-ore tier factors) | First sale of 1 unit buys two dig levels (15 each); day-1 gross ≈ 2.3× the 100M benchmark; day-7 ≈ 2× |
 | Minimum departure load | **1 whole unit** (partial loads allowed when ship is ready) | Ore is whole units (Phase-0 answer 3); first paid departure at ~47 s |
 | NPC refinery unload rate | **1,500 units/min** (fixture) | At 30/min unload time capped fleet throughput and stalled all progression |
+| Starter cargo (C01-EARLY-02) | **5 whole units of common ore on the yard at landing** (in-kind, not coin, not earnings) | First paid departure at ~1–5 s paying 200 coin → 5 purchases in the first minute, 18 in 5 min; macro effect negligible (+200 coin once) |
 | Miner hire | **round(20 × 1.004^(workersOwned−5))**, one-time | Cheap early drip; ~4.4k each at 1,800 workers |
 | Habitat (miner pool) | **line 50 × 1.0195^L, cap 1000; capacity 10 + 2L** | A 10-level cap (60 workers) could not staff even two full shafts; 1000 levels reach 2,010 ≥ 30 × 60 |
 
@@ -18,8 +19,8 @@ Reproduce: `cd backend && node scripts/calibrate-early.mjs [--price=40 --hours=1
 
 | Metric | Result | Benchmark |
 |---|---|---|
-| First sale / first purchase | 47 s / 47 s | T01-01 (revised: first minute) |
-| Purchases in first 5 min | 13 | "always something to buy" |
+| First sale / first purchase | ~1 s / ~1 s (with starter cargo; 47 s without) | T01-01 (revised: first minute) |
+| Purchases in first 60 s / 5 min | 5 / 18 | "always something to buy" |
 | Gross external earnings @1h | 148k | 100k |
 | @6h | 37M | 3M (overshoot, front-loaded) |
 | @24h | 235M | 100M |

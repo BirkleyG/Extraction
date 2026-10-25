@@ -26,17 +26,17 @@ async function setup(players = ['alice']) {
 const view = (game, uid, t) => game.ownerView(uid, MONTH, ctx(uid, t));
 const sumLedger = (repo) => repo.snapshot().ledger.reduce((a, e) => a + e.postings.length, 0);
 
-test('starting coin is zero and the first paid departure credits coin while the ship is still outbound (T05-05)', async () => {
+test('starting coin is zero; the in-kind starter cargo sells at once and pays while the ship is still outbound (T05-05)', async () => {
   const { game, repo, versions } = await setup();
   assert.equal((await view(game, 'alice', 0)).spendable, 0);
-  await assert.rejects(game.dispatch(cmd(versions.alice, { destinationId: 'near' }), ctx('alice', 0)), code('NO_CARGO'));
-  const r = await game.dispatch(cmd(versions.alice, { destinationId: 'near' }), ctx('alice', 60));
-  assert.equal(r.shipment.units, 1);
-  assert.equal(r.shipment.payment, 40);
-  const v = await view(game, 'alice', 60);
-  assert.equal(v.spendable, 40);
-  assert(r.shipment.arrivalSecond > T0 / 1000 + 60, 'ship still outbound at the moment of payment');
-  assert.equal(v.doc.ship.readyAtSecond, T0 / 1000 + 60 + r.plan.busySeconds);
+  const r = await game.dispatch(cmd(versions.alice, { destinationId: 'near' }), ctx('alice', 0));
+  assert.equal(r.shipment.units, 5);
+  assert.equal(r.shipment.payment, 200);
+  const v = await view(game, 'alice', 0);
+  assert.equal(v.spendable, 200);
+  assert(r.shipment.arrivalSecond > T0 / 1000, 'ship still outbound at the moment of payment');
+  assert.equal(v.doc.ship.readyAtSecond, T0 / 1000 + r.plan.busySeconds);
+  await assert.rejects(game.dispatch(cmd(r.version, { destinationId: 'near' }), ctx('alice', 1)), code('SHIP_BUSY'));
   assert(repo.reconcile());
 });
 

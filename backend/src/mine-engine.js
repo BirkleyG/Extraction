@@ -14,6 +14,7 @@ export const LIFT_GROWTH = 1.0316; // C01-LIFT-02
 export const HIRE_BASE = 20;       // C01-EARLY-01
 export const HIRE_GROWTH = 1.004;
 export const STARTING_WORKERS = 5;
+export const STARTER_CARGO_UNITS = 5; // C01-EARLY-02: in-kind starting ore so the first paid departure happens within seconds (not coin)
 const clone = (v) => JSON.parse(JSON.stringify(v));
 const linear = (base, level) => base * (1 + 0.04 * level);
 
@@ -44,7 +45,7 @@ export function createOwnerState({ ownerId, monthId, siteId, commonOreId, nowSec
     production: createProductionState({
       shafts: [shaft],
       lift: { level: 1, baseRatePerMinute: LIFT_BASE, curve: 'exponential', growth: LIFT_GROWTH },
-      surface: { capacityUnits: yardCapacity(0), unitsByOre: [] },
+      surface: { capacityUnits: yardCapacity(0), unitsByOre: [{ oreId: commonOreId, units: STARTER_CARGO_UNITS }] },
       syntheticDownstreamDrain: { unitsPerSecond: 0 },
     }),
     shipments: [], shipmentCounter: 0, totalExternalEarnings: 0,

@@ -12,6 +12,7 @@ export const params = {
   distance: arg('distance', 1),
   unloadPerMin: arg('unload', 1500),
   hours: arg('hours', 24),
+  starterCargo: arg('starterCargo', 5), // in-kind starting ore on the yard (C01-EARLY-02)
   liftBase: 2, liftGrowth: 1.0316,
 };
 
@@ -77,7 +78,7 @@ function staff(t, max = 5) {
 
 export function simulate() {
   const s = { shafts: [{ n: 1, dig: 1, cart: 0, bunk: 0, workers: 5 }], habitat: 0, lift: 1, shipCap: 0, shipSpeed: 0, loading: 0, ships: 1, workers: 5 };
-  let coin = 0, earned = 0, yard = 0, shipReadyAt = 0, buys = [], firstSale = null;
+  let coin = 0, earned = 0, yard = params.starterCargo, shipReadyAt = 0, buys = [], firstSale = null;
   const checkpoints = { 3600: null, 21600: null, 86400: null };
   const end = params.hours * 3600;
   let rows = [];

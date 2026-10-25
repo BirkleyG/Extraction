@@ -1,6 +1,6 @@
 import { createProductionState, liftRatePerMinute, shaftRatePerMinute, tickProductionSecond, withdrawSurfaceUnits } from '../backend/src/production.js';
 
-export const SAVE_KEY = 'extraction_playtest_v1';
+export const SAVE_KEY = 'extraction_playtest_v2';
 export const SAVE_VERSION = 1;
 export const BASE_LIFT_GROWTH = 1.0316;
 export const ORES = Object.freeze([
@@ -13,8 +13,8 @@ export const ORES = Object.freeze([
   { id: 'mythic', name: 'Mythic', color: '#ee9d58', value: 4 },
 ]);
 export const DESTINATIONS = Object.freeze([
-  Object.freeze({ id: 'frontier-refinery', name: 'Frontier Refinery', detail: 'Near · steady bid', distance: 1, basePrice: 500, unloadUnitsPerMinute: 30, budget: 1_000_000_000, capacity: 1_000_000, accent: '#e7a15a' }),
-  Object.freeze({ id: 'cinder-buyer', name: 'Cinder Bay Buyer', detail: 'Far · premium bid', distance: 3, basePrice: 800, unloadUnitsPerMinute: 18, budget: 250_000_000, capacity: 250_000, accent: '#66bfd0' }),
+  Object.freeze({ id: 'frontier-refinery', name: 'Frontier Refinery', detail: 'Near · steady bid', distance: 1, basePrice: 40, unloadUnitsPerMinute: 1500, budget: 1_000_000_000, capacity: 1_000_000, accent: '#e7a15a' }),
+  Object.freeze({ id: 'cinder-buyer', name: 'Cinder Bay Buyer', detail: 'Far · premium bid', distance: 3, basePrice: 64, unloadUnitsPerMinute: 900, budget: 250_000_000, capacity: 250_000, accent: '#66bfd0' }),
 ]);
 
 const MAX_COIN = Number.MAX_SAFE_INTEGER;
@@ -39,7 +39,7 @@ function costSchedule(type, state, shaftNumber = 1) {
     case 'bunkhouse': return { level: findShaft(state, shaftNumber).bunkhouseLevel, cap: 10, base: 100, growth: 1.8 };
     case 'cart': return { level: findShaft(state, shaftNumber).cartLevel, cap: 10, base: 400, growth: 1.8 };
     case 'yard': return { level: state.upgrades.yard, cap: 1000, base: 50, growth: 1.0195 };
-    case 'habitat': return { level: state.upgrades.habitat, cap: 10, base: 300, growth: 1.8 };
+    case 'habitat': return { level: state.upgrades.habitat, cap: 1000, base: 50, growth: 1.0195 };
     case 'shipCapacity': return { level: state.upgrades.shipCapacity, cap: 1000, base: 30, growth: 1.02 };
     case 'shipSpeed': return { level: state.upgrades.shipSpeed, cap: 1000, base: 30, growth: 1.02 };
     case 'loading': return { level: state.upgrades.loading, cap: 1000, base: 30, growth: 1.02 };
@@ -111,11 +111,11 @@ export function createGameState() {
     schemaVersion: SAVE_VERSION,
     simSeconds: 0,
     coins: 0,
-    sourceGrants: 500,
+    sourceGrants: 0,
     totalExternalEarnings: 0,
     workersHired: 5,
     upgrades: { habitat: 0, yard: 0, shipCapacity: 0, shipSpeed: 0, loading: 0 },
-    production: newProductionState([shaftBlueprint(1, {}, 5)], { level: 1, baseRatePerMinute: 2, curve: 'exponential', growth: BASE_LIFT_GROWTH }, { capacityUnits: 100, unitsByOre: [] }),
+    production: newProductionState([shaftBlueprint(1, {}, 5)], { level: 1, baseRatePerMinute: 2, curve: 'exponential', growth: BASE_LIFT_GROWTH }, { capacityUnits: 100, unitsByOre: [{ oreId: ORES[0].id, units: 5 }] }),
     ship: { capacityUnits: 150, speedPerMinute: 0.5, loadingUnitsPerMinute: 60, readyAtSecond: 0, loading: false, cargoOreId: null, cargoUnits: 0 },
     buyers,
     selectedDestinationId: DESTINATIONS[0].id,
@@ -125,9 +125,8 @@ export function createGameState() {
     ledger: [],
     nextRecordId: 1,
     log: [],
-    notice: 'The mine is live. Tune the dig, then watch the first partial cargo launch.',
+    notice: 'The mine is live with zero coin. Your first whole unit of ore sells at takeoff — spend it on digging.',
   };
-  changeCoin(state, 500, 'START_GRANT', 'Local testbed source grant', 'source:START_GRANT');
   return state;
 }
 
@@ -265,7 +264,9 @@ function launchIfReady(state) {
   const next = clone(state);
   if (next.autoLaunch && next.ship.cargoUnits < 1 && !next.ship.loading && preferredCargoOre(next, next.selectedDestinationId)) next.ship.loading = true;
   let loaded = loadOneSecond(next);
-  if (loaded.autoLaunch && loaded.ship.cargoUnits > 0) {
+  // Keep loading while at least one whole unit waits on the yard and the hold has room: a Hauler should not leave for a 4-minute round trip with one unit when five are ready.
+  const moreToLoad = loaded.ship.cargoOreId && availableSurface(loaded, loaded.ship.cargoOreId) >= 1 && loaded.ship.cargoUnits < loaded.ship.capacityUnits - 1e-9;
+  if (loaded.autoLaunch && loaded.ship.cargoUnits > 0 && !moreToLoad) {
     const allowPartial = loaded.ship.cargoUnits < 1 && !hasFutureOreForStandardLoad(loaded, loaded.ship.cargoOreId);
     const result = computeDispatch(loaded, loaded.selectedDestinationId, allowPartial);
     if (result.result) loaded = result.state;
@@ -364,16 +365,27 @@ export function buyNextShaft(inputState) {
   return validateGameState(next);
 }
 
+export const hireCost = (alreadyHired) => roundHalfUp(20 * 1.004 ** (alreadyHired - 5));
+export const habitatCapacity = (level) => 10 + 2 * level;
+
 export function hireWorkers(inputState, count = 1) {
   const state = validateGameState(inputState);
   const requested = count === 'max' ? MAX_COIN : safeInt(count, 'worker count');
-  const workerCapacity = 10 + 5 * state.upgrades.habitat;
+  const workerCapacity = habitatCapacity(state.upgrades.habitat);
   const poolSpace = workerCapacity - state.workersHired;
   const shaftSpace = state.production.shafts.reduce((sum, shaft) => sum + 10 + 5 * shaft.bunkhouseLevel - shaft.workersAssigned, 0);
-  const hireCount = Math.min(requested, poolSpace, shaftSpace, Math.floor(state.coins / 20));
-  if (hireCount < 1) fail(state.coins < 20 ? 'INSUFFICIENT_FUNDS' : 'NO_WORKER_CAPACITY');
+  const room = Math.min(requested, poolSpace, shaftSpace);
+  let hireCount = 0;
+  let spend = 0;
+  while (hireCount < room) {
+    const price = hireCost(state.workersHired + hireCount);
+    if (spend + price > state.coins) break;
+    spend += price;
+    hireCount += 1;
+  }
+  if (hireCount < 1) fail(room < 1 ? 'NO_WORKER_CAPACITY' : 'INSUFFICIENT_FUNDS');
   const next = clone(state);
-  changeCoin(next, -hireCount * 20, 'SYSTEM_PURCHASE', `Hired ${hireCount} miner${hireCount === 1 ? '' : 's'}`, 'sink:SYSTEM_PURCHASE');
+  changeCoin(next, -spend, 'SYSTEM_PURCHASE', `Hired ${hireCount} miner${hireCount === 1 ? '' : 's'}`, 'sink:SYSTEM_PURCHASE');
   next.workersHired += hireCount;
   rebalanceWorkers(next);
   appendLog(next, `${hireCount} miner${hireCount === 1 ? '' : 's'} hired and assigned by visible expected ore value.`, 'purchase');
