@@ -24,6 +24,8 @@ export const monthEndMs = (monthId) => { const [y, m] = monthId.split('-').map(N
 export const rosterPath = (worldId, monthId) => `world/${encode(worldId)}/roster/${monthId}`;
 
 export const ownerPath = (worldId, ownerId, monthId) => `world/${encode(worldId)}/owner/${encode(ownerId)}/${monthId}`;
+export const planetPath = (worldId, monthId) => `world/${encode(worldId)}/planet/${monthId}`;
+const slotsPath = (worldId, monthId) => `world/${encode(worldId)}/slots/${monthId}`;
 const npcPath = (worldId, monthId, id) => `world/${encode(worldId)}/npc/${monthId}/${encode(id)}`;
 
 function scopeOf(kind, command, context) {
@@ -78,6 +80,35 @@ export class GameService {
   buyShaft(command, context) { return this.#run('buyShaft', command, context); }
   dispatch(command, context) { return this.#run('dispatch', command, context); }
 
+  /** Server/bootstrap: store the generated planet (server-only truth). Idempotent. */
+  async storePlanet({ worldId = 'default', monthId, planet }) {
+    return this.repository.transact(async (tx) => {
+      if (!(await tx.getDoc(planetPath(worldId, monthId)))) await tx.putDoc(planetPath(worldId, monthId), planet);
+    }, { worldId, monthId, ownerId: 'system', requestId: `planet-${monthId}` });
+  }
+
+  /** Filtered read model for the owner's browser (allowlist projection; advances the mine to now without persisting). */
+  async state(ownerId, monthId, context) {
+    const { projectOwner } = await import('./projection.js');
+    if (ownerId !== context?.auth?.uid) fail('FORBIDDEN');
+    if (monthId !== context.activeMonthId) fail('STALE_MONTH');
+    const worldId = context.worldId ?? 'default';
+    return this.repository.transact(async (tx) => {
+      const stored = await tx.getDoc(ownerPath(worldId, ownerId, monthId));
+      if (!stored) fail('NOT_ENROLLED');
+      const advanced = advanceOwner(stored, Math.floor(context.now / 1000), MAX_COMMAND_CATCHUP_TICKS);
+      const offers = [];
+      for (const b of this.npcBuyers) {
+        const doc = await tx.getDoc(npcPath(worldId, monthId, b.id));
+        if (doc) offers.push({ id: b.id, name: b.name, bidPerUnit: b.bidPerUnit, distance: b.distance, unloadUnitsPerMinute: b.unloadUnitsPerMinute });
+      }
+      return projectOwner({
+        doc: advanced.state, offers, nowMs: context.now, version: await tx.version(ownerId, monthId),
+        spendable: await tx.balance(ownerId, monthId, 'spendable'), escrow: await tx.balance(ownerId, monthId, 'escrow'),
+      });
+    }, { worldId, ownerId, monthId, readOnly: true });
+  }
+
   async ownerView(ownerId, monthId, context) {
     if (ownerId !== context?.auth?.uid) fail('FORBIDDEN');
     return this.repository.transact(async (tx) => {
@@ -114,6 +145,24 @@ export class GameService {
     }, { worldId: scope.worldId, ownerId: scope.actorId, monthId: scope.monthId, requestId: scope.requestId });
   }
 
+  /** Server-side start-slot assignment from the generated planet (first free equal-value slot). Null when no planet exists. */
+  async #assignStartSite(tx, scope) {
+    const planet = await tx.getDoc(planetPath(scope.worldId, scope.monthId));
+    if (!planet) return null;
+    const slots = (await tx.getDoc(slotsPath(scope.worldId, scope.monthId))) ?? { assigned: {} };
+    let slot = slots.assigned[scope.actorId];
+    if (slot === undefined) {
+      slot = Object.keys(slots.assigned).length;
+      if (slot >= planet.startSites.length) fail('WORLD_FULL');
+      slots.assigned[scope.actorId] = slot;
+      await tx.putDoc(slotsPath(scope.worldId, scope.monthId), slots);
+    }
+    const start = planet.startSites[slot];
+    const site = planet.sites.find((s) => s.id === start.siteId);
+    const region = planet.regions.find((r) => r.id === site.regionId);
+    return { siteId: site.id, commonOreId: planet.ores[region.commonOreIndex].id };
+  }
+
   async #loadOwner(tx, scope) {
     const doc = await tx.getDoc(ownerPath(scope.worldId, scope.actorId, scope.monthId));
     if (!doc) fail('NOT_ENROLLED');
@@ -142,7 +191,7 @@ export class GameService {
 
   async #apply(tx, scope, context) {
     if (scope.kind === 'enroll') {
-      const site = context.startSite;
+      const site = (await this.#assignStartSite(tx, scope)) ?? context.startSite;
       if (!site || typeof site.siteId !== 'string' || typeof site.commonOreId !== 'string') fail('NO_START_SITE');
       if (await tx.getDoc(ownerPath(scope.worldId, scope.actorId, scope.monthId))) fail('ALREADY_ENROLLED');
       const doc = createOwnerState({ ownerId: scope.actorId, monthId: scope.monthId, siteId: site.siteId, commonOreId: site.commonOreId, nowSec: scope.nowSec });

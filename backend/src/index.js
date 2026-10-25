@@ -9,3 +9,4 @@ export { CURVES, UpgradeError, bulkPrice, nextLevelPrice, quote, shaftPrice, pad
 export { generateWorld, siteValue, WorldError } from './world.js';
 export { GameService } from './game-service.js';
 export { FirestoreGameRepository } from './firestore-game-repository.js';
+export { createGameHttpServer } from './game-http.js';
