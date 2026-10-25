@@ -84,8 +84,9 @@ export class GameService {
       // Preview only: automatic takeoffs that have happened by now are computed (not saved) so the player sees current coin.
       const settled = settleAuto(stored, this.npcBuyers, Math.floor(context.now / 1000), { maxDepartures: 1000 });
       const earned = settled.departures.reduce((sum, d) => sum + d.payment, 0);
+      const planet = await tx.getDoc(planetPath(worldId, monthId));
       return projectOwner({
-        doc: settled.state, offers: this.npcBuyers.map((b) => ({ id: b.id, name: b.name, bidPerUnit: b.bidPerUnit, distance: b.distance, unloadUnitsPerMinute: b.unloadUnitsPerMinute })),
+        doc: settled.state, cosmeticSeed: planet?.cosmeticSeed ?? `${worldId}|${monthId}`, offers: this.npcBuyers.map((b) => ({ id: b.id, name: b.name, bidPerUnit: b.bidPerUnit, distance: b.distance, unloadUnitsPerMinute: b.unloadUnitsPerMinute })),
         nowMs: context.now, version: await tx.version(ownerId, monthId),
         spendable: (await tx.balance(ownerId, monthId, 'spendable')) + earned, escrow: await tx.balance(ownerId, monthId, 'escrow'),
         autoTakeoffs: settled.departures.length, catchingUp: !settled.done,
@@ -149,7 +150,7 @@ export class GameService {
     const start = planet.startSites[slot];
     const site = planet.sites.find((s) => s.id === start.siteId);
     const region = planet.regions.find((r) => r.id === site.regionId);
-    return { siteId: site.id, commonOreId: planet.ores[region.commonOreIndex].id };
+    return { siteId: site.id, commonOreId: planet.ores[region.commonOreIndex].id, slot };
   }
 
   /** Bring the owner to `scope.nowSec`, posting a ledger entry for every automatic takeoff at its own second. */
@@ -213,7 +214,7 @@ export class GameService {
       const site = (await this.#assignStartSite(tx, scope)) ?? context.startSite;
       if (!site || typeof site.siteId !== 'string' || typeof site.commonOreId !== 'string') fail('NO_START_SITE');
       if (await tx.getDoc(ownerPath(scope.worldId, scope.actorId, scope.monthId))) fail('ALREADY_ENROLLED');
-      const doc = createOwnerState({ ownerId: scope.actorId, monthId: scope.monthId, siteId: site.siteId, commonOreId: site.commonOreId, nowSec: scope.nowSec });
+      const doc = createOwnerState({ ownerId: scope.actorId, monthId: scope.monthId, siteId: site.siteId, commonOreId: site.commonOreId, nowSec: scope.nowSec, slot: site.slot ?? 0 });
       await tx.putDoc(ownerPath(scope.worldId, scope.actorId, scope.monthId), doc);
       const roster = (await tx.getDoc(rosterPath(scope.worldId, scope.monthId))) ?? { owners: [] };
       if (!roster.owners.includes(scope.actorId)) roster.owners.push(scope.actorId);

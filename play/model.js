@@ -1,7 +1,7 @@
 import { createProductionState, liftRatePerMinute, shaftRatePerMinute, tickProductionSecond, withdrawSurfaceUnits } from '../backend/src/production.js';
 import { tierOf } from './upgrades.js';
 
-export const SAVE_KEY = 'extraction_playtest_v3';
+export const SAVE_KEY = 'extraction_playtest_v4';
 export const SAVE_VERSION = 1;
 export const BASE_LIFT_GROWTH = 1.0316;
 export const ORES = Object.freeze([
@@ -15,7 +15,8 @@ export const ORES = Object.freeze([
 ]);
 export const DESTINATIONS = Object.freeze([
   Object.freeze({ id: 'frontier-refinery', name: 'Frontier Refinery', detail: 'Near · steady bid', distance: 1, basePrice: 40, unloadUnitsPerMinute: 1500, accent: '#e7a15a' }),
-  Object.freeze({ id: 'cinder-buyer', name: 'Cinder Bay Buyer', detail: 'Far · premium bid', distance: 3, basePrice: 64, unloadUnitsPerMinute: 900, accent: '#66bfd0' }),
+  Object.freeze({ id: 'cinder-bay-buyer', name: 'Cinder Bay Buyer', detail: 'Far · premium bid', distance: 3, basePrice: 64, unloadUnitsPerMinute: 900, accent: '#66bfd0' }),
+  Object.freeze({ id: 'low-orbit-depot', name: 'Low Orbit Depot', detail: 'Remote · mid bid', distance: 8, basePrice: 52, unloadUnitsPerMinute: 1200, accent: '#b48bd6' }),
 ]);
 
 
@@ -210,7 +211,7 @@ export function createGameState(siteOptions) {
     totalExternalEarnings: 0,
     workersHired: 5,
     upgrades: { habitat: 0, yard: 0, shipCapacity: 0, shipSpeed: 0, loading: 0 },
-    production: newProductionState([shaftBlueprint(1, { oreId: site.commonOreId }, 5)], { level: 1, baseRatePerMinute: 2, curve: 'exponential', growth: BASE_LIFT_GROWTH }, { capacityUnits: 100, unitsByOre: [{ oreId: site.commonOreId, units: 5 }] }),
+    production: newProductionState([shaftBlueprint(1, { oreId: site.commonOreId }, 5)], { level: 1, baseRatePerMinute: 2, curve: 'exponential', growth: BASE_LIFT_GROWTH }, { capacityUnits: 300, unitsByOre: [{ oreId: site.commonOreId, units: 5 }] }),
     ship: { capacityUnits: 150, speedPerMinute: 0.5, loadingUnitsPerMinute: 60, readyAtSecond: 0, loading: false, cargoOreId: null, cargoUnits: 0 },
     site,
     veins: generateVeins(site, 1),
@@ -367,7 +368,8 @@ export function stepGame(inputState) {
   next.simSeconds += 1;
   mineOneSecond(next);
   let advanced = arriveShipments(next);
-  advanced = launchIfReady(advanced);
+  // Online play: the server owns takeoffs and payments; the browser only keeps the picture of the mine moving between polls.
+  if (!advanced.remote) advanced = launchIfReady(advanced);
   return validateGameState(advanced);
 }
 
@@ -413,7 +415,7 @@ export function purchaseUpgrade(inputState, type, { shaftNumber = 1, count = 1 }
       next.production.lift.level = finalLevel;
       next.production.shafts.forEach((shaft) => { shaft.bufferCapacityUnits = 25 * (1 + 0.04 * finalLevel); });
       break;
-    case 'yard': next.upgrades.yard = finalLevel; next.production.surface.capacityUnits = 100 * (1 + 0.04 * finalLevel); break;
+    case 'yard': next.upgrades.yard = finalLevel; next.production.surface.capacityUnits = 300 * (1 + 0.04 * finalLevel); break;
     case 'habitat': next.upgrades.habitat = finalLevel; break;
     case 'shipCapacity': next.upgrades.shipCapacity = finalLevel; next.ship.capacityUnits = 150 * (1 + 0.04 * finalLevel); break;
     case 'shipSpeed': next.upgrades.shipSpeed = finalLevel; next.ship.speedPerMinute = 0.5 * (1 + 0.04 * finalLevel); break;

@@ -10,3 +10,8 @@ Prerequisites already done: project created, Blaze + $2 budget alert, Google and
 6. After a day, check cost: Billing → Reports, Firestore → Usage, Cloud Run → Metrics.
 
 Cost guards: min instances 0, max instances 2, 10-member cap, state polls every 20 s only while the tab is visible. Budget alerts do not stop spending; if reads climb, raise the poll interval in `online/app.js`.
+
+## Playing online
+The good-graphics game at `/play/` has an **online mode**: press **Play online ↗** in the header (or open `/play/?mode=online`). The offline sandbox stays the default; the choice is remembered in the browser, and the header button switches back. `/online/` just redirects to `/play/?mode=online`.
+
+Host UID (recorded for future admin-only actions; none exist yet): `Dx84cY8Kz5hFImL0thIhbMc544C2`.

@@ -86,6 +86,13 @@ let tab = 'sell';
 let resetPromptOpen = false;
 let grantValue = '10000';
 let toastTimer;
+/* ---- offline sandbox (default) or the online game (opt-in with ?mode=online or the header button) ---- */
+const modeParam = new URLSearchParams(location.search).get('mode');
+if (modeParam === 'online' || modeParam === 'offline') { try { localStorage.setItem('extraction_mode', modeParam); } catch { /* ignore */ } }
+const REMOTE = (() => { try { return localStorage.getItem('extraction_mode') === 'online'; } catch { return false; } })();
+let online = null;
+let pendingRemote = 0;
+let nextPollAt = 0;
 let world = loadPlanet();
 let planet = world.planet;
 let regionId = world.regionId;
@@ -138,6 +145,7 @@ function loadSave() {
 }
 
 function save() {
+  if (state && state.remote) return; // the server is the save file online
   try {
     savedAtMs = Date.now();
     localStorage.setItem(SAVE_KEY, JSON.stringify({ version: 1, savedAtMs, pendingCatchupSeconds: catchupRemaining, catchupKind, paused, state }));
@@ -167,9 +175,56 @@ function messageFor(error) {
   return messages[error?.code] || error?.message || 'The action could not be completed.';
 }
 
+function remoteMessage(error) {
+  const messages = { SHIP_BUSY: 'The hauler is still away.', NO_CARGO: 'No ore in the yard yet.', INSUFFICIENT_FUNDS: 'Not enough coin.', NO_HABITAT_CAPACITY: 'Build more habitat first.', NO_SHAFT_CAPACITY: 'Add bunkhouse levels or a new shaft first.', AT_CAP: 'Already at the maximum.', MONTH_CLOSED: 'The month has ended. Reload to start the next one.', CATCHING_UP: 'The server is catching up. Try again in a moment.' };
+  return messages[error?.code] || `The server refused that (${error?.code || error?.message || 'error'}).`;
+}
+
+/** Pull the server's view of the mine and replace the local picture of it (after commands, on a timer, and on return to the tab). */
+async function syncRemote() {
+  if (!REMOTE || pendingRemote > 0) return;
+  try {
+    const before = state;
+    const r = await online.fetchView();
+    if (pendingRemote > 0) return;
+    const seen = new Set(before.shipments.map((x) => x.id));
+    const fresh = r.state.shipments.filter((x) => !seen.has(x.id));
+    state = r.state; planet = r.planet; regionId = r.regionId; skinOres();
+    if (fresh.length && before.remote && !justSent) {
+      const units = fresh.reduce((a, x) => a + x.units, 0); const pay = fresh.reduce((a, x) => a + x.payment, 0);
+      online.note(`${fresh.length} automatic takeoff${fresh.length === 1 ? '' : 's'}: ${fmt(units)} units sold for ${fmt(pay)} ◉.`, state.simSeconds);
+      state = { ...state, log: [...state.log, { atSecond: state.simSeconds, message: `${fresh.length} automatic takeoff${fresh.length === 1 ? '' : 's'}: ${fmt(units)} units sold for ${fmt(pay)} ◉.`, type: 'sale' }].slice(-80) };
+      toast(`Hauler took off automatically — ${fmt(pay)} ◉ paid.`, 'success'); blip([523, 659, 784]);
+    }
+    justSent = false;
+    const autoIn = state.online.autoInSeconds;
+    nextPollAt = Date.now() + (autoIn && autoIn > 0 ? Math.min(POLL_MS_LOCAL, autoIn * 1000 + 2500) : POLL_MS_LOCAL);
+    render();
+  } catch (error) {
+    if (error?.status === 401) { toast('Signed out. Reload to sign in again.', 'error'); return; }
+    nextPollAt = Date.now() + 5000;
+  }
+}
+let justSent = false;
+const POLL_MS_LOCAL = 15_000;
+
+function applyRemote(before, next, success) {
+  const cmds = online.commandsFor(before, next);
+  state = next;
+  if (!cmds.length) { render(); return true; }
+  justSent = true; pendingRemote += 1; render();
+  if (success) toast(success, 'success');
+  online.send(cmds).catch((error) => { toast(remoteMessage(error), 'error'); blip([140]); }).finally(() => { pendingRemote -= 1; syncRemote(); });
+  return true;
+}
+
 function apply(action, success) {
   try {
-    state = validateGameState(action(state));
+    if (state.remote && pendingRemote > 2) { toast('One moment — the server is still working.', 'error'); return false; }
+    const before = state;
+    const result = validateGameState(action(state));
+    if (state.remote) return applyRemote(before, result, success);
+    state = result;
     save();
     render();
     if (success) toast(success, 'success');
@@ -267,6 +322,7 @@ function costButton(type, shaftNumber = 1) {
 }
 
 const TABS = [['sell', 'Sell'], ['upgrades', 'Upgrades'], ['shafts', 'Shafts'], ['planet', 'Planet'], ['records', 'Records'], ['tools', 'Tools']];
+const tabLabel = (id, label) => (REMOTE && id === 'tools' ? 'Account' : label);
 const shaftCost = () => (state.production.shafts.length >= 30 ? null : Math.floor(120 * 2.4 ** state.production.shafts.length + 0.5));
 const crewCap = () => habitatCapacity(state.upgrades.habitat);
 const buyBtn = (attrs, label, cost, cls = '') => `<button class="buy ${cls}" ${attrs} type="button"${cost === null ? ' disabled' : ''}>${label}<br>${cost === null ? 'CAPPED' : `${fmt(cost)} ◉`}</button>`;
@@ -294,9 +350,15 @@ function renderHud() {
   $('#hRate').textContent = `${fmtUnits(rate)} ore / min`;
   $('#hSurface').textContent = `${fmtUnits(surfaceTotal())} / ${fmtUnits(state.production.surface.capacityUnits)}`;
   $('#hEarned').textContent = fmt(state.totalExternalEarnings);
-  $('#hTime').textContent = formatClock(state.simSeconds);
-  $('#hLive').textContent = catchingUp ? 'CATCHING UP' : paused ? 'MINE PAUSED' : 'MINE RUNNING';
-  $('#hLive').classList.toggle('off', paused || catchingUp);
+  if (state.remote) {
+    const left = Math.max(0, Math.floor((state.online.monthEndsAtMs - state.online.serverNowMs - (Date.now() - state.online.receivedAtMs)) / 1000));
+    $('#hTime').textContent = `${Math.floor(left / 86400)}d ${String(Math.floor(left / 3600) % 24).padStart(2, '0')}h ${String(Math.floor(left / 60) % 60).padStart(2, '0')}m`;
+    $('#hTime').previousElementSibling.textContent = 'Month ends';
+  } else $('#hTime').textContent = formatClock(state.simSeconds);
+  $('#hLive').textContent = state.remote ? 'ONLINE' : catchingUp ? 'CATCHING UP' : paused ? 'MINE PAUSED' : 'MINE RUNNING';
+  $('#hLive').classList.toggle('off', !state.remote && (paused || catchingUp));
+  for (const sel of ['#pauseBtn', '[data-forward="60"]']) { const el = document.querySelector(sel); if (el) el.hidden = !!state.remote; }
+  const mb = $('#modeBtn'); if (mb) mb.textContent = state.remote ? 'Offline sandbox' : 'Play online ↗';
   $('#pauseBtn').textContent = paused ? 'Resume' : 'Pause';
   $('#pauseBtn').setAttribute('aria-pressed', String(paused));
   const tag = $('#stageTag');
@@ -313,7 +375,7 @@ function renderHud() {
 }
 
 function renderTabs() {
-  $('#tabs').innerHTML = TABS.map(([id, label]) => `<button class="tab" role="tab" data-tab="${id}" aria-selected="${tab === id}">${label}</button>`).join('');
+  $('#tabs').innerHTML = TABS.map(([id, label]) => `<button class="tab" role="tab" data-tab="${id}" aria-selected="${tab === id}">${tabLabel(id, label)}</button>`).join('');
 }
 
 function shipStatus() {
@@ -392,7 +454,15 @@ function tabShafts() {
   return `<h2>Your shafts</h2><p class="lede">Each shaft digs its own ore. Watch the buffers: a full one stalls the shaft.</p><div class="rows">${cards}</div>`;
 }
 
+function tabPlanetRemote() {
+  const th = planet.theme || { concept: '', motifs: [] };
+  const rows = planet.regions.map((r) => `<div class="row ${r.id === regionId ? 'sel' : ''}"><div><div class="t"><span class="swatch2" style="--ore:${r.biome}"></span>${safeText(r.name)}</div><div class="d">${safeText(TERRAINS[r.terrain].label)} · ${safeText(r.blurb)}</div></div><span class="pill ${r.id === regionId ? 'ok' : ''}">${r.id === regionId ? 'Your mine' : 'Other guilds'}</span></div>`).join('');
+  return `<h2>${safeText(planet.name)}</h2><p class="lede">${safeText(planet.tagline)}</p><div class="note"><b>THEME</b> · ${safeText(th.concept)}</div><p class="story">${safeText(planet.story)}</p>
+    <h3>Regions</h3><div class="rows">${rows}</div><div class="note">Online, everyone shares one planet each month and starts at an equal site. The planet resets when the month ends.</div>`;
+}
+
 function tabPlanet() {
+  if (state.remote) return tabPlanetRemote();
   const rows = planet.regions.map((r) => {
     const T = TERRAINS[r.terrain]; const sel = r.id === regionId;
     return `<div class="row ${sel ? 'sel' : ''}"><div><div class="t"><span class="swatch2" style="--ore:${r.biome}"></span>${safeText(r.name)}</div><div class="d">${safeText(T.label)}${T.group === 'alien' ? ' · alien' : ''} · ${safeText(r.blurb)}</div></div><button class="buy ${sel ? 'ok' : 'ghost'} sm" data-act="${sel ? 'noop' : 'relocate-ask'}" data-rid="${r.id}" type="button">${sel ? 'Your mine' : 'Mine here'}</button></div>`;
@@ -426,7 +496,16 @@ function tabRecords() {
   return `<h2>Paper trail</h2><h3>Ledger · ${state.ledger.length} entries</h3><div class="rows">${ledger}</div><h3>Cargo</h3><div class="rows">${cargo}</div><h3>Events</h3><div class="feed">${events}</div>`;
 }
 
+function tabAccount() {
+  return `<h2>Account</h2><p class="lede">Signed in as <b>${safeText(state.online.email || 'guest')}</b>. Your mine runs on the server, so it keeps working while you are away.</p>
+    <div class="devbox"><b>Sound</b><p class="d">Little chimes when you buy upgrades.</p><div class="btnrow"><button class="buy ghost sm" data-act="sound" type="button">${soundOn ? 'Sound: on' : 'Sound: off'}</button></div></div>
+    <div class="devbox"><b>Refresh from the server</b><p class="d">The game checks in every few seconds on its own.</p><div class="btnrow"><button class="buy ghost sm" data-act="resync" type="button">Refresh now</button></div></div>
+    <div class="devbox"><b>Sign out</b><div class="btnrow"><button class="buy ghost sm" data-act="signout" type="button">Sign out</button></div></div>
+    <div class="note">Online play counts toward this month's competition. Coin, ore and ships are decided by the server; this page only shows them.</div>`;
+}
+
 function tabTools() {
+  if (state.remote) return tabAccount();
   const ai = aiSettings();
   return `<h2>Dev tools</h2><p class="lede">Local sandbox only. No server, no month competition.</p>
     <div class="devbox"><b>Fast-forward</b><p class="d">Runs the same one-second tick.</p><div class="btnrow"><button class="buy ghost sm" data-forward="60" type="button">1 min</button><button class="buy ghost sm" data-forward="600" type="button">10 min</button><button class="buy ghost sm" data-forward="3600" type="button">1 hour</button></div></div>
@@ -520,11 +599,18 @@ function startForward(seconds) {
   save(); render(); setTimeout(catchUpBatch, 0);
 }
 
-state = loadSave();
+if (REMOTE) {
+  online = await import('./online.js');
+  const boot = await online.startOnline();
+  state = boot.state; planet = boot.planet; regionId = boot.regionId; skinOres();
+  nextPollAt = Date.now() + POLL_MS_LOCAL;
+} else state = loadSave();
 renderTabs();
 render();
 if (recovering) toast(recovering, 'error');
 if (catchupRemaining > 0) { catchingUp = true; render(); setTimeout(catchUpBatch, 0); }
+
+window.setInterval(() => { if (REMOTE && Date.now() >= nextPollAt && pendingRemote === 0 && !document.hidden) { nextPollAt = Date.now() + POLL_MS_LOCAL; syncRemote(); } }, 1000);
 
 window.setInterval(() => {
   if (catchingUp) return;
@@ -538,6 +624,7 @@ window.setInterval(() => {
 document.addEventListener('click', (event) => {
   const button = event.target.closest('button');
   if (!button) return;
+  if (button.id === 'modeBtn') { try { localStorage.setItem('extraction_mode', REMOTE ? 'offline' : 'online'); } catch { /* ignore */ } const u = new URL(location.href); u.searchParams.delete('mode'); location.href = u.toString(); return; }
   if (button.id === 'pauseBtn') { paused = !paused; save(); render(); return; }
   if (catchingUp) return;
   if (button.dataset.tab) { tab = button.dataset.tab; render(); return; }
@@ -568,6 +655,8 @@ document.addEventListener('click', (event) => {
       toast(`A new mine is open in ${region().name}. Common ore: ${ORES.find((o) => o.id === state.site.commonOreId).name}.`, 'success'); break;
     }
     case 'noop': break;
+    case 'resync': syncRemote(); break;
+    case 'signout': online.logout().then(() => location.reload()); break;
     case 'ai-save': { const key = $('#aiKey').value.trim(); saveAiSettings({ provider: $('#aiProvider').value, key, model: aiSettings().model }); toast('AI settings saved in this browser.', 'success'); render(); break; }
     case 'ai-test': {
       saveAiSettings({ provider: $('#aiProvider').value, key: $('#aiKey').value.trim(), model: aiSettings().model });
@@ -599,6 +688,7 @@ document.addEventListener('change', (event) => {
 document.addEventListener('input', (event) => { if (event.target.id === 'grant-amount') grantValue = event.target.value; if (event.target.id === 'planetPrompt') planetPromptValue = event.target.value; });
 document.addEventListener('focusout', (event) => { if (renderPending) { renderPending = false; render(); } });
 document.addEventListener('visibilitychange', () => {
+  if (REMOTE) { if (document.visibilityState === 'visible') syncRemote(); return; }
   if (document.visibilityState === 'visible' && !paused) {
     const elapsed = Math.floor((Date.now() - savedAtMs) / 1000);
     if (elapsed > 1 && Number.isSafeInteger(elapsed)) {

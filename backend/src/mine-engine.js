@@ -33,12 +33,12 @@ function shaftBlueprint(number, oreId, liftLevel) {
 }
 
 /** New month-scoped owner state: shaft 1 at dig 1, 5 miners, lift 1, one pad, one Hauler, zero coin. */
-export function createOwnerState({ ownerId, monthId, siteId, commonOreId, nowSec }) {
+export function createOwnerState({ ownerId, monthId, siteId, commonOreId, nowSec, slot = 0 }) {
   if (!Number.isSafeInteger(nowSec) || nowSec < 0) fail('INVALID_CLOCK');
   const shaft = shaftBlueprint(1, commonOreId, 1);
   shaft.workersAssigned = STARTING_WORKERS;
   return {
-    schemaVersion: OWNER_SCHEMA_VERSION, ownerId, monthId, siteId, simSecond: nowSec,
+    schemaVersion: OWNER_SCHEMA_VERSION, ownerId, monthId, siteId, slot, simSecond: nowSec,
     workersHired: STARTING_WORKERS,
     levels: { habitat: 0, surfaceStorage: 0, shipCapacity: 0, shipSpeed: 0, padLoading: 0, lights: 0, supports: 0 },
     ship: { readyAtSecond: nowSec },
