@@ -4,6 +4,7 @@ import {
   PXC, hash, rng, clamp, lerp, ease, bx, by, pR, pB, pL, pD, pS, mkCv, hexMix, sh,
   personSprite, oreSprite, crateSprite, drawShipPx, drawPile, drawCrateStack, shipSprite,
 } from './sprites.js';
+import { SPEC, ridgeLayer, drawDecor, drawOverlay, waterColor } from './terrains.js';
 
 const SX = 175; // lift shaft x
 const WW = 610; // world width we frame
@@ -75,27 +76,54 @@ function ridge(T, wx, L, sd, planet) {
 }
 
 function drawSkyline(planet, region, hy, s, sd, craters) {
-  const T = region.terrain; const g = PXC.g;
+  const T = region.terrain; const g = PXC.g; const spec = SPEC[T];
   for (const L of [0, 1]) {
+    const Ly = spec ? (L ? spec.near : spec.far) : null;
+    if (Ly && Ly.k === 'none') continue;
     let base = sh(region.biome, L ? -0.3 : -0.5);
+    if (spec && spec.tint) base = hexMix(base, spec.tint, L ? 0.75 : 0.6);
     base = hexMix(base, planet.sky[1], L ? 0.08 : 0.2);
+    const stripe = Math.max(2, Math.round(6 * s));
     for (let col = 0; col < PXC.bw; col += 2) {
       const wx = (col - PXC.ox) / PXC.s;
-      const r = ridge(T, wx, L, sd, planet);
-      const h = Math.max(1, Math.round(r.h * s)); const top = hy - h;
+      const r = Ly ? ridgeLayer(Ly, wx, sd, planet) : ridge(T, wx, L, sd, planet);
+      const h = Math.max(1, Math.round(r.h * s)); const top = hy - h; const segH = Math.max(1, h - Math.round((r.lo || 0) * s));
       let c = base;
       if (r.c) c = hexMix(sh(r.c, L ? -0.25 : -0.4), planet.sky[1], L ? 0.05 : 0.15);
+      else if (r.trunk) c = hexMix('#3a2818', base, 0.4);
+      else if (r.ball) c = '#f0eee4';
+      else if (r.cap && spec) c = sh(base, 0.12);
       else if (T === 'fungal' && r.cap) c = hexMix(sh(region.biome, 0.2), '#ff9fd0', L ? 0.25 : 0.35);
-      pB(col, top, 2, h, c);
-      if (T === 'mesa' || T === 'canyon') for (let y = top; y < hy; y += Math.max(2, Math.round(6 * s))) { if (((y - top) / Math.max(2, Math.round(6 * s))) % 2 === 0) pB(col, y, 2, 1, sh(c, T === 'canyon' ? 0.12 : 0.08)); }
-      if (T === 'glacier') { const cap = Math.max(2, Math.round(5 * s)); pB(col, top, 2, Math.min(cap, h), L ? '#ffffff' : '#cfe6f6'); }
-      else if (T === 'dunes' || T === 'crystal') pB(col, top, 2, 1, sh(c, 0.3));
-      else if (T === 'volcanic' && !L && r.h > 60) pB(col, top, 2, 1, '#ff6a2a');
+      pB(col, top, 2, segH, c);
+      if (r.crown) pB(col, top, 2, Math.min(h, Math.max(3, Math.round(9 * s))), hexMix('#3a6a34', planet.sky[1], L ? 0.05 : 0.18));
+      if (spec) {
+        if (spec.stripes) for (let y = top; y < top + segH; y += stripe) { if (((y - top) / stripe) % 2 === 0) pB(col, y, 2, 1, sh(c, 0.1)); }
+        if (spec.windows && h > 8) for (let y = top + 2; y < hy - 2; y += Math.max(3, Math.round(4 * s))) { if (h01w(col * 13 + y, sd) < 0.2) pB(col, y, 1, 1, hexMix(planet.ores[(sd >> 2) % 7].color, '#ffffff', 0.5)); }
+        if (spec.holes && h > 8) for (let y = top + 3; y < hy - 2; y += Math.max(4, Math.round(5 * s))) { if ((col >> 1) % 3 === 0) pB(col, y, 1, 1, sh(c, -0.4)); }
+        if (r.snow) pB(col, top, 2, Math.min(Math.max(2, Math.round(5 * s)), h), L ? '#ffffff' : '#cfe6f6');
+        else if (spec.glint && r.cap) pB(col, top, 2, 1, '#ffffff');
+        else if (r.cap || r.trunk === undefined) { /* plain */ }
+      } else if (T === 'mesa' || T === 'canyon') {
+        for (let y = top; y < hy; y += stripe) { if (((y - top) / stripe) % 2 === 0) pB(col, y, 2, 1, sh(c, T === 'canyon' ? 0.12 : 0.08)); }
+      }
+      if (!spec) {
+        if (T === 'glacier') { const cap = Math.max(2, Math.round(5 * s)); pB(col, top, 2, Math.min(cap, h), L ? '#ffffff' : '#cfe6f6'); }
+        else if (T === 'dunes' || T === 'crystal') pB(col, top, 2, 1, sh(c, 0.3));
+        else if (T === 'volcanic' && !L && r.h > 60) pB(col, top, 2, 1, '#ff6a2a');
+      }
+    }
+    if (L === 0 && spec && spec.water) {
+      const wc = waterColor(planet); const d = Math.max(2, Math.round(spec.water.d * s));
+      for (let col = 0; col < PXC.bw; col += 2) {
+        const wx = (col - PXC.ox) / PXC.s; if (spec.water.from != null && wx < spec.water.from) continue;
+        pB(col, hy - d, 2, d, wc); pB(col, hy - d, 2, 1, sh(wc, 0.3)); if ((col >> 1) % 5 === 0) pB(col + 1, hy - d + 2 + ((col >> 1) % 3), 1, 1, sh(wc, 0.4));
+      }
     }
   }
   if (T === 'volcanic') for (let k = 0; k < 3; k += 1) { const c = 70 + k * 270 + (sd % 70); craters.push({ x: c, y: -74 }); }
   g.globalAlpha = 1;
 }
+const h01w = (i, sd) => { let h = Math.imul((i | 0) ^ (sd | 0), 2246822519); h ^= h >>> 13; h = Math.imul(h, 3266489917); h ^= h >>> 16; return (h >>> 0) / 4294967295; };
 
 /* ---------- sky ---------- */
 function drawSky(planet, hy) {
@@ -127,9 +155,10 @@ function drawSurfaceStrip(planet, region, sd) {
   for (let x = ROCK.x0; x < ROCK.x0 + ROCK.w; x += 2) { const h = Math.floor(R0() * 3); pR(x, -h, 2, h + 1, gc); }
   for (let x = ROCK.x0; x < ROCK.x0 + ROCK.w; x += 3) if (R0() < 0.5) pR(x, -1 - Math.floor(R0() * 3), 1, 2, sh(gc, 0.15));
   pR(ROCK.x0, 8, ROCK.w, 2, sh(gc, -0.25));
-  const T = region.terrain;
+  const T = region.terrain; const spec = SPEC[T];
   for (let x = -30; x < WW + 40; x += 6 + Math.floor(R0() * 14)) {
     const roll = R0();
+    if (spec) { drawDecor(spec, x, gc, R0, planet, region); continue; }
     if (T === 'mesa') { if (roll < 0.5) pR(x, -3, 6, 3, sh(gc, -0.3)); else if (roll < 0.75) { pR(x, -3, 7, 3, sh(gc, -0.25)); pR(x + 1, -6, 4, 3, sh(gc, -0.1)); } else if (roll < 0.9) { pR(x, -15, 4, 15, sh(gc, -0.2)); pR(x, -15, 1, 15, sh(gc, 0.1)); } }
     else if (T === 'dunes') { if (roll < 0.6) { pR(x, -1, 10 + Math.floor(R0() * 8), 1, sh(gc, 0.22)); pR(x + 3, -2, 5, 1, sh(gc, 0.1)); } else if (roll < 0.8) { pL(x, 0, x + 2, -6, '#6a4a2a', 1); pL(x, -3, x - 3, -6, '#6a4a2a', 1); pL(x, -3, x + 4, -7, '#6a4a2a', 1); } }
     else if (T === 'glacier') { if (roll < 0.5) drawMound(x, 8 + Math.floor(R0() * 8), '#f4fbff'); else if (roll < 0.8) { const h = 6 + Math.floor(R0() * 10); pR(x, -h, 3, h, '#bfe3f6'); pR(x, -h, 1, h, '#ffffff'); pR(x + 3, -h + 4, 2, h - 4, '#8fc4e0'); } }
@@ -190,6 +219,14 @@ function drawWeather(fx, hy, t) {
   else if (fx === 'aurora') { for (let i = 0; i < 3; i += 1) { g.fillStyle = `rgba(${120 + i * 50},255,${200 - i * 40},0.2)`; for (let x = 0; x < bw; x += 2) { const y = hy * (0.15 + i * 0.1) + Math.sin(x * 0.03 + t + i) * 5; g.fillRect(x, Math.round(y), 2, 4); } } }
   else if (fx === 'spores') { for (let i = 0; i < 40; i += 1) { const x = ((i * 71 + Math.sin(t * 0.6 + i) * 8) % bw + bw) % bw; const y = hy - ((i * 29 + t * 8) % (hy * 0.8)); g.fillStyle = i % 2 ? 'rgba(255,170,230,0.75)' : 'rgba(170,255,220,0.7)'; g.fillRect(Math.round(x), Math.round(y), 1, 1); } }
   else if (fx === 'meteor') { const ph = (t * 0.35) % 1; const x = bw * (0.9 - ph * 0.7); const y = hy * ph * 0.8; for (let i = 0; i < 12; i += 1) pB(x + i, y - i * 0.7, 1, 1, i < 3 ? '#fff3c0' : 'rgba(255,200,120,0.6)'); }
+  else if (fx === 'rain') { g.fillStyle = 'rgba(170,210,255,0.55)'; for (let i = 0; i < 90; i += 1) { const x = ((i * 53 + t * 40) % (bw + 20)) - 10; const y = ((i * 37 + t * 230) % Math.max(1, hy + 30)); g.fillRect(Math.round(x), Math.round(y), 1, 3); } }
+  else if (fx === 'leaves') { for (let i = 0; i < 26; i += 1) { const x = ((i * 67 + Math.sin(t + i) * 10 + t * 18) % (bw + 20)) - 10; const y = (i * 41 + t * 20) % Math.max(1, hy + 30); g.fillStyle = ['#c8602a', '#d8902a', '#a8402a'][i % 3]; g.fillRect(Math.round(x), Math.round(y), 2, 1); } }
+  else if (fx === 'fireflies') { for (let i = 0; i < 22; i += 1) { const x = (i * 83 + Math.sin(t * 0.7 + i) * 12 + bw) % bw; const y = hy - 4 - ((i * 29) % Math.max(6, Math.round(hy * 0.22))) + Math.sin(t + i * 2) * 3; if (Math.sin(t * 2 + i * 1.3) > 0) { g.fillStyle = 'rgba(255,240,120,0.9)'; g.fillRect(Math.round(x), Math.round(y), 1, 1); } } }
+  else if (fx === 'mist') { g.fillStyle = 'rgba(255,255,255,0.09)'; for (let i = 0; i < 4; i += 1) { const y = Math.round(hy * (0.66 + i * 0.1) + Math.sin(t * 0.6 + i) * 2); g.fillRect(0, y, bw, Math.max(2, Math.round(hy * 0.05))); } }
+  else if (fx === 'steam') { g.fillStyle = 'rgba(255,255,255,0.08)'; for (let i = 0; i < 3; i += 1) { const y = Math.round(hy * (0.78 + i * 0.07) + Math.sin(t * 0.9 + i) * 2); g.fillRect(0, y, bw, Math.max(2, Math.round(hy * 0.04))); } }
+  else if (fx === 'sparks') { for (let i = 0; i < 18; i += 1) { const x = (i * 97 + Math.sin(t + i) * 6 + bw) % bw; const y = hy - ((i * 31 + t * 30) % Math.max(10, hy * 0.5)); g.fillStyle = i % 2 ? '#ffd23f' : '#ff8a3d'; g.fillRect(Math.round(x), Math.round(y), 1, 1); } }
+  else if (fx === 'glitch') { for (let i = 0; i < 3; i += 1) { if (Math.sin(t * 7 + i * 3) > 0.85) { g.fillStyle = i % 2 ? 'rgba(122,209,255,0.25)' : 'rgba(255,94,196,0.25)'; g.fillRect(0, Math.round(((t * 37 + i * 53) % hy)), bw, 1); } } }
+  else if (fx === 'motes') { for (let i = 0; i < 34; i += 1) { const x = (i * 71 + Math.sin(t * 0.5 + i) * 10 + bw) % bw; const y = (i * 43 + Math.cos(t * 0.4 + i) * 8 + hy) % Math.max(1, hy + 20); g.fillStyle = i % 2 ? 'rgba(180,220,255,0.7)' : 'rgba(255,200,255,0.65)'; g.fillRect(Math.round(x), Math.round(y), 1, 1); } }
   else if (fx === 'haze') { g.fillStyle = 'rgba(255,255,255,0.08)'; for (let i = 0; i < 6; i += 1) { const y = Math.round(hy * (0.82 + i * 0.03) + Math.sin(t * 2 + i) * 1.5); g.fillRect(0, y, bw, 1); } }
 }
 
@@ -229,6 +266,7 @@ export function renderScene(canvas, ctx, data) {
   drawWeather(region.fx, hy, t);
   const simNow = state.simSeconds + (frac || 0);
 
+  { const sp = SPEC[region.terrain]; if (sp && sp.over) drawOverlay(sp.over, { t, sd, planet, spec: sp, wx0: -PXC.ox / s, wx1: (bw - PXC.ox) / s, g }); }
   // volcano glow and smoke
   for (const c of bgCache.craters) { const glow = 0.5 + 0.5 * Math.sin(t * 3 + c.x); g.globalAlpha = 0.25 * glow; pD(bx(c.x), by(c.y), 7 * s + 3, '#ff6a2a', g, true); g.globalAlpha = 1; pR(c.x - 5, c.y - 1, 10, 2, glow > 0.5 ? '#ffb347' : '#ff6a2a'); for (let q = 0; q < 5; q += 1) { const ph = (t * 0.25 + q / 5) % 1; g.globalAlpha = (1 - ph) * 0.45; pD(bx(c.x + Math.sin(ph * 5 + q) * 6), by(c.y - ph * 90), (3 + ph * 9) * s + 1, '#6a5a60', g, true); } g.globalAlpha = 1; }
   if (region.terrain === 'volcanic') for (let i = 0; i < 9; i += 1) { const x = 30 + i * 80 + (sd % 20); if (Math.sin(t * 2 + i * 1.7) > 0.2) pR(x, -1, 9, 1, '#ffb347'); }

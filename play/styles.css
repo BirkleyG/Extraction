@@ -206,3 +206,4 @@ textarea{min-height:70px;resize:vertical}
 @media (max-width:860px){.canvas-wrap{height:max(230px,62vw);min-height:0}.banner{top:60px}}
 @media (max-width:860px){.hud .pbtn.hide-sm{display:none}.stage-tag{display:none}}
 .tab{padding:10px 7px}
+.tab{padding:10px 5px;font-size:10px;letter-spacing:.02em}

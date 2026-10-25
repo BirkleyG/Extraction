@@ -4,7 +4,7 @@ import {
   setAutoLaunch, stepGame, upgradeCost, validateGameState,
 } from './model.js';
 import { renderScene } from './scene.js';
-import { TERRAINS, aiSettings, generatePlanetAI, loadPlanet, newPlanetFromSeed, saveAiSettings, savePlanet, askJSON } from './planet.js';
+import { TERRAINS, aiReady, aiSettings, generatePlanet, loadHistory, loadPlanet, recordPlanet, saveAiSettings, savePlanet, askJSON } from './planet.js';
 
 const $ = (selector) => document.querySelector(selector);
 const canvas = $('#cv');
@@ -31,6 +31,7 @@ const oreIndex = (id) => ORES.findIndex((o) => o.id === id);
 /* The planet decides what the ores are called and look like. Rates and values stay with the model. */
 function skinOres() { ORES.forEach((o, i) => { const p = planet.ores[i]; o.name = p.name; o.color = p.color; o.cat = p.cat; }); }
 skinOres();
+if (!loadHistory().length) recordPlanet(planet);
 
 function formatClock(seconds) {
   const hours = Math.floor(seconds / 3600);
@@ -218,18 +219,23 @@ function tabShafts() {
 function tabPlanet() {
   const rows = planet.regions.map((r) => {
     const T = TERRAINS[r.terrain]; const sel = r.id === regionId;
-    return `<div class="row ${sel ? 'sel' : ''}"><div><div class="t"><span class="swatch2" style="--ore:${r.biome}"></span>${safeText(r.name)}</div><div class="d">${safeText(T.label)} · ${safeText(r.blurb)}</div></div><button class="buy ${sel ? 'ok' : 'ghost'} sm" data-region="${r.id}" type="button">${sel ? 'Here' : 'Visit'}</button></div>`;
+    return `<div class="row ${sel ? 'sel' : ''}"><div><div class="t"><span class="swatch2" style="--ore:${r.biome}"></span>${safeText(r.name)}</div><div class="d">${safeText(T.label)}${T.group === 'alien' ? ' · alien' : ''} · ${safeText(r.blurb)}</div></div><button class="buy ${sel ? 'ok' : 'ghost'} sm" data-region="${r.id}" type="button">${sel ? 'Here' : 'Visit'}</button></div>`;
   }).join('');
   const ores = planet.ores.map((o) => `<span class="chip"><i style="background:${o.color}"></i>${safeText(o.name)}</span>`).join('');
-  const ai = aiSettings(); const aiOn = ai.provider !== 'off' && ai.key;
-  return `<h2>${safeText(planet.name)}</h2><p class="lede">${safeText(planet.tagline)}</p><p class="story">${safeText(planet.story)}</p>
+  const th = planet.theme || { concept: '', motifs: [] };
+  const ready = aiReady();
+  const past = loadHistory().slice(-5).reverse().map((e) => `<div class="d">${safeText(e.name)} · ${safeText(e.concept)}</div>`).join('');
+  return `<h2>${safeText(planet.name)}</h2><p class="lede">${safeText(planet.tagline)}</p>
+    <div class="note"><b>THEME</b> · ${safeText(th.concept)}${th.mood ? ` <i>(${safeText(th.mood)})</i>` : ''}${th.motifs && th.motifs.length ? `<br>${th.motifs.map((m) => `<span class="pill sp">${safeText(m)}</span>`).join(' ')}` : ''}</div>
+    <p class="story">${safeText(planet.story)}</p>
     <h3>Ores on this world</h3><div class="chips">${ores}</div>
     <h3>Regions · pick the ground your mine sits on</h3><div class="rows">${rows}</div>
     <div class="note">Regions change the landscape, weather and look. The sandbox's rates and prices don't depend on them yet.</div>
     <h3>New planet</h3>
     <label class="f">What should the Maker build? (optional)<textarea id="planetPrompt" maxlength="400" placeholder="A cold, pink planet of floating ice and screaming moons">${safeText(planetPromptValue)}</textarea></label>
-    <div class="btnrow"><button class="buy alt" data-act="newplanet-ai" type="button"${planetBusy || !aiOn ? ' disabled' : ''}>${planetBusy ? 'The Maker is thinking…' : 'Ask the Maker (AI)'}</button><button class="buy ghost" data-act="newplanet-seed" type="button"${planetBusy ? ' disabled' : ''}>Improvise (no AI)</button></div>
-    ${aiOn ? '' : '<p class="lede">The AI option needs your own key. Add one under Tools. Improvise works without it.</p>'}`;
+    <div class="btnrow"><button class="buy alt" data-act="newplanet-ai" type="button"${planetBusy ? ' disabled' : ''}>${planetBusy ? 'The Maker is thinking…' : ready ? 'Ask the Maker (AI)' : 'Ask the Maker'}</button></div>
+    <p class="lede">${ready ? 'The Maker invents a theme, builds the whole planet from it, and reads the planets before it so this one is new.' : 'No AI key yet, so the Maker will improvise from a theme. Add your own Claude or OpenAI key under Tools for full AI planets.'}</p>
+    ${past ? `<h3>Planets so far</h3><div class="rows">${past}</div>` : ''}`;
 }
 let planetPromptValue = '';
 
@@ -327,11 +333,12 @@ document.addEventListener('click', (event) => {
   }
   if (button.dataset.region) { regionId = button.dataset.region; savePlanet(planet, regionId); render(); toast(`Now overlooking ${region().name}.`, 'success'); return; }
   switch (button.dataset.act) {
-    case 'newplanet-seed': { planet = newPlanetFromSeed(); regionId = planet.regions[0].id; skinOres(); savePlanet(planet, regionId); render(); toast(`The Maker improvised ${planet.name}.`, 'success'); break; }
     case 'newplanet-ai': {
       const prompt = ($('#planetPrompt') && $('#planetPrompt').value) || planetPromptValue; planetPromptValue = prompt; planetBusy = true; render();
-      generatePlanetAI(prompt).then((p) => { planet = p; regionId = p.regions[0].id; skinOres(); savePlanet(planet, regionId); toast(`The Maker delivered ${planet.name}.`, 'success'); })
-        .catch((e) => toast(`AI unavailable: ${e.message}`, 'error')).finally(() => { planetBusy = false; render(); });
+      generatePlanet(prompt).then(({ planet: p, how, error }) => {
+        planet = p; regionId = p.regions[0].id; skinOres(); savePlanet(planet, regionId);
+        toast(how === 'ai' ? `The Maker delivered ${planet.name}.` : `The Maker improvised ${planet.name}${error ? ` (${error})` : ''}.`, 'success');
+      }).finally(() => { planetBusy = false; render(); });
       break;
     }
     case 'ai-save': { const key = $('#aiKey').value.trim(); saveAiSettings({ provider: $('#aiProvider').value, key, model: aiSettings().model }); toast('AI settings saved in this browser.', 'success'); render(); break; }
