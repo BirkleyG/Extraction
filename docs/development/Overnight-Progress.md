@@ -28,10 +28,12 @@ Create small reviewable PRs and GitHub checkpoints as meaningful batches become 
 
 ## Playable batch verification
 
-- 25 sandbox/compatibility tests pass, including whole-crate paid departures, no arrival double-pay, failed-purchase atomicity, exact live/catch-up equality, safe prices, profile isolation, history archive conservation and reload.
+- 27 sandbox/compatibility tests pass, including whole-crate paid departures, no arrival double-pay, failed-purchase atomicity, exact live/catch-up equality, safe prices, profile isolation, history archive conservation and reload.
 - Actual-engine greedy study: first sale 100 coin at second one; second shaft affordable at second thirteen; 130,010 gross after one hour. Fluid study and its substantial intermediate/month target deviations are published alongside it. This is provisional local tuning.
 - Browser checks passed at desktop 1440px and mobile 320/360/390/768px: tabs, upgrade purchases, automatic shipping, saved reload, 120-second offline recovery, map switch/pan/zoom, online signed-out overlay, explicit old-profile migration and downloaded backup, raw corrupt-save recovery (empty/occupied/failing storage), and history archive display. No unresolved browser errors or page overflow were found.
 - Profile history retains 32 recent shipments and 64 recent ledger rows plus active commitments, with explicit archive totals. Exact eight-hour fresh-state catch-up measured 6.46 seconds on the development runner; actual browser batches yield to rendering. This measurement is not a production latency guarantee.
 - Backend CI for PR #13 passed 86 tests and 10 Auth/Firestore emulator tests. The playable PR also regenerates both pacing evidence files in CI to detect drift.
 
 **Remaining:** production deployment of the worker source requires Cloud Run credentials (not attached here). Full Release A defense/hazards, general durable event queue, complete month simulation/balance certification and production cost measurement remain open. Online economics are intentionally unchanged during this local tuning experiment.
+
+- [PR #14](https://github.com/BirkleyG/Extraction/pull/14): playable sandbox economy, legacy presentation, pacing evidence and recovery fixes. Final mixed-ore checks prevent high-value fractional dust from blocking whole-crate cargo; launch previews match actual ore selection and rounded unit prices.

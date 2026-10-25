@@ -273,7 +273,7 @@ function availableSurface(state, oreId) {
   return state.production.surface.unitsByOre.find((row) => row.oreId === oreId)?.units ?? 0;
 }
 function preferredCargoOre(state, destinationId) {
-  return state.production.surface.unitsByOre.filter((row) => row.units > 0).sort((a, b) => {
+  return state.production.surface.unitsByOre.filter((row) => state.economyProfile ? Math.floor(row.units + 1e-9) >= 1 : row.units > 0).sort((a, b) => {
     const valueOrder = priceFor(destinationFor(destinationId), b.oreId) - priceFor(destinationFor(destinationId), a.oreId);
     return valueOrder || (a.oreId < b.oreId ? -1 : a.oreId > b.oreId ? 1 : 0);
   })[0]?.oreId ?? null;
@@ -346,7 +346,7 @@ function rushLoad(state) {
 /** The cargo ore has stopped arriving (vein dry, shaft idle) so waiting for a full hold would wait forever. */
 function cargoStranded(state) {
   const id = state.ship.cargoOreId;
-  if (!id || state.ship.cargoUnits < 1e-9 || availableSurface(state, id) >= 1e-9) return false;
+  if (!id || state.ship.cargoUnits < 1e-9 || (state.economyProfile ? Math.floor(availableSurface(state, id) + 1e-9) >= 1 : availableSurface(state, id) >= 1e-9)) return false;
   return !state.production.shafts.some((shaft) => shaft.workersAssigned > 0 && ((miningVein(state, shaft.shaftNumber)?.oreId ?? state.site.commonOreId) === id || shaft.bufferUnits > 1e-9 && shaft.oreId === id));
 }
 

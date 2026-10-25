@@ -425,9 +425,10 @@ function shipStatus() {
 /** units (and their value) that "Launch now" would send this second */
 function launchPreview() {
   const aboard = state.ship.cargoUnits;
-  const id = state.ship.cargoOreId ?? state.production.surface.unitsByOre.filter((r) => r.units > 0).map((r) => r.oreId)[0] ?? null;
+  const id = state.ship.cargoOreId ?? state.production.surface.unitsByOre.filter((r) => isNewEconomy() ? Math.floor(r.units + 1e-9) >= 1 : r.units > 0).sort((a, b) => expectedUnitValue(state, b.oreId) - expectedUnitValue(state, a.oreId) || (a.oreId < b.oreId ? -1 : a.oreId > b.oreId ? 1 : 0))[0]?.oreId ?? null;
   const yardUnits = id ? (state.production.surface.unitsByOre.find((r) => r.oreId === id)?.units ?? 0) : 0;
-  const units = Math.min(state.ship.capacityUnits, aboard + yardUnits);
+  const loadable = isNewEconomy() ? Math.floor(yardUnits + 1e-9) : yardUnits;
+  const units = aboard + Math.min(loadable, Math.max(0, state.ship.capacityUnits - aboard));
   return { units, id, pay: id ? Math.floor(units * expectedUnitValue(state, id) + 0.5) : 0 };
 }
 

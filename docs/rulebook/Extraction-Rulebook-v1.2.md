@@ -468,6 +468,8 @@ Payment
 
 **Scope: new local sandbox mines only.** Landing supplies ten units of common ore in kind, zero coin. Automatic takeoff sells a whole hold when ready; Launch now sends available whole crates. Base hold is ten crates, speed twelve AU/min, and fixed unload times are two/three/four seconds for the three published NPC buyers. Base bids are 10/18/50 coin per unit before ore modifiers. Apply ore modifiers and round the unit price first, then multiply by quantity for the actual integer payment and the UI preview.
 
+Fractional high-value residue cannot block loading whole crates of another available ore. A discontinued ore with only fractional residue left cannot strand a partially filled hauler indefinitely. The launch preview chooses the same cargo and rounds the same prices as the actual departure.
+
 The unupgraded nearest-buyer trip is twelve seconds (`ceil(2 × distance/speed × 60 + unloadSeconds)`). Payment is final at takeoff, never repeated on arrival. Hold capacity grows ×1.4 per Hauler level (whole crates); speed grows ×1.04. Sandbox pad loading can move a hold per second. The trusted online server keeps its existing shipping formula, independent upgrade lines and coefficients.
 
 ## 06 — Refineries and Industrial Processing

@@ -135,3 +135,30 @@ test('sandbox and legacy tool hardness follow their respective tier thresholds',
   assert.equal(toolHardness(40),6);
   assert.equal(toolHardness(38,true),10);
 });
+
+test('valuable fractional dust never blocks loading whole common crates', () => {
+  const state=createGameState();
+  state.production.surface.unitsByOre=[{oreId:'ferrite',units:10},{oreId:'mythic',units:.5}];
+  state.production.initialUnitsByOre=structuredClone(state.production.surface.unitsByOre);
+  const sent=stepGame(state);
+  assert.equal(sent.shipments.length,1);
+  assert.equal(sent.shipments[0].oreId,'ferrite');
+  assert.equal(sent.shipments[0].units,10);
+  assert.equal(sent.coins,100);
+  assert.equal(sent.production.surface.unitsByOre.find(r=>r.oreId==='mythic').units,.5);
+  const manual=dispatchNow(state);
+  assert.equal(manual.shipments[0].oreId,'ferrite');
+});
+
+test('discontinued rare cargo departs with a partial hold despite fractional surface residue', () => {
+  const state=createGameState();
+  state.ship.cargoOreId='lithium'; state.ship.cargoUnits=3;
+  state.production.surface.unitsByOre=[{oreId:'ferrite',units:10},{oreId:'lithium',units:.5}];
+  state.production.initialUnitsByOre=[{oreId:'ferrite',units:10},{oreId:'lithium',units:3.5}];
+  state.production.externalTransfersByOre=[{oreId:'lithium',units:3}];
+  const sent=stepGame(state);
+  assert.equal(sent.shipments.length,1);
+  assert.equal(sent.shipments[0].oreId,'lithium');
+  assert.equal(sent.shipments[0].units,3);
+  assert.equal(sent.production.surface.unitsByOre.find(r=>r.oreId==='lithium').units,.5);
+});
