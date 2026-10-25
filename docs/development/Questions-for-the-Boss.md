@@ -15,9 +15,17 @@ This is the development questions tab. Approved R-01–R-10 decisions remain in 
 | Q-05 | Is the rulebook’s $2–3 monthly AI cap per world or per account (C-08)? | Per world, centrally enforced; begin with deterministic templates and AI disabled. Development credits are a separate budget. | Paid AI integration in A/C; engine work continues. | Pending |
 | Q-06 | Who is the initial host/admin, and which Firebase project/region should production use? | Use isolated development/emulator resources; grant host actions through server authorization. A URL hash must never grant authority. | Production credentials, roles and deployment. | Pending |
 
+## Hosting checkpoint · 25 October 2026
+
+**Q-07 — Deployment route (answered):** Firebase Cloud Functions deployment requires a Blaze project. Local Auth/Firestore emulators remain available without enabling billing. Choose local-only development until a demo, a billing-enabled Firebase project with a budget agreed before deployment, or an existing always-on server. **CEO answer:** plan for Firebase Blaze with a small budget to agree before deployment. Provider direction is approved; no numeric spending ceiling, production project or paid deployment is authorized yet.
+
+Sources checked: [Functions getting started](https://firebase.google.com/docs/functions/get-started) and [Scheduled functions](https://firebase.google.com/docs/functions/schedule-functions). Scheduler currently lists $0.10 per job/month with three jobs per Google account at no charge; function, database and network usage have separate pricing. These allowances do not establish a zero-cost production guarantee.
+
 ## Answer history
 
 - 25 October 2026: CEO answered Q-01–Q-03 in chat. No numeric Pro allowance is known; platform selection delegated with setup documentation required; fresh saves approved and prototype preserved.
 - Authorization to organize agents, prepare the buildout, update documentation and push changes to GitHub is supplied in the task; it is not a pending question.
 
 - 25 October 2026: CEO answered Q-04: private friends test, up to 10 players.
+
+- 25 October 2026: CEO answered Q-07: Firebase Blaze, with a small budget to agree before deployment. Continue emulator development; do not enable billing or deploy yet.

@@ -1244,6 +1244,13 @@ Month rollover
 - T18-14: unauthenticated, cross-owner, stale-month and injected authoritative-field requests reject without mutation. Production identity verification and direct database access tests remain pending.
 - T02-01/02/04 and T18-01/02 have partial foundation coverage for grants and owner escrow only. Liabilities, commercial departure, storage reservations, tax/sinks, scheduler, closing and all other release tests remain outstanding. This library is not connected to the legacy browser game.
 
+### A1 persistence and authentication · 25 October 2026
+- Added a Firebase Admin Firestore repository and authenticated local HTTP transport. Bounded owner/month records persist balances, immutable ledger entries, command receipts, versions and the one-time grant marker in one transaction. No complete-ledger scan is required per command.
+- World membership, world status and current UTC month are checked in the transaction on every retry. Token identity is verified with revocation checking before trusted context is constructed. Only the owner wallet field allowlist is returned; malformed stored receipts fail closed.
+- The isolated backend emulator rules deny direct client database access, including authenticated users. Legacy prototype rules/configuration remain unchanged. Paid deployment, broader game projections, enrollment/admin endpoints and production credentials are not included.
+- T18-13/14 have local HTTP/emulator coverage for retry/identity/ownership guards. Cross-instance transaction tests and service recreation demonstrate durable wallet/receipt behavior. They do not certify whole-world recovery, cross-owner shipments, scheduler or monthly closing.
+- **Local evidence: 19 fast tests and 3 real Auth/Firestore emulator tests pass; the authenticated local demo passes.** Runtime dependency audit reports no known vulnerabilities. Full Release A acceptance remains pending.
+
 ## 19 — AI Behavior, Procedural Generation and News
 
 **Status: consolidated revision 1.2.** Approved rules use the register in 00; C-numbered coefficients remain calibration work.
@@ -1490,6 +1497,11 @@ Changing a rule
 - Added a GitHub Actions workflow for backend tests and existing browser-script syntax checks. **Local verification: 17 foundation tests pass**, including retry/conflicts, isolation, safe inputs, escrow, replay, concurrency, rollback and immutable snapshot checks. Hosted CI status is tracked separately in the implementation PR.
 - Added T18-13/14 for command retry/conflict and ownership/input rejection behavior. Existing acceptance requirements remain in force; A1 and Release A are not complete.
 - Recorded CEO launch scope: **private friends test, up to 10 players**. Required section 21 simulations at larger populations are unchanged.
+
+### A1 persistence/authentication change log · 25 October 2026
+- Added Firestore transaction persistence, verified Firebase token transport, current-world/month/member guards and isolated local emulator configuration. Commands now support asynchronous transaction repositories while preserving existing retry and accounting behavior.
+- Added local bootstrap/demo scripts, locked dependencies, emulator CI checks and setup documentation. No prototype save, production resource or gameplay coefficient changed.
+- Recorded hosting direction: Firebase Blaze, with a budget still to agree before deployment. No paid deployment is authorized by that preference.
 
 ## 23 — Advanced Combat and AI Military Command
 
