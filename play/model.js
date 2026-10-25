@@ -16,6 +16,11 @@ export const DESTINATIONS = Object.freeze([
   Object.freeze({ id: 'frontier-refinery', name: 'Frontier Refinery', detail: 'Near · steady bid', distance: 1, basePrice: 500, unloadUnitsPerMinute: 30, budget: 1_000_000_000, capacity: 1_000_000, accent: '#e7a15a' }),
   Object.freeze({ id: 'cinder-buyer', name: 'Cinder Bay Buyer', detail: 'Far · premium bid', distance: 3, basePrice: 800, unloadUnitsPerMinute: 18, budget: 250_000_000, capacity: 250_000, accent: '#66bfd0' }),
 ]);
+export const SHIP_CLASSES = Object.freeze([
+  Object.freeze({ id: 'hauler', name: 'Hauler', speedMultiplier: 1, cargoMultiplier: 1, costMultiplier: 1 }),
+  Object.freeze({ id: 'cruiser', name: 'Cruiser', speedMultiplier: 3, cargoMultiplier: 0.35, costMultiplier: 1 }),
+  Object.freeze({ id: 'freighter', name: 'Freighter', speedMultiplier: 0.6, cargoMultiplier: 3, costMultiplier: 1.8 }),
+]);
 
 const MAX_COIN = Number.MAX_SAFE_INTEGER;
 const fail = (code, message = code) => { const error = new Error(message); error.code = code; throw error; };
@@ -116,7 +121,9 @@ export function createGameState() {
     workersHired: 5,
     upgrades: { habitat: 0, yard: 0, shipCapacity: 0, shipSpeed: 0, loading: 0 },
     production: newProductionState([shaftBlueprint(1, {}, 5)], { level: 1, baseRatePerMinute: 2, curve: 'exponential', growth: BASE_LIFT_GROWTH }, { capacityUnits: 100, unitsByOre: [] }),
-    ship: { capacityUnits: 150, speedPerMinute: 0.5, loadingUnitsPerMinute: 60, readyAtSecond: 0, loading: false, cargoOreId: null, cargoUnits: 0 },
+    ship: { shipClass: 'hauler', capacityUnits: 150, speedPerMinute: 0.5, loadingUnitsPerMinute: 60, readyAtSecond: 0, loading: false, cargoOreId: null, cargoUnits: 0 },
+    extraShips: [],
+    padCount: 1,
     buyers,
     selectedDestinationId: DESTINATIONS[0].id,
     autoLaunch: true,
@@ -141,6 +148,45 @@ function buyerFor(state, destinationId = state.selectedDestinationId) {
   const buyer = state.buyers.find((item) => item.id === destinationId);
   if (!buyer) fail('UNKNOWN_DESTINATION');
   return buyer;
+}
+export function fleetShips(state) {
+  return [state.ship, ...(state.extraShips ?? [])];
+}
+function shipFor(state, shipIndex = 0) {
+  if (!Number.isSafeInteger(shipIndex) || shipIndex < 0) fail('INVALID_SHIP');
+  const ships = fleetShips(state);
+  if (shipIndex >= ships.length) fail('UNKNOWN_SHIP');
+  return ships[shipIndex];
+}
+function setShip(state, shipIndex, ship) {
+  if (shipIndex === 0) state.ship = ship;
+  else state.extraShips[shipIndex - 1] = ship;
+}
+function upgradedShipStats(state, shipClass = 'hauler') {
+  return {
+    shipClass,
+    ...shipPerformanceStats(state, shipClass),
+    readyAtSecond: state.simSeconds,
+    loading: false,
+    cargoOreId: null,
+    cargoUnits: 0,
+  };
+}
+function shipClassDefinition(shipClass) {
+  const definition = SHIP_CLASSES.find((item) => item.id === shipClass);
+  if (!definition) fail('INVALID_SHIP_CLASS');
+  return definition;
+}
+function shipPerformanceStats(state, shipClass) {
+  const definition = shipClassDefinition(shipClass);
+  return {
+    capacityUnits: 150 * definition.cargoMultiplier * (1 + 0.04 * state.upgrades.shipCapacity),
+    speedPerMinute: 0.5 * definition.speedMultiplier * (1 + 0.04 * state.upgrades.shipSpeed),
+    loadingUnitsPerMinute: 60 * definition.cargoMultiplier * (1 + 0.04 * state.upgrades.loading),
+  };
+}
+function syncFleetShipStats(state) {
+  for (const ship of fleetShips(state)) Object.assign(ship, shipPerformanceStats(state, ship.shipClass));
 }
 function destinationFor(id) {
   const destination = DESTINATIONS.find((item) => item.id === id);
@@ -179,20 +225,21 @@ function preferredCargoOre(state, destinationId) {
   })[0]?.oreId ?? null;
 }
 
-function computeDispatch(state, destinationId, allowPartial = false) {
+function computeDispatch(state, destinationId, allowPartial = false, shipIndex = 0) {
   const destination = destinationFor(destinationId);
   const buyer = buyerFor(state, destinationId);
-  if (state.ship.readyAtSecond > state.simSeconds) return { state, result: null, reason: 'ship-busy' };
+  const ship = shipFor(state, shipIndex);
+  if (ship.readyAtSecond > state.simSeconds) return { state, result: null, reason: 'ship-busy' };
   const capacityFree = buyer.capacityUnits - buyer.inventoryUnits - buyer.reservedUnits;
-  const cargoOreId = state.ship.cargoOreId;
-  const yardUnits = state.ship.cargoUnits;
+  const cargoOreId = ship.cargoOreId;
+  const yardUnits = ship.cargoUnits;
   if (!cargoOreId || yardUnits < (allowPartial ? 0.001 : 1)) return { state, result: null, reason: 'not-enough-loaded-cargo' };
   const price = priceFor(destination, cargoOreId);
   const fullPayment = roundHalfUp(yardUnits * price);
   const canSellAll = yardUnits <= capacityFree && Number.isSafeInteger(fullPayment) && fullPayment > 0 && fullPayment <= buyer.funds;
   let units = canSellAll
     ? yardUnits
-    : Math.min(state.ship.capacityUnits, yardUnits, capacityFree, buyer.funds / price);
+    : Math.min(ship.capacityUnits, yardUnits, capacityFree, buyer.funds / price);
   let payment = roundHalfUp(units * price);
   if (payment > buyer.funds) {
     units = Math.max(0, units - Number.EPSILON * Math.max(1, units) * 4);
@@ -202,6 +249,7 @@ function computeDispatch(state, destinationId, allowPartial = false) {
   if (!Number.isSafeInteger(payment) || payment <= 0 || payment > buyer.funds) fail('INVALID_PAYMENT');
   const next = clone(state);
   const nextBuyer = buyerFor(next, destinationId);
+  const nextShip = shipFor(next, shipIndex);
 
   nextBuyer.funds -= payment;
   nextBuyer.reservedUnits += units;
@@ -212,10 +260,11 @@ function computeDispatch(state, destinationId, allowPartial = false) {
   const unloadSeconds = units / destination.unloadUnitsPerMinute * 60;
   const arrivalAtSecond = now + Math.ceil(travelOneWaySeconds + unloadSeconds);
   const tripSeconds = Math.ceil(2 * travelOneWaySeconds + unloadSeconds);
-  next.ship.readyAtSecond = now + tripSeconds;
-  next.ship.cargoUnits = Math.max(0, next.ship.cargoUnits - units);
-  if (next.ship.cargoUnits < 1e-9) { next.ship.cargoUnits = 0; next.ship.cargoOreId = null; }
-  next.ship.loading = false;
+  nextShip.readyAtSecond = now + tripSeconds;
+  nextShip.cargoUnits = Math.max(0, nextShip.cargoUnits - units);
+  if (nextShip.cargoUnits < 1e-9) { nextShip.cargoUnits = 0; nextShip.cargoOreId = null; }
+  nextShip.loading = false;
+  setShip(next, shipIndex, nextShip);
   const shipmentId = `shipment-${String(next.nextRecordId).padStart(8, '0')}`;
   const shipment = Object.freeze({
     id: shipmentId,
@@ -224,6 +273,7 @@ function computeDispatch(state, destinationId, allowPartial = false) {
     unitPrice: price,
     payment,
     destinationId,
+    shipIndex,
     departureAtSecond: now,
     arrivalAtSecond,
     shipReadyAtSecond: next.ship.readyAtSecond,
@@ -236,24 +286,27 @@ function computeDispatch(state, destinationId, allowPartial = false) {
   return { state: next, result: shipment, reason: 'launched' };
 }
 
-function loadOneSecond(state) {
-  if (state.ship.readyAtSecond > state.simSeconds || !state.ship.loading) return state;
+function loadOneSecond(state, shipIndex = 0) {
+  const sourceShip = shipFor(state, shipIndex);
+  if (sourceShip.readyAtSecond > state.simSeconds || !sourceShip.loading) return state;
   const next = clone(state);
-  const cargoOreId = next.ship.cargoOreId ?? preferredCargoOre(next, next.selectedDestinationId);
+  const ship = shipFor(next, shipIndex);
+  const cargoOreId = ship.cargoOreId ?? preferredCargoOre(next, next.selectedDestinationId);
   if (!cargoOreId) return next;
   const available = availableSurface(next, cargoOreId);
-  const room = Math.max(0, next.ship.capacityUnits - next.ship.cargoUnits);
-  const amount = Math.min(available, room, next.ship.loadingUnitsPerMinute / 60);
+  const room = Math.max(0, ship.capacityUnits - ship.cargoUnits);
+  const amount = Math.min(available, room, ship.loadingUnitsPerMinute / 60);
   if (amount <= 0) return next;
   next.production = withdrawSurfaceUnits(next.production, cargoOreId, amount);
-  next.ship.cargoOreId = cargoOreId;
-  next.ship.cargoUnits += amount;
+  ship.cargoOreId = cargoOreId;
+  ship.cargoUnits += amount;
+  setShip(next, shipIndex, ship);
   return next;
 }
 
-function hasFutureOreForStandardLoad(state, cargoOreId) {
+function hasFutureOreForStandardLoad(state, cargoOreId, ship) {
   const currentStock = availableSurface(state, cargoOreId);
-  if (currentStock + state.ship.cargoUnits >= 1) return true;
+  if (currentStock + ship.cargoUnits >= 1) return true;
   const surfaceTotalUnits = state.production.surface.unitsByOre.reduce((sum, row) => sum + row.units, 0);
   const surfaceHasRoom = state.production.surface.capacityUnits - surfaceTotalUnits > 1e-9;
   if (!surfaceHasRoom) return false;
@@ -261,14 +314,24 @@ function hasFutureOreForStandardLoad(state, cargoOreId) {
 }
 
 function launchIfReady(state) {
-  if (state.ship.readyAtSecond > state.simSeconds) return state;
-  const next = clone(state);
-  if (next.autoLaunch && next.ship.cargoUnits < 1 && !next.ship.loading && preferredCargoOre(next, next.selectedDestinationId)) next.ship.loading = true;
-  let loaded = loadOneSecond(next);
-  if (loaded.autoLaunch && loaded.ship.cargoUnits > 0) {
-    const allowPartial = loaded.ship.cargoUnits < 1 && !hasFutureOreForStandardLoad(loaded, loaded.ship.cargoOreId);
-    const result = computeDispatch(loaded, loaded.selectedDestinationId, allowPartial);
-    if (result.result) loaded = result.state;
+  let loaded = state;
+  const activeCount = Math.min(loaded.padCount, fleetShips(loaded).length);
+  for (let shipIndex = 0; shipIndex < activeCount; shipIndex += 1) {
+    let ship = shipFor(loaded, shipIndex);
+    if (ship.readyAtSecond > loaded.simSeconds) continue;
+    if (loaded.autoLaunch && ship.cargoUnits < 1 && !ship.loading && preferredCargoOre(loaded, loaded.selectedDestinationId)) {
+      loaded = clone(loaded);
+      ship = shipFor(loaded, shipIndex);
+      ship.loading = true;
+      setShip(loaded, shipIndex, ship);
+    }
+    loaded = loadOneSecond(loaded, shipIndex);
+    ship = shipFor(loaded, shipIndex);
+    if (loaded.autoLaunch && ship.cargoUnits > 0) {
+      const allowPartial = ship.cargoUnits < 1 && !hasFutureOreForStandardLoad(loaded, ship.cargoOreId, ship);
+      const result = computeDispatch(loaded, loaded.selectedDestinationId, allowPartial, shipIndex);
+      if (result.result) loaded = result.state;
+    }
   }
   return loaded;
 }
@@ -340,10 +403,11 @@ export function purchaseUpgrade(inputState, type, { shaftNumber = 1, count = 1 }
       break;
     case 'yard': next.upgrades.yard = finalLevel; next.production.surface.capacityUnits = 100 * (1 + 0.04 * finalLevel); break;
     case 'habitat': next.upgrades.habitat = finalLevel; break;
-    case 'shipCapacity': next.upgrades.shipCapacity = finalLevel; next.ship.capacityUnits = 150 * (1 + 0.04 * finalLevel); break;
-    case 'shipSpeed': next.upgrades.shipSpeed = finalLevel; next.ship.speedPerMinute = 0.5 * (1 + 0.04 * finalLevel); break;
-    case 'loading': next.upgrades.loading = finalLevel; next.ship.loadingUnitsPerMinute = 60 * (1 + 0.04 * finalLevel); break;
+    case 'shipCapacity': next.upgrades.shipCapacity = finalLevel; break;
+    case 'shipSpeed': next.upgrades.shipSpeed = finalLevel; break;
+    case 'loading': next.upgrades.loading = finalLevel; break;
   }
+  if (type === 'shipCapacity' || type === 'shipSpeed' || type === 'loading') syncFleetShipStats(next);
   if (type === 'dig' || type === 'cart' || type === 'bunkhouse' || type === 'lift') rebalanceWorkers(next);
   appendLog(next, `System purchase: ${type} ×${affordableCount} for ${spend} coin.`, 'purchase');
   return validateGameState(next);
@@ -361,6 +425,50 @@ export function buyNextShaft(inputState) {
   next.production.shafts.push(shaftBlueprint(number, { liftLevel: next.production.lift.level }, 0));
   rebalanceWorkers(next);
   appendLog(next, `Shaft ${number} opened. Assign workers through the hire panel.`, 'purchase');
+  return validateGameState(next);
+}
+
+export function shipPurchaseCost(inputState, shipClass = 'hauler') {
+  const definition = shipClassDefinition(shipClass);
+  const state = validateGameState(inputState);
+  const ownedShips = fleetShips(state).length;
+  if (ownedShips >= 12) return null;
+  return safeInt(roundHalfUp(1800 * 1.6 ** (ownedShips - 1) * definition.costMultiplier), 'ship cost');
+}
+
+export function nextShipCost(inputState) {
+  return shipPurchaseCost(inputState, 'hauler');
+}
+
+export function buyShip(inputState, shipClass = 'hauler') {
+  const state = validateGameState(inputState);
+  shipClassDefinition(shipClass);
+  const cost = shipPurchaseCost(state, shipClass);
+  if (cost === null) fail('AT_CAP');
+  if (state.coins < cost) fail('INSUFFICIENT_FUNDS');
+  const next = clone(state);
+  changeCoin(next, -cost, 'SYSTEM_PURCHASE', `Purchased hauler ${fleetShips(next).length + 1}`, 'sink:SYSTEM_PURCHASE');
+  next.extraShips.push(upgradedShipStats(next, shipClass));
+  appendLog(next, `${SHIP_CLASSES.find((item) => item.id === shipClass).name} ${fleetShips(next).length} added to the fleet. It parks until a pad is available.`, 'purchase');
+  return validateGameState(next);
+}
+
+export function nextPadCost(inputState) {
+  const state = validateGameState(inputState);
+  if (state.padCount >= 12) return null;
+  const nextPad = state.padCount + 1;
+  return safeInt(roundHalfUp(4000 * 6 ** (nextPad - 2)), 'pad cost');
+}
+
+export function buyPad(inputState) {
+  const state = validateGameState(inputState);
+  const cost = nextPadCost(state);
+  if (cost === null) fail('AT_CAP');
+  if (state.coins < cost) fail('INSUFFICIENT_FUNDS');
+  const next = clone(state);
+  changeCoin(next, -cost, 'SYSTEM_PURCHASE', `Opened launch pad ${next.padCount + 1}`, 'sink:SYSTEM_PURCHASE');
+  next.padCount += 1;
+  appendLog(next, `Launch pad ${next.padCount} opened.`, 'purchase');
   return validateGameState(next);
 }
 
@@ -396,24 +504,29 @@ export function setAutoLaunch(inputState, value) {
   return next;
 }
 
-export function dispatchNow(inputState) {
+export function dispatchShip(inputState, shipIndex = 0) {
   const state = validateGameState(inputState);
-  if (state.ship.readyAtSecond > state.simSeconds) fail('SHIP_BUSY');
-  if (state.ship.cargoUnits > 0) {
-    const result = computeDispatch(state, state.selectedDestinationId, true);
+  if (!Number.isSafeInteger(shipIndex) || shipIndex < 0 || shipIndex >= fleetShips(state).length) fail('UNKNOWN_SHIP');
+  if (shipIndex >= state.padCount) fail('SHIP_PARKED');
+  const ship = shipFor(state, shipIndex);
+  if (ship.readyAtSecond > state.simSeconds) fail('SHIP_BUSY');
+  if (ship.cargoUnits > 0) {
+    const result = computeDispatch(state, state.selectedDestinationId, true, shipIndex);
     if (!result.result) fail(result.reason.toUpperCase().replaceAll('-', '_'));
     return validateGameState(result.state);
   }
-  if (state.ship.cargoUnits < 1) {
+  if (ship.cargoUnits < 1) {
     if (!preferredCargoOre(state, state.selectedDestinationId)) fail('NOT_ENOUGH_STOCK');
     const next = clone(state);
-    next.ship.loading = true;
+    shipFor(next, shipIndex).loading = true;
     appendLog(next, 'Cargo loading started. Ore remains unpaid until launch.', 'load');
     return validateGameState(next);
   }
-  const result = computeDispatch(state, state.selectedDestinationId);
-  if (!result.result) fail(result.reason.toUpperCase().replaceAll('-', '_'));
-  return validateGameState(result.state);
+  return state;
+}
+
+export function dispatchNow(inputState) {
+  return dispatchShip(inputState, 0);
 }
 
 export function grantDevCoins(inputState, amount = 10000) {
@@ -452,14 +565,34 @@ export function shipmentRows(state) {
   return state.shipments.slice().reverse().map((shipment) => ({ ...shipment, status: state.shipmentStatusById[shipment.id] }));
 }
 
+function migrateShip(ship) {
+  if (!ship || typeof ship !== 'object' || Array.isArray(ship)) fail('INVALID_SAVE', 'Ship record is malformed');
+  return {
+    ...ship,
+    shipClass: ship.shipClass ?? 'hauler',
+    readyAtSecond: ship.readyAtSecond ?? 0,
+    loading: ship.loading ?? false,
+    cargoOreId: ship.cargoOreId ?? null,
+    cargoUnits: ship.cargoUnits ?? 0,
+  };
+}
+
 export function validateGameState(input) {
   if (!input || typeof input !== 'object' || input.schemaVersion !== SAVE_VERSION) fail('INVALID_SAVE');
+  input = {
+    ...input,
+    ship: migrateShip(input.ship),
+    extraShips: input.extraShips === undefined ? [] : input.extraShips,
+    padCount: input.padCount === undefined ? 1 : input.padCount,
+  };
   safeInt(input.simSeconds, 'simSeconds');
   safeInt(input.coins, 'wallet');
   safeInt(input.sourceGrants, 'source grants');
   safeInt(input.totalExternalEarnings, 'earnings');
   safeInt(input.workersHired, 'workersHired');
-  if (!Array.isArray(input.buyers) || !Array.isArray(input.shipments) || !Array.isArray(input.ledger) || !Array.isArray(input.log) || !Array.isArray(input.production?.shafts)) fail('INVALID_SAVE');
+  if (!Array.isArray(input.buyers) || !Array.isArray(input.shipments) || !Array.isArray(input.ledger) || !Array.isArray(input.log) || !Array.isArray(input.production?.shafts) || !Array.isArray(input.extraShips)) fail('INVALID_SAVE');
+  if (input.extraShips.length > 11 || !Number.isSafeInteger(input.padCount) || input.padCount < 1 || input.padCount > 12) fail('INVALID_SAVE', 'Fleet or pad count is invalid');
+  input.extraShips = input.extraShips.map(migrateShip);
   if (!input.upgrades || typeof input.upgrades !== 'object' || !input.shipmentStatusById || typeof input.shipmentStatusById !== 'object') fail('INVALID_SAVE');
   for (const key of ['habitat', 'yard', 'shipCapacity', 'shipSpeed', 'loading']) safeInt(input.upgrades[key], `upgrade ${key}`);
   if (Object.keys(input.upgrades).length !== 5 || input.upgrades.habitat > 10 || Object.values(input.upgrades).some((value) => value > 1000) || typeof input.autoLaunch !== 'boolean') fail('INVALID_SAVE');
@@ -479,24 +612,30 @@ export function validateGameState(input) {
     number(buyer.reservedUnits, 'buyer reservations');
     if (buyer.inventoryUnits + buyer.reservedUnits > buyer.capacityUnits + 1e-9) fail('INVALID_SAVE');
   }
-  if (!input.ship || number(input.ship.capacityUnits, 'ship capacity', Number.MIN_VALUE) <= 0 || number(input.ship.speedPerMinute, 'ship speed', Number.MIN_VALUE) <= 0 || number(input.ship.loadingUnitsPerMinute, 'loading rate', Number.MIN_VALUE) <= 0) fail('INVALID_SAVE');
-  safeInt(input.ship.readyAtSecond, 'ship ready time');
-  number(input.ship.cargoUnits, 'ship cargo');
-  if (typeof input.ship.loading !== 'boolean' || input.ship.cargoUnits > input.ship.capacityUnits || (input.ship.cargoUnits > 0 && !ore(input.ship.cargoOreId)) || (input.ship.cargoUnits === 0 && input.ship.cargoOreId !== null)) fail('INVALID_SAVE');
+  for (const ship of fleetShips(input)) {
+    shipClassDefinition(ship.shipClass);
+    if (number(ship.capacityUnits, 'ship capacity', Number.MIN_VALUE) <= 0 || number(ship.speedPerMinute, 'ship speed', Number.MIN_VALUE) <= 0 || number(ship.loadingUnitsPerMinute, 'loading rate', Number.MIN_VALUE) <= 0) fail('INVALID_SAVE');
+    safeInt(ship.readyAtSecond, 'ship ready time');
+    number(ship.cargoUnits, 'ship cargo');
+    if (typeof ship.loading !== 'boolean' || ship.cargoUnits > ship.capacityUnits || (ship.cargoUnits > 0 && !ore(ship.cargoOreId)) || (ship.cargoUnits === 0 && ship.cargoOreId !== null)) fail('INVALID_SAVE');
+  }
   if (!Number.isSafeInteger(input.nextRecordId) || input.nextRecordId < 1) fail('INVALID_SAVE');
   const shipmentIds = new Set();
-  for (const shipment of input.shipments) {
+  let shipments = input.shipments;
+  for (const shipment of shipments) {
     if (!shipment || typeof shipment.id !== 'string' || shipmentIds.has(shipment.id) || !ore(shipment.oreId) || !destinationFor(shipment.destinationId) || typeof shipment.state !== 'string') fail('INVALID_SAVE');
     shipmentIds.add(shipment.id);
     safeInt(shipment.payment, 'shipment payment');
     number(shipment.units, 'shipment units', Number.MIN_VALUE);
+    if (shipment.shipIndex !== undefined && (!Number.isSafeInteger(shipment.shipIndex) || shipment.shipIndex < 0 || shipment.shipIndex >= fleetShips(input).length)) fail('INVALID_SAVE', 'Shipment ship index is invalid');
     if (!input.shipmentStatusById || !['IN_TRANSIT', 'DELIVERED'].includes(input.shipmentStatusById[shipment.id])) fail('INVALID_SAVE');
     for (const time of [shipment.departureAtSecond, shipment.arrivalAtSecond, shipment.shipReadyAtSecond, shipment.tripSeconds]) safeInt(time, 'shipment time');
   }
+  if (shipments.some((shipment) => shipment.shipIndex === undefined)) shipments = shipments.map((shipment) => shipment.shipIndex === undefined ? Object.freeze({ ...shipment, shipIndex: 0 }) : shipment);
   if (Object.keys(input.shipmentStatusById).length !== shipmentIds.size || Object.keys(input.shipmentStatusById).some((id) => !shipmentIds.has(id))) fail('INVALID_SAVE');
   if (input.ledger.some((entry) => !entry || typeof entry.description !== 'string' || typeof entry.externalAccount !== 'string' || !Number.isSafeInteger(entry.atSecond) || entry.atSecond < 0 || entry.atSecond > input.simSeconds || !Number.isSafeInteger(entry.amount) || entry.amount < 0 || !Number.isSafeInteger(entry.ownerDelta) || !Number.isSafeInteger(entry.externalDelta))) fail('INVALID_SAVE');
   if (input.log.some((entry) => !entry || typeof entry.message !== 'string' || !Number.isSafeInteger(entry.atSecond) || entry.atSecond < 0 || entry.atSecond > input.simSeconds)) fail('INVALID_SAVE');
-  return { ...input, production };
+  return { ...input, shipments, production };
 }
 
 export function coinRatePerMinute(state) {

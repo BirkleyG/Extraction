@@ -1,40 +1,61 @@
 import {
   ORES, DESTINATIONS, SAVE_KEY, advanceGame, buyNextShaft, createGameState, currentLiftRate, currentRates,
-  dispatchNow, grantDevCoins, hireWorkers, purchaseUpgrade, selectDestination,
-  setAutoLaunch, stepGame, upgradeCost, validateGameState,
+  fleetShips, grantDevCoins, hireWorkers, nextPadCost, nextShipCost, buyPad, buyShip,
+  purchaseUpgrade, selectDestination, setAutoLaunch, dispatchShip, stepGame, upgradeCost, validateGameState, shipmentRows, coinRatePerMinute,
 } from './model.js';
+import { createLegacyScene } from './scene.js';
 
-const $ = (selector) => document.querySelector(selector);
-const canvas = $('#mine-scene');
-const ctx = canvas.getContext('2d', { alpha: false });
-const formatter = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
+const $ = (selector, root = document) => root.querySelector(selector);
+const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+const numberFormat = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
+const unitFormat = new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 });
+const TABS = [['crew', 'Crew'], ['mine', 'Mine'], ['build', 'Build'], ['market', 'Market'], ['records', 'Records'], ['planet', 'Planet']];
+const SPECIES = ['Mosskin', 'Cinderfolk', 'Tideborn', 'Glasswing', 'Ironroot', 'Starling'];
+const SPECIES_LOOK = [
+  { skin: '#c6df9c', accent: '#ffae54', head: 'dome' }, { skin: '#df9b72', accent: '#f4d164', head: 'horn' },
+  { skin: '#7fc6ce', accent: '#73e0d0', head: 'visor' }, { skin: '#e5caef', accent: '#c29aff', head: 'antenna' },
+  { skin: '#d7aa7c', accent: '#b8d18a', head: 'square' }, { skin: '#efcc75', accent: '#91c8ff', head: 'dome' },
+];
 let state;
+let profile = { guild: 'New Guild', species: 'Mosskin' };
 let paused = false;
-let recovering = '';
-let catchupRemaining = 0;
-let catchingUp = false;
+let pendingCatchupSeconds = 0;
 let catchupKind = 'offline';
+let catchingUp = false;
 let savedAtMs = Date.now();
-let selectedRecordTab = 'ledger';
-let moreOperationsOpen = false;
-let resetPromptOpen = false;
+let selectedTab = 'crew';
+let selectedShaft = 1;
+let selectedAmount = '1';
+let recordsView = 'ledger';
+let resetConfirm = false;
+let mapView = false;
+let inspectSite = null;
 let toastTimer;
+let scene;
+let catchupTimer = null;
+let lastError = '';
 
-function formatClock(seconds) {
+const fmt = (value) => numberFormat.format(value);
+const fmtUnits = (value) => unitFormat.format(value);
+const safe = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+const clock = (seconds) => {
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor(seconds % 3600 / 60);
   const secs = seconds % 60;
   return hours ? `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}` : `${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-}
-function fmt(value) { return formatter.format(value); }
-function fmtUnits(value) { return new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 }).format(value); }
-function fillFraction(value, max) { return Math.round(Math.min(1, max > 0 ? value / max : 0) * 100); }
-function oreById(id) { return ORES.find((ore) => ore.id === id); }
-function destinationById(id) { return DESTINATIONS.find((item) => item.id === id); }
-function surfaceTotal() { return state.production.surface.unitsByOre.reduce((sum, row) => sum + row.units, 0); }
-function liftRate() { return currentLiftRate(state); }
-function totalRate() { return currentRates(state).reduce((sum, row) => sum + row.ratePerMinute, 0); }
-function safeText(value) { return String(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]); }
+};
+const totalRate = () => currentRates(state).reduce((sum, row) => sum + row.ratePerMinute, 0);
+const surfaceTotal = () => state.production.surface.unitsByOre.reduce((sum, row) => sum + row.units, 0);
+const oreFor = (id) => ORES.find((ore) => ore.id === id) || ORES[0];
+const destinationFor = (id) => DESTINATIONS.find((item) => item.id === id) || DESTINATIONS[0];
+const sceneProfile = () => ({ name: profile.guild, species: SPECIES_LOOK[Math.max(0, SPECIES.indexOf(profile.species))] });
+const shipStatus = (ship, index) => {
+  if (index >= state.padCount) return 'PARKED · NEEDS PAD';
+  if (ship.readyAtSecond > state.simSeconds) return `RETURNING · ${clock(ship.readyAtSecond - state.simSeconds)}`;
+  if (ship.loading) return `LOADING · ${fmtUnits(ship.cargoUnits)} / ${fmtUnits(ship.capacityUnits)} U`;
+  if (ship.cargoUnits > 0) return `${fmtUnits(ship.cargoUnits)} U UNPAID ABOARD`;
+  return 'READY AT PAD';
+};
 
 function loadSave() {
   try {
@@ -43,391 +64,351 @@ function loadSave() {
     const wrapper = JSON.parse(raw);
     if (!wrapper || wrapper.version !== 1 || !Number.isSafeInteger(wrapper.savedAtMs) || wrapper.savedAtMs < 0) throw new Error('Unsupported save');
     savedAtMs = wrapper.savedAtMs;
+    profile = { guild: String(wrapper.profile?.guild || 'New Guild').slice(0, 32), species: SPECIES.includes(wrapper.profile?.species) ? wrapper.profile.species : 'Mosskin' };
     const loaded = validateGameState(wrapper.state);
     if (wrapper.pendingCatchupSeconds !== undefined && (!Number.isSafeInteger(wrapper.pendingCatchupSeconds) || wrapper.pendingCatchupSeconds < 0)) throw new Error('Invalid pending catch-up');
-    catchupRemaining = wrapper.pendingCatchupSeconds || 0;
+    pendingCatchupSeconds = wrapper.pendingCatchupSeconds || 0;
     if (wrapper.catchupKind === 'fast-forward' || wrapper.catchupKind === 'offline') catchupKind = wrapper.catchupKind;
     paused = wrapper.paused === true;
     const elapsed = Math.floor((Date.now() - savedAtMs) / 1000);
-    if (!paused && elapsed > 0 && Number.isSafeInteger(elapsed)) catchupRemaining += elapsed;
-    else if (elapsed < 0) recovering = 'The browser clock moved backward since the last save. The mine resumed without adding offline time.';
+    if (!paused && elapsed > 0 && Number.isSafeInteger(elapsed)) pendingCatchupSeconds += elapsed;
     return loaded;
   } catch {
-    recovering = 'This local save could not be read. A fresh sandbox was opened; the prototype save was left alone.';
+    lastError = 'The local test save could not be read. A fresh mine was opened; the prototype save remains untouched.';
+    profile = { guild: 'New Guild', species: 'Mosskin' };
+    pendingCatchupSeconds = 0;
+    paused = false;
     return createGameState();
   }
 }
-
 function save() {
   try {
     savedAtMs = Date.now();
-    localStorage.setItem(SAVE_KEY, JSON.stringify({ version: 1, savedAtMs, pendingCatchupSeconds: catchupRemaining, catchupKind, paused, state }));
+    localStorage.setItem(SAVE_KEY, JSON.stringify({ version: 1, savedAtMs, pendingCatchupSeconds, catchupKind, paused, state, profile }));
   } catch {
-    recovering = 'Browser storage is unavailable. This session is playable, but its latest changes may not survive a reload.';
+    lastError = 'Browser storage is unavailable. This session can continue, but changes may not survive reload.';
   }
 }
-
 function toast(message, tone = '') {
   const element = $('#toast');
   element.textContent = message;
-  element.className = `toast show ${tone}`;
+  element.hidden = false;
+  element.className = `toast ${tone}`;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { element.className = 'toast'; }, 2600);
+  toastTimer = setTimeout(() => { element.hidden = true; }, 2600);
 }
-
 function messageFor(error) {
   const messages = {
-    INSUFFICIENT_FUNDS: 'Not enough coin for that purchase.',
-    NO_WORKER_CAPACITY: 'Open habitat or shaft bunks before hiring more miners.',
-    AT_CAP: 'This line is already at its cap.',
-    SHIP_BUSY: 'The hauler is still returning to the pad.',
-    NOT_ENOUGH_STOCK: 'The yard needs at least 1 unit for a launch.',
-    BUYER_FULL: 'That buyer has no free receiving capacity.',
-    BUYER_OUT_OF_FUNDS: 'That buyer has spent its finite fixture budget.',
-    INVALID_PAYMENT: 'The local transaction could not be balanced.',
+    INSUFFICIENT_FUNDS: 'Not enough coin for that purchase.', NO_WORKER_CAPACITY: 'Open habitat or shaft bunks before hiring more miners.',
+    AT_CAP: 'That improvement is at its cap.', SHIP_BUSY: 'That hauler is still returning to the pad.',
+    NOT_ENOUGH_STOCK: 'The yard needs ore before loading can begin.', BUYER_FULL: 'That buyer has no free receiving capacity.',
+    BUYER_OUT_OF_FUNDS: 'That buyer has spent its finite fixture budget.', INVALID_PAYMENT: 'The local transaction could not be balanced.',
+    SHIP_PARKED: 'Open another launch pad before sending this hauler.',
   };
   return messages[error?.code] || error?.message || 'The action could not be completed.';
 }
-
-function apply(action, success) {
+function apply(action, success = '') {
+  if (catchingUp) return toast('Let the current time update finish before changing the colony.', 'error');
   try {
     state = validateGameState(action(state));
-    save();
-    render();
+    save(); render();
     if (success) toast(success, 'success');
-  } catch (error) {
-    toast(messageFor(error), 'error');
+  } catch (error) { toast(messageFor(error), 'error'); }
+}
+function amountBar() {
+  return `<div class="amt bulk-row" aria-label="Purchase amount">${[['1', '1'], ['10', '10'], ['100', '100'], ['max', 'Max']].map(([v, label]) => `<button type="button" data-act="amount:${v}" aria-pressed="${selectedAmount === v}">${label}</button>`).join('')}</div>`;
+}
+function costForCount(type, shaft = 1, count = selectedAmount) {
+  if (count === 'max') return 'Max affordable';
+  let total = 0;
+  let cursor = { ...state, upgrades: { ...state.upgrades }, production: { ...state.production, lift: { ...state.production.lift }, surface: { ...state.production.surface }, shafts: state.production.shafts.map((item) => ({ ...item })) } };
+  for (let i = 0; i < Number(count); i += 1) {
+    const cost = upgradeCost(cursor, type, shaft);
+    if (cost === null) return i ? `${fmt(total)} ◉ · capped` : 'CAPPED';
+    total += cost;
+    if (type === 'dig') cursor.production.shafts[shaft - 1].digLevel += 1;
+    else if (type === 'cart') cursor.production.shafts[shaft - 1].cartLevel += 1;
+    else if (type === 'bunkhouse') cursor.production.shafts[shaft - 1].bunkhouseLevel += 1;
+    else if (type === 'lift') cursor.production.lift.level += 1;
+    else cursor.upgrades[type] += 1;
   }
+  return `${fmt(total)} ◉`;
 }
-
-function costButton(type, shaftNumber = 1) {
-  const cost = upgradeCost(state, type, shaftNumber);
-  return cost === null ? `<span class="capped-label">CAPPED</span>` : `<span class="upgrade-cost">${fmt(cost)} <i>◉</i></span>`;
+function upgradeRow(type, title, detail, shaft = 1, icon = '↑') {
+  const cost = upgradeCost(state, type, shaft);
+  const count = selectedAmount;
+  const price = costForCount(type, shaft, count);
+  const level = type === 'dig' ? state.production.shafts[shaft - 1].digLevel
+    : type === 'cart' ? state.production.shafts[shaft - 1].cartLevel
+      : type === 'bunkhouse' ? state.production.shafts[shaft - 1].bunkhouseLevel
+        : type === 'lift' ? state.production.lift.level : state.upgrades[type];
+  return `<div class="row"><div><div class="t">${icon} ${safe(title)} <span class="own">LV ${level}</span></div><div class="d">${safe(detail)} · Next ${cost === null ? 'at cap' : `${fmt(cost)} ◉`}</div></div><button class="buy" type="button" data-act="buy:${type}" data-shaft="${shaft}" data-count="${count}" ${!cost || catchingUp ? 'disabled' : ''}>${price}</button></div>`;
 }
-
+function renderTabs() {
+  $('#tabs').innerHTML = TABS.map(([id, label]) => `<button class="tab" role="tab" type="button" aria-selected="${selectedTab === id}" data-act="tab:${id}">${label}</button>`).join('');
+}
 function renderMetrics() {
-  $('#coin-value').textContent = fmt(state.coins);
-  $('#earned-value').textContent = fmt(state.totalExternalEarnings);
-  $('#surface-value').textContent = fmtUnits(surfaceTotal());
-  $('#surface-capacity').textContent = `yard capacity · ${fmtUnits(state.production.surface.capacityUnits)}`;
-  $('#production-value').textContent = fmtUnits(totalRate());
-  $('#time-value').textContent = formatClock(state.simSeconds);
-  $('#crew-value').textContent = `${state.workersHired} miners · ${state.production.shafts.length} shaft${state.production.shafts.length === 1 ? '' : 's'}`;
-  $('#shaft-count').textContent = `${String(state.production.shafts.length).padStart(2, '0')} / 30`;
-  $('#lift-label').textContent = `LV ${state.production.lift.level}`;
-  $('#depth-label').textContent = String(Math.max(...state.production.shafts.map((shaft) => shaft.digLevel))).padStart(2, '0');
-  $('#lift-rate').innerHTML = `${fmtUnits(liftRate())} <small>units/min</small>`;
-  const yardRatio = state.production.surface.capacityUnits ? surfaceTotal() / state.production.surface.capacityUnits : 0;
-  const maxBuffer = Math.max(0, ...state.production.shafts.map((shaft) => shaft.bufferCapacityUnits ? shaft.bufferUnits / shaft.bufferCapacityUnits : 0));
-  $('#storage-alert').classList.toggle('hidden', yardRatio < 0.9);
-  $('#buffer-alert').classList.toggle('hidden', maxBuffer < 0.9);
-  $('#ship-status').innerHTML = state.ship.readyAtSecond > state.simSeconds
-    ? `<i class="status-dot busy"></i> RETURNING · ${formatClock(state.ship.readyAtSecond - state.simSeconds)}`
-    : state.ship.loading
-      ? `<i class="status-dot busy"></i> LOADING · ${fmtUnits(state.ship.cargoUnits)} UNPAID`
-      : state.ship.cargoUnits >= 1
-        ? `<i class="status-dot busy"></i> ${fmtUnits(state.ship.cargoUnits)} UNPAID ABOARD`
-        : `<i class="status-dot"></i> READY AT PAD`;
-  $('#auto-ship-state').textContent = state.autoLaunch ? 'AUTO-LAUNCH ON' : 'MANUAL LAUNCH';
-  $('#auto-launch').checked = state.autoLaunch;
-  $('#crew-capacity').textContent = `${state.workersHired} / ${10 + 5 * state.upgrades.habitat}`;
-  $('#crew-bar-fill').style.width = `${fillFraction(state.workersHired, 10 + 5 * state.upgrades.habitat)}%`;
-  $('#record-count').textContent = `${state.ledger.length} ENTRIES`;
-  const selectedBuyer = state.buyers.find((buyer) => buyer.id === state.selectedDestinationId);
-  const canLoad = state.ship.cargoUnits >= 1 || state.production.surface.unitsByOre.some((row) => row.units > 0);
-  const buyerCanReceive = selectedBuyer && selectedBuyer.capacityUnits - selectedBuyer.inventoryUnits - selectedBuyer.reservedUnits >= 1 && selectedBuyer.funds >= 1;
-  $('#launch-button').disabled = state.ship.readyAtSecond > state.simSeconds || !canLoad || !buyerCanReceive || catchingUp;
-  $('#launch-button').innerHTML = state.ship.readyAtSecond > state.simSeconds
-    ? `Hauler returning · ${formatClock(state.ship.readyAtSecond - state.simSeconds)} <span>⌛</span>`
-    : state.ship.cargoUnits >= 1
-      ? `Launch loaded cargo · ${fmtUnits(state.ship.cargoUnits)} u <span>↗</span>`
-      : state.ship.loading
-        ? `Loading cargo… <span>⌛</span>`
-        : state.autoLaunch
-          ? `Auto-load begins at 1 unit <span>↗</span>`
-          : `Load cargo to launch <span>↗</span>`;
+  const ships = fleetShips(state);
+  $('#hCoin').textContent = fmt(state.coins);
+  $('#hRate').textContent = `${fmtUnits(coinRatePerMinute(state))} / min`;
+  $('#hShips').textContent = `${Math.min(ships.length, state.padCount)} / ${ships.length} active`;
+  $('#hGuild').textContent = (profile.guild || 'New Guild').slice(0, 10).toUpperCase();
+  $('#hOre').textContent = `${fmtUnits(surfaceTotal())} u`;
+  $('#hTimer').textContent = clock(state.simSeconds);
+  $('#stageTag').innerHTML = `Local colony · <b>${safe(profile.guild || 'New Guild')}</b> · single-player test`;
+  $('#mapBtnLbl').textContent = mapView ? 'MINE' : 'MAP';
   $('#run-state').textContent = catchingUp ? 'CATCHING UP' : paused ? 'MINE PAUSED' : 'MINE RUNNING';
-  $('#pause-button').innerHTML = paused ? '▶ <span>Resume</span>' : 'Ⅱ <span>Pause</span>';
-  $('#pause-button').setAttribute('aria-pressed', String(paused));
-  $('#recovery-banner').textContent = recovering;
-  $('#recovery-banner').classList.toggle('hidden', !recovering);
-  $('#catchup-banner').classList.toggle('hidden', !catchingUp);
-  $('#catchup-remaining').textContent = fmt(catchupRemaining);
-  document.querySelectorAll('button').forEach((button) => { if (button.id !== 'pause-button') button.disabled = catchingUp; });
-  $('#auto-launch').disabled = catchingUp;
-  $('#reset-confirm').classList.toggle('hidden', !resetPromptOpen);
-  $('#reset-button').classList.toggle('hidden', resetPromptOpen);
+  $('#run-state').setAttribute('data-state', paused ? 'paused' : catchingUp ? 'catchup' : 'running');
+  const catchup = $('#catchup-status');
+  if (catchup) catchup.textContent = `${fmt(pendingCatchupSeconds)} seconds remaining`;
+  $('#ticker').innerHTML = `<div>${safe(state.notice || 'The colony is ready for its next order.')} <span class="catchup-note">${catchingUp ? `Updating ${fmt(pendingCatchupSeconds)} sec…` : ''}</span></div><div>Ore is paid when a hauler departs · ${fmtUnits(totalRate())} units/min current production · buyer funds are finite.</div>`;
+  if (scene) scene.setState(state, sceneProfile());
 }
-
-function renderOffers() {
-  $('#offer-list').innerHTML = DESTINATIONS.map((destination) => {
-    const buyer = state.buyers.find((item) => item.id === destination.id);
-    const selected = destination.id === state.selectedDestinationId;
-    const price = Math.floor(destination.basePrice * oreById('ferrite').value + 0.5);
-    const capacityFree = buyer.capacityUnits - buyer.inventoryUnits - buyer.reservedUnits;
-    return `<button class="offer-card ${selected ? 'selected' : ''}" type="button" data-destination="${destination.id}" aria-pressed="${selected}">
-      <span class="offer-radio"></span><span class="offer-main"><strong>${safeText(destination.name)}</strong><small>${safeText(destination.detail)} · ${destination.distance} AU</small></span>
-      <span class="offer-price"><b>${fmt(price)}</b><small>coin / ferrite</small></span>
-      <span class="offer-reserve"><i>◉ ${fmt(buyer.funds)}</i><small>${fmtUnits(Math.max(0, capacityFree))} units free</small></span>
-    </button>`;
-  }).join('');
+function renderCrew() {
+  const capacity = 10 + 5 * state.upgrades.habitat;
+  const assigned = state.production.shafts.reduce((sum, shaft) => sum + shaft.workersAssigned, 0);
+  return `<h2>Colony crew</h2><p class="lede">Miners are assigned automatically to the shaft with the strongest visible expected sale value.</p>${amountBar()}
+    <div class="row"><div><div class="t">Miners <span class="own">${state.workersHired}</span></div><div class="d">${assigned} assigned · crew capacity ${capacity}</div></div><button class="buy" type="button" data-act="hire" data-count="${selectedAmount}">Hire ${selectedAmount === 'max' ? 'max' : `×${selectedAmount}`} · ${selectedAmount === 'max' ? 'Max affordable' : `${fmt(Number(selectedAmount) * 20)} ◉`}</button></div>
+    ${upgradeRow('habitat', 'Habitat', 'Adds 5 crew spaces', 1, '⌂')}
+    <h3>Shaft bunks</h3><div class="rows">${state.production.shafts.map((shaft) => `<div class="row"><div><div class="t">Shaft ${String(shaft.shaftNumber).padStart(2, '0')} · ${oreFor(shaft.oreId).name}</div><div class="d">${shaft.workersAssigned} assigned · ${10 + 5 * shaft.bunkhouseLevel} bunks</div></div><button class="buy" type="button" data-act="buy:bunkhouse" data-shaft="${shaft.shaftNumber}" data-count="${selectedAmount}">${costForCount('bunkhouse', shaft.shaftNumber)} · bunkhouse</button></div>`).join('')}</div>`;
 }
-
-function renderUpgrades() {
-  const first = state.production.shafts[0];
-  const rows = [
-    ['dig', 'Dig rate', `Shaft 01 · LV ${first.digLevel}`, '╱'],
-    ['lift', 'Lift throughput', `LV ${state.production.lift.level} · grows 1.0316×`, '⇧'],
-    ['yard', 'Surface yard', `${fmtUnits(state.production.surface.capacityUnits)} unit capacity`, '▤'],
-    ['shipSpeed', 'Hauler speed', `${state.ship.speedPerMinute.toFixed(2)} AU/min`, '↗'],
-  ];
-  $('#upgrade-list').innerHTML = rows.map(([type, title, detail, icon]) => `
-    <div class="upgrade-row"><span class="upgrade-icon">${icon}</span><span class="upgrade-main"><strong>${title}</strong><small>${detail}</small></span><button class="buy-button" data-buy="${type}" data-shaft="1" type="button"><span>BUY 1</span>${costButton(type, 1)}</button></div>
-    <div class="bulk-row">${['1', '10', 'max'].map((count) => `<button data-buy="${type}" data-count="${count}" data-shaft="1" type="button">${count === 'max' ? 'MAX' : `×${count}`}</button>`).join('')}</div>`).join('');
-  $('#shaft-cost').textContent = state.production.shafts.length >= 30 ? 'CAPPED' : `${fmt(Math.floor(120 * 2.4 ** state.production.shafts.length + 0.5))} ◉`;
-  const hireCost = state.workersHired >= 10 + 5 * state.upgrades.habitat || state.coins < 20 ? 'NEEDS CAPACITY' : '20 ◉';
-  $('#hire-button').textContent = `Hire + miner · ${hireCost}`;
-  $('#more-upgrades').innerHTML = moreOperationsOpen ? 'Hide operations <span>↑</span>' : 'More operations <span>↓</span>';
-  const operations = $('#operations-more');
-  operations.classList.toggle('hidden', !moreOperationsOpen);
-  if (moreOperationsOpen) renderOperations();
-}
-
-function renderOperations() {
-  const controls = [
-    ['habitat', 'Habitat', `Crew cap ${10 + 5 * state.upgrades.habitat}`, 0],
-    ['shipCapacity', 'Cargo capacity', `${fmtUnits(state.ship.capacityUnits)} units`, 0],
-    ['loading', 'Pad loading', `${fmtUnits(state.ship.loadingUnitsPerMinute)} units/min`, 0],
-  ];
-  $('#operations-list').innerHTML = controls.map(([type, name, detail]) => `<div class="upgrade-row"><span class="upgrade-icon">⌁</span><span class="upgrade-main"><strong>${name}</strong><small>${detail}</small></span><button class="buy-button" data-buy="${type}" type="button"><span>BUY 1</span>${costButton(type)}</button></div>`).join('') + `
-    <div class="operation-note"><strong>Fixture curves</strong><span>Costs and capacity bases are local playtest values; they are not production defaults.</span></div>`;
-}
-
-function renderShafts() {
+function renderMine() {
   const rates = currentRates(state);
-  $('#shaft-list').innerHTML = state.production.shafts.map((shaft) => {
-    const rate = rates.find((row) => row.shaftNumber === shaft.shaftNumber);
-    const percent = fillFraction(shaft.bufferUnits, shaft.bufferCapacityUnits);
-    const blocked = percent >= 90;
-    return `<article class="shaft-card">
-      <div class="shaft-card-top"><span class="shaft-index">${String(shaft.shaftNumber).padStart(2, '0')}</span><span class="ore-swatch" style="--ore:${rate.ore.color}"></span><strong>${rate.ore.name}</strong><span class="shaft-rate">${fmtUnits(rate.ratePerMinute)} <small>/ min</small></span></div>
-      <div class="shaft-meta"><span>${shaft.workersAssigned} / ${10 + shaft.bunkhouseLevel * 5} crew</span><span>${shaft.digLevel} dig · ${shaft.cartLevel} carts</span></div>
-      <div class="shaft-buffer"><span>BUFFER</span><div><i style="width:${percent}%"></i></div><b>${blocked ? '! ' : ''}${fmtUnits(shaft.bufferUnits)} / ${fmtUnits(shaft.bufferCapacityUnits)}</b></div>
-      <div class="shaft-actions"><button data-buy="dig" data-shaft="${shaft.shaftNumber}" type="button">Dig +1 · ${costButton('dig', shaft.shaftNumber)}</button><button data-buy="bunkhouse" data-shaft="${shaft.shaftNumber}" type="button">Bunks +1 · ${costButton('bunkhouse', shaft.shaftNumber)}</button><button data-buy="cart" data-shaft="${shaft.shaftNumber}" type="button">Cart +1 · ${costButton('cart', shaft.shaftNumber)}</button></div>
-    </article>`;
+  const maxShaft = Math.max(1, ...state.production.shafts.map((shaft) => shaft.shaftNumber));
+  return `<h2>Mine</h2><p class="lede">Tune dig speed and ore carts. Lift throughput can become the bottleneck as the mine deepens.</p>${amountBar()}<div class="rows">${state.production.shafts.map((shaft) => {
+    const rate = rates.find((item) => item.shaftNumber === shaft.shaftNumber);
+    const selected = selectedShaft === shaft.shaftNumber;
+    return `<div class="shaft" data-shaft-row="${shaft.shaftNumber}"><div class="shead"><b>SHAFT ${String(shaft.shaftNumber).padStart(2, '0')}</b><span class="chip"><i style="background:${oreFor(shaft.oreId).color}"></i>${oreFor(shaft.oreId).name}</span>${selected ? '<span class="pill ok">INSPECTED</span>' : ''}</div><div class="d">${shaft.workersAssigned} miners · dig LV ${shaft.digLevel} · cart LV ${shaft.cartLevel} · ${fmtUnits(rate.ratePerMinute)} u/min · buffer ${Math.round(rate.bufferPercent * 100)}%</div><div class="ups"><div class="up"><small>DIG RATE</small><b>LV ${shaft.digLevel}</b><div class="d">More ore from this line</div><button class="buy" type="button" data-act="buy:dig" data-shaft="${shaft.shaftNumber}" data-count="${selectedAmount}">${costForCount('dig', shaft.shaftNumber)}</button></div><div class="up"><small>ORE CART</small><b>LV ${shaft.cartLevel}</b><div class="d">Improves line handling</div><button class="buy" type="button" data-act="buy:cart" data-shaft="${shaft.shaftNumber}" data-count="${selectedAmount}">${costForCount('cart', shaft.shaftNumber)}</button></div><div class="up"><small>WORKERS</small><b>${shaft.workersAssigned}</b><div class="d">Bunks managed in Crew</div><button class="buy ghost" type="button" data-act="inspect:shaft" data-shaft="${shaft.shaftNumber}">Inspect</button></div></div></div>`;
+  }).join('')}</div><h3>Mine works</h3><div class="rows">${upgradeRow('lift', 'Lift throughput', `Current ${fmtUnits(currentLiftRate(state))} units/min`, 1, '⇧')}${maxShaft < 30 ? `<div class="row"><div><div class="t">Open shaft ${String(maxShaft + 1).padStart(2, '0')}</div><div class="d">Unlock another ore line · up to 30 shafts</div></div><button class="buy" type="button" data-act="shaft:buy" data-count="${selectedAmount}">${selectedAmount === 'max' ? 'Max' : `${selectedAmount} shaft · ${fmt(Math.floor(120 * 2.4 ** maxShaft))} ◉`}</button></div>` : '<p class="note">All 30 shaft lines are open.</p>'}</div>`;
+}
+function renderBuild() {
+  const ships = fleetShips(state);
+  const shipCost = nextShipCost(state);
+  const padCost = nextPadCost(state);
+  return `<h2>Build</h2><p class="lede">Expand yard capacity and the lift, then add haulers and launch pads. Extra ships wait until a pad opens.</p>${amountBar()}
+    <div class="rows">${upgradeRow('yard', 'Ore yard', `${fmtUnits(state.production.surface.capacityUnits)} unit surface capacity`, 1, '▤')}${upgradeRow('shipCapacity', 'Hauler capacity', `${fmtUnits(ships[0].capacityUnits)} units per ship`, 1, '□')}${upgradeRow('shipSpeed', 'Hauler speed', `${ships[0].speedPerMinute.toFixed(2)} AU/min fleet-wide`, 1, '↗')}${upgradeRow('loading', 'Loading rate', `${fmtUnits(ships[0].loadingUnitsPerMinute)} units/min fleet-wide`, 1, '⇧')}</div>
+    <h3>Fleet and pads</h3><div class="rows"><div class="row"><div><div class="t">Buy hauler <span class="own">${ships.length} / 12</span></div><div class="d">${Math.min(ships.length, state.padCount)} active · ${Math.max(0, ships.length - state.padCount)} parked · extra craft need a pad</div></div><button class="buy" id="buy-ship" type="button" data-act="ship:buy" ${shipCost === null ? 'disabled' : ''}>${shipCost === null ? 'FLEET CAP' : `${fmt(shipCost)} ◉`}</button></div>
+    <div class="row"><div><div class="t">Open launch pad <span class="own">${state.padCount} / 12</span></div><div class="d">One active hauler per pad</div></div><button class="buy" id="buy-pad" type="button" data-act="pad:buy" ${padCost === null ? 'disabled' : ''}>${padCost === null ? 'PAD CAP' : `${fmt(padCost)} ◉`}</button></div></div>`;
+}
+function renderMarket() {
+  const ships = fleetShips(state);
+  const activeShips = Math.min(state.padCount, ships.length);
+  const offers = DESTINATIONS.map((destination) => {
+    const buyer = state.buyers.find((item) => item.id === destination.id);
+    const selected = state.selectedDestinationId === destination.id;
+    return `<button type="button" class="row" data-act="destination:${destination.id}" aria-pressed="${selected}"><span><span class="t">${safe(destination.name)} ${selected ? '<span class="pill ok">SELECTED</span>' : ''}</span><span class="d">${safe(destination.detail)} · ${destination.distance} AU · ${fmt(buyer.funds)} ◉ funds · ${fmtUnits(Math.max(0, buyer.capacityUnits - buyer.inventoryUnits - buyer.reservedUnits))} u free</span></span><span class="e">${fmt(destination.basePrice)} ◉ / ferrite</span></button>`;
   }).join('');
+  return `<h2>Market</h2><p class="lede">Buyers have finite funds and receiving space. The sale is recorded when the loaded ship departs.</p><label class="toggle"><input type="checkbox" data-act="auto" ${state.autoLaunch ? 'checked' : ''}><span>Auto-load and launch first partial cargo</span></label><h3>Buyer board</h3><div class="rows">${offers}</div><h3>Haulers · ${activeShips} active of ${ships.length}</h3>${ships.map((ship, index) => {
+    const busy = ship.readyAtSecond > state.simSeconds;
+    const parked = index >= state.padCount;
+    const actionLabel = parked ? 'Needs a pad' : busy ? `Returning · ${clock(ship.readyAtSecond - state.simSeconds)}` : ship.cargoUnits > 0 ? `Launch ${fmtUnits(ship.cargoUnits)} u` : ship.loading ? 'Loading cargo…' : 'Load cargo';
+    return `<div class="shipcard"><h4>HAULER ${String(index + 1).padStart(2, '0')} · PAD ${parked ? 'NONE' : String(index + 1).padStart(2, '0')}</h4><div class="d">${shipStatus(ship, index)} · ${fmtUnits(ship.capacityUnits)} u capacity · ${ship.speedPerMinute.toFixed(2)} AU/min · ${fmtUnits(ship.loadingUnitsPerMinute)} u/min loading</div><div class="btnrow"><button type="button" class="buy sm ${ship.cargoUnits > 0 ? 'ok' : ''}" data-act="ship:dispatch" data-ship="${index}" ${busy || parked ? 'disabled' : ''}>${actionLabel}</button></div></div>`;
+  }).join('')}`;
 }
-
 function renderRecords() {
-  document.querySelectorAll('[data-record-tab]').forEach((button) => button.classList.toggle('active', button.dataset.recordTab === selectedRecordTab));
-  if (selectedRecordTab === 'ledger') {
-    const entries = state.ledger.slice().reverse().slice(0, 10);
-    $('#record-list').innerHTML = entries.length ? entries.map((entry) => `<div class="record-row"><span class="record-mark ${entry.ownerDelta > 0 ? 'in' : 'out'}">${entry.ownerDelta > 0 ? '+' : '−'}</span><span class="record-text"><strong>${safeText(entry.description)}</strong><small>${formatClock(entry.atSecond)} · ${safeText(entry.type.replaceAll('_', ' '))}</small></span><b class="record-amount ${entry.ownerDelta > 0 ? 'positive' : ''}">${entry.ownerDelta > 0 ? '+' : '−'}${fmt(entry.amount)} ◉</b></div>`).join('') : '<p class="empty-state">No records yet.</p>';
-  } else if (selectedRecordTab === 'shipments') {
-    const shipments = state.shipments.slice().reverse().slice(0, 8);
-    $('#record-list').innerHTML = shipments.length ? shipments.map((shipment) => `<div class="record-row"><span class="cargo-mark">▰</span><span class="record-text"><strong>${fmtUnits(shipment.units)} ${safeText(oreById(shipment.oreId).name)} → ${safeText(destinationById(shipment.destinationId).name)}</strong><small>${state.shipmentStatusById[shipment.id] === 'DELIVERED' ? 'Delivered' : `ETA ${formatClock(Math.max(0, shipment.arrivalAtSecond - state.simSeconds))}`} · paid at departure</small></span><b class="record-amount positive">${fmt(shipment.payment)} ◉</b></div>`).join('') : '<p class="empty-state">The launch pad is waiting for its first cargo.</p>';
-  } else {
-    const entries = state.log.slice().reverse().slice(0, 10);
-    $('#record-list').innerHTML = entries.length ? entries.map((entry) => `<div class="record-row"><span class="event-mark">${entry.type === 'sale' ? '↗' : entry.type === 'arrival' ? '↓' : '·'}</span><span class="record-text"><strong>${safeText(entry.message)}</strong><small>${formatClock(entry.atSecond)}</small></span></div>`).join('') : '<p class="empty-state">No events yet.</p>';
+  if (recordsView === 'ledger') {
+    const rows = state.ledger.slice().reverse().slice(0, 60);
+    return `<h2>Records</h2><p class="lede">The local paper trail for colony income and purchases.</p><div class="chips">${[['ledger','Ledger'],['shipments','Shipments'],['events','Events']].map(([value,label])=>`<button class="chip" type="button" data-act="records:${value}" aria-pressed="${recordsView===value}">${label}</button>`).join('')}</div><h3>Ledger · ${state.ledger.length} entries</h3><div class="feed">${rows.length ? rows.map((row) => `<div><time>${clock(row.atSecond)}</time><b>${safe(row.description)}</b><span class="e">${row.ownerDelta >= 0 ? '+' : '−'}${fmt(row.amount)} ◉</span></div>`).join('') : '<p class="lede">No entries yet.</p>'}</div>`;
   }
+  if (recordsView === 'shipments') {
+    const rows = shipmentRows(state).slice(0, 60);
+    return `<h2>Records</h2><div class="chips">${[['ledger','Ledger'],['shipments','Shipments'],['events','Events']].map(([value,label])=>`<button class="chip" type="button" data-act="records:${value}" aria-pressed="${recordsView===value}">${label}</button>`).join('')}</div><h3>Shipments · ${state.shipments.length}</h3><div class="feed">${rows.length ? rows.map((row) => `<div><time>${clock(row.departureAtSecond)}</time><b>${fmtUnits(row.units)} ${safe(oreFor(row.oreId).name)} → ${safe(destinationFor(row.destinationId).name)}</b><span class="e">+${fmt(row.payment)} ◉ · ${safe(row.status)}</span></div>`).join('') : '<p class="lede">No haulers have departed yet.</p>'}</div>`;
+  }
+  const logs = state.log.slice().reverse().slice(0, 60);
+  return `<h2>Records</h2><div class="chips">${[['ledger','Ledger'],['shipments','Shipments'],['events','Events']].map(([value,label])=>`<button class="chip" type="button" data-act="records:${value}" aria-pressed="${recordsView===value}">${label}</button>`).join('')}</div><h3>Colony events</h3><div class="feed">${logs.length ? logs.map((row) => `<div><time>${clock(row.atSecond)}</time>${safe(row.message)}</div>`).join('') : '<p class="lede">Nothing recorded yet.</p>'}</div>`;
 }
-
+function renderPlanet() {
+  const destination = destinationFor(state.selectedDestinationId);
+  return `<h2>Planet</h2><p class="lede">Use the colony map to pan across the surface and inspect landing sites. Mining, offers, and cargo departure remain visible in the desk tabs.</p><div class="btnrow"><button class="buy" type="button" data-act="view:map">${mapView ? 'Planet map shown' : 'Open planet map'}</button><button class="buy ghost" type="button" data-act="view:side">Return to mine cutaway</button></div>${inspectSite ? `<div class="mapcard-inline"><h3>Inspected land</h3><p>Region ${safe(inspectSite.regionId ?? 'surface')} · map position ${Math.round(inspectSite.x || 0)}, ${Math.round(inspectSite.y || 0)}</p><p class="lede">This local map inspection does not reserve or claim land.</p></div>` : ''}<h3>Current sale route</h3><div class="row"><div><div class="t">${safe(destination.name)}</div><div class="d">${safe(destination.detail)} · ${destination.distance} AU · payment at departure</div></div><button class="buy ghost" type="button" data-act="tab:market">Market</button></div><h3>Colony map controls</h3><p class="lede">Drag to pan · scroll or pinch to zoom · use the map thumbnail to switch views.</p>`;
+}
+function renderTab() {
+  const body = $('#tabbody');
+  const renderers = { crew: renderCrew, mine: renderMine, build: renderBuild, market: renderMarket, records: renderRecords, planet: renderPlanet };
+  if (!renderers[selectedTab]) selectedTab = 'crew';
+  body.innerHTML = renderers[selectedTab]();
+  $$('.tab', $('#tabs')).forEach((tab) => tab.setAttribute('aria-selected', String(tab.dataset.act === `tab:${selectedTab}`)));
+}
 function render() {
+  renderTabs();
   renderMetrics();
-  renderOffers();
-  renderUpgrades();
-  renderShafts();
-  renderRecords();
-  drawScene();
+  const focusedInput = $('#tabbody').contains(document.activeElement) && document.activeElement.matches('input,select,textarea');
+  if (!focusedInput) renderTab();
 }
-
-function rect(x, y, width, height, color) { ctx.fillStyle = color; ctx.fillRect(Math.round(x), Math.round(y), Math.round(width), Math.round(height)); }
-function line(x1, y1, x2, y2, color, width = 1) { ctx.strokeStyle = color; ctx.lineWidth = width; ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); }
-function pixelText(text, x, y, color = '#d7cdb7', size = 9) { ctx.fillStyle = color; ctx.font = `bold ${size}px ui-monospace, monospace`; ctx.fillText(text, x, y); }
-
-function drawScene() {
-  if (!ctx || !state) return;
-  const dpr = window.devicePixelRatio || 1;
-  const width = Math.max(300, canvas.clientWidth);
-  const height = Math.max(220, canvas.clientHeight || 370);
-  if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
-    canvas.width = Math.round(width * dpr);
-    canvas.height = Math.round(height * dpr);
+function renderOverlay() {
+  const overlay = $('#ov');
+  const body = $('#ovBody');
+  if (!overlay.dataset.kind) { overlay.hidden = true; return; }
+  overlay.hidden = false;
+  if (overlay.dataset.kind === 'settings') {
+    body.className = 'sheet';
+    body.innerHTML = `<button class="buy ghost close" type="button" data-act="close">Close</button><h1>Settings</h1><p class="lede">Local save controls and simulation time.</p><div class="chips"><span class="chip"><i style="background:var(--ok)"></i>${paused ? 'Paused' : catchingUp ? 'Catching up' : 'Running'}</span><span class="chip">Saved in this browser</span></div>${lastError ? `<p class="note">${safe(lastError)}</p>` : ''}${catchingUp ? `<p class="note" id="catchup-status">${fmt(pendingCatchupSeconds)} seconds remaining</p>` : ''}<div class="btnrow"><button class="buy ${paused ? 'ok' : ''}" type="button" data-act="pause">${paused ? 'Resume mine' : 'Pause mine'}</button><button class="buy ghost" type="button" data-forward="60">Fast-forward 1 min</button><button class="buy ghost" type="button" data-forward="600">10 min</button><button class="buy ghost" type="button" data-forward="3600">1 hour</button></div><h3>Local test grant</h3><label class="f">Coin amount<input type="text" id="grant-amount" value="10000" inputmode="numeric"></label><button class="buy" type="button" data-act="grant">Add test coins to ledger</button><h3>Reset local save</h3>${resetConfirm ? `<p class="note">This replaces this browser's local playtest save.</p><div class="btnrow"><button class="buy danger" type="button" data-act="reset:confirm">Reset mine</button><button class="buy ghost" type="button" data-act="reset:cancel">Keep playing</button></div>` : `<button class="buy danger" type="button" data-act="reset:prompt">Reset local save…</button>`}<p class="lede">The original prototype is preserved at <a href="../prototype/">Legacy prototype ↗</a>. This playtest runs locally; multiplayer is not connected.</p>`;
+  } else {
+    body.className = 'sheet';
+    body.innerHTML = `<button class="buy ghost close" type="button" data-act="close">Close</button><h1>Guild profile</h1><p class="lede">Change the colony name and portrait. These choices are cosmetic and saved with this local playtest.</p><label class="f">Guild name<input type="text" id="guild-name" maxlength="32" value="${safe(profile.guild)}"></label><h3>Portrait</h3><div class="profile-portraits">${SPECIES.map((species, index) => `<button type="button" data-act="species:${species}" aria-pressed="${profile.species === species}"><b>${['♧','♨','≈','✧','◆','☼'][index]}</b><small>${species}</small></button>`).join('')}</div><p class="lede">The colony is already landed. You can start playing immediately.</p><div class="btnrow"><button class="buy" type="button" data-act="close">Return to colony</button></div>`;
   }
-  ctx.setTransform(dpr * width / 960, 0, 0, dpr * height / 440, 0, 0);
-  ctx.imageSmoothingEnabled = false;
-  rect(0, 0, 960, 440, '#111a19');
-  const sky = ctx.createLinearGradient(0, 0, 0, 218);
-  sky.addColorStop(0, '#192725'); sky.addColorStop(1, '#29312b');
-  ctx.fillStyle = sky; ctx.fillRect(0, 0, 960, 218);
-  for (let index = 0; index < 34; index += 1) {
-    const x = (index * 173 + 37) % 940;
-    const y = 18 + (index * 47 % 120);
-    rect(x, y, index % 5 === 0 ? 3 : 2, index % 5 === 0 ? 3 : 2, index % 3 === 0 ? '#a8a17b' : '#64766b');
-  }
-  rect(760, 26, 76, 76, '#d38d50'); rect(770, 36, 56, 56, '#e6a461'); rect(785, 50, 26, 26, '#f0bd72');
-  rect(0, 155, 150, 50, '#344039'); rect(0, 177, 200, 35, '#3b453e');
-  rect(120, 143, 70, 45, '#3a453e'); rect(150, 125, 46, 62, '#465048');
-  rect(505, 154, 165, 51, '#39443d'); rect(580, 135, 132, 69, '#465048'); rect(710, 167, 250, 45, '#354039');
-  rect(0, 206, 960, 15, '#c07748'); rect(0, 219, 960, 10, '#8f5639');
-  const strata = ['#42332a', '#342d27', '#2c3029', '#272a24', '#222722'];
-  strata.forEach((color, band) => {
-    rect(0, 229 + band * 42, 960, 42, color);
-    for (let x = (band * 19) % 60; x < 960; x += 72) rect(x, 238 + band * 42, 20 + (x % 11), 4, band % 2 ? '#554335' : '#394036');
-  });
-  // Lift tower and cage.
-  rect(118, 139, 8, 69, '#cf8750'); rect(125, 139, 40, 6, '#cf8750'); rect(158, 139, 6, 69, '#b16c45');
-  rect(130, 147, 5, 57, '#ddaa68'); rect(148, 147, 5, 57, '#ddaa68');
-  line(139, 147, 139, 338, '#8d8b70', 2);
-  const liftPhase = state.simSeconds % 18;
-  const cageY = 225 + (liftPhase < 9 ? liftPhase : 18 - liftPhase) * 11;
-  rect(126, cageY, 28, 16, '#dea05b'); rect(131, cageY + 4, 18, 7, '#503a2b');
-  // Tunnel mouths and descending shaft lines.
-  const shafts = state.production.shafts;
-  const shown = Math.min(shafts.length, 9);
-  shafts.slice(0, shown).forEach((shaft, index) => {
-    const x = 230 + index * 40;
-    rect(x - 9, 202, 20, 15, '#181d19');
-    rect(x - 6, 207, 14, 8, '#c07a47');
-    const depth = 248 + index * 16;
-    rect(x - 3, 220, 7, depth - 220, '#141b18');
-    rect(x + 4, 220, 2, depth - 220, '#766046');
-    rect(x - 8, depth, 18, 6, '#d18a4f');
-    const isActive = shaft.workersAssigned > 0;
-    if (isActive) {
-      const walk = (state.simSeconds * (shaft.shaftNumber % 3 + 1) + shaft.shaftNumber * 17) % 62;
-      const minerX = x - 6 + walk;
-      const minerY = depth - 20;
-      rect(minerX, minerY, 5, 9, '#e59b57'); rect(minerX + 1, minerY - 4, 4, 4, '#d7c5a0');
-      rect(minerX - 2, minerY + 9, 4, 3, '#24221d'); rect(minerX + 3, minerY + 9, 4, 3, '#24221d');
-      if (state.simSeconds % 3 === 0) rect(minerX + 8, minerY + 1, 3, 3, '#e8d56d');
-    }
-    const buffer = shaft.bufferUnits / Math.max(1, shaft.bufferCapacityUnits);
-    if (buffer > 0.05) { rect(x + 13, depth - 3 - buffer * 16, 4, buffer * 16, oreById(shaft.oreId).color); }
-  });
-  if (shafts.length > shown) pixelText(`+${shafts.length - shown} SHAFTS BELOW`, 223, 385, '#b9ad94', 8);
-  // Ore sorting yard, pixel bins.
-  rect(610, 175, 212, 25, '#574434'); rect(618, 157, 200, 40, '#8b6544'); rect(625, 162, 186, 31, '#382f26');
-  const bins = state.production.surface.unitsByOre;
-  const maxBin = Math.max(1, ...bins.map((item) => item.units));
-  for (let index = 0; index < Math.min(5, ORES.length); index += 1) {
-    const item = ORES[index];
-    const stock = bins.find((row) => row.oreId === item.id)?.units ?? 0;
-    const x = 631 + index * 35;
-    rect(x, 169, 25, 22, '#292a24');
-    rect(x + 2, 189 - Math.min(18, stock / maxBin * 18), 21, Math.min(18, stock / maxBin * 18), item.color);
-    rect(x, 191, 25, 3, '#c18d58');
-  }
-  rect(600, 200, 227, 8, '#d18b50');
-  // Loading gantry and single hauler.
-  rect(840, 157, 78, 7, '#c1794b'); rect(850, 164, 6, 45, '#c1794b'); rect(906, 164, 6, 45, '#c1794b');
-  rect(850, 202, 61, 6, '#deaa69');
-  const shipBusy = state.ship.readyAtSecond > state.simSeconds;
-  const shipX = shipBusy ? 838 - ((state.simSeconds * 5) % 500) : 863;
-  const shipY = shipBusy ? 124 + Math.sin(state.simSeconds / 4) * 3 : 180;
-  rect(shipX, shipY, 46, 13, '#6bb9c3'); rect(shipX + 7, shipY - 7, 24, 7, '#95cbd0'); rect(shipX + 14, shipY + 13, 20, 5, '#376f75');
-  rect(shipX + 37, shipY + 4, 12, 4, '#d99a59');
-  if (shipBusy) { line(shipX - 10, shipY + 8, shipX - 3, shipY + 8, '#e4aa68', 2); pixelText('PAID CARGO IN TRANSIT', 707, 114, '#a9d4d3', 8); }
-  pixelText('SHAFT / SURFACE', 27, 247, '#a9997e', 8);
-  pixelText('ORE YARD', 650, 151, '#e5c990', 8);
-  pixelText('LAUNCH PAD 01', 841, 224, '#d1b38b', 8);
-  pixelText(`${fmtUnits(totalRate())} U / MIN`, 28, 271, '#eed6ad', 9);
 }
-
-function catchUpBatch() {
-  if (catchupRemaining <= 0) {
-    catchingUp = false;
-    save();
-    render();
-    toast(catchupKind === 'fast-forward' ? 'Fast-forward complete.' : 'Offline sandbox catch-up complete.', 'success');
-    catchupKind = 'offline';
+function openOverlay(kind) { $('#ov').dataset.kind = kind; renderOverlay(); }
+function closeOverlay() { delete $('#ov').dataset.kind; resetConfirm = false; renderOverlay(); }
+function startCatchup(seconds, kind = 'fast-forward') {
+  if (!Number.isSafeInteger(seconds) || seconds < 1) return;
+  pendingCatchupSeconds += seconds;
+  catchupKind = kind;
+  catchingUp = true;
+  save(); render();
+  scheduleCatchup();
+}
+function scheduleCatchup() {
+  if (catchupTimer !== null || paused || pendingCatchupSeconds <= 0) return;
+  catchupTimer = setTimeout(catchupBatch, 0);
+}
+function catchupBatch() {
+  catchupTimer = null;
+  if (paused || pendingCatchupSeconds <= 0) {
+    catchingUp = pendingCatchupSeconds > 0;
+    save(); render();
+    if (!pendingCatchupSeconds) toast(catchupKind === 'fast-forward' ? 'Fast-forward complete.' : 'Offline sandbox catch-up complete.', 'success');
     return;
   }
   try {
-    const batch = advanceGame(state, catchupRemaining, 300);
+    const batch = advanceGame(state, pendingCatchupSeconds, 300);
     state = batch.state;
-    catchupRemaining = batch.remainingSeconds;
-    save();
-    render();
-    setTimeout(catchUpBatch, 0);
+    pendingCatchupSeconds = batch.remainingSeconds;
+    catchingUp = pendingCatchupSeconds > 0;
+    save(); render();
+    if (catchingUp) scheduleCatchup();
+    else {
+      catchupKind = 'offline';
+      toast('Time update complete.', 'success');
+    }
   } catch {
     catchingUp = false;
-    recovering = `${catchupKind === 'fast-forward' ? 'Fast-forward' : 'Offline catch-up'} stopped on invalid local state. The latest valid checkpoint is still saved.`;
+    lastError = 'Time update stopped because the local save failed validation. The latest valid checkpoint was kept.';
     save(); render();
   }
 }
 
-state = loadSave();
-render();
-if (recovering) toast(recovering, 'error');
-if (catchupRemaining > 0) { catchingUp = true; render(); setTimeout(catchUpBatch, 0); }
-
-let tickAccumulator = 0;
-window.setInterval(() => {
-  if (catchingUp) return;
-  if (paused) { save(); return; }
-  tickAccumulator += 1;
-  try { state = stepGame(state); }
-  catch { paused = true; recovering = 'The local simulation paused after invalid state was detected.'; render(); return; }
-  if (tickAccumulator >= 1) {
-    tickAccumulator = 0;
-    save(); render();
+function selectTab(tab) {
+  if (!TABS.some(([id]) => id === tab)) return;
+  selectedTab = tab;
+  $('#tabbody').scrollTop = 0;
+  renderTab();
+}
+function handleInspect(hit) {
+  if (!hit) return;
+  if (hit.kind === 'shaft') {
+    selectedShaft = hit.shaftNumber;
+    selectTab('mine');
+    toast(`Shaft ${String(selectedShaft).padStart(2, '0')} inspected.`);
+  } else if (hit.kind === 'section' && hit.tab) selectTab(hit.tab);
+  else if (hit.kind === 'site') {
+    inspectSite = hit;
+    mapView = true;
+    scene?.setView('map');
+    selectTab('planet');
   }
-}, 1000);
+}
+async function boot() {
+  state = loadSave();
+  try {
+    scene = createLegacyScene({ canvas: $('#cv'), miniCanvas: $('#mini'), onInspect: handleInspect, onError: (error) => { lastError = `Colony view issue: ${String(error?.message || error)}`; } });
+  } catch (error) {
+    $('#stageTag').textContent = `The colony scene could not start: ${String(error.message || error)}`;
+  }
+  render();
+  if (lastError) toast(lastError, 'error');
+  if (pendingCatchupSeconds > 0) { catchingUp = true; render(); scheduleCatchup(); }
+
+  setInterval(() => {
+    if (catchingUp || paused) { if (paused) save(); return; }
+    try { state = stepGame(state); save(); render(); }
+    catch { paused = true; lastError = 'The local simulation paused after invalid state was detected.'; save(); render(); }
+  }, 1000);
+
+  window.addEventListener('pagehide', save);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') { save(); return; }
+    if (!paused) {
+      const elapsed = Math.floor((Date.now() - savedAtMs) / 1000);
+      if (elapsed > 1 && Number.isSafeInteger(elapsed)) startCatchup(elapsed, 'offline');
+    }
+  });
+}
 
 document.addEventListener('click', (event) => {
   const button = event.target.closest('button');
   if (!button) return;
-  if (button.id === 'pause-button') { paused = !paused; save(); render(); return; }
-  if (button.id === 'launch-button') {
-    const loaded = state.ship.cargoUnits >= 1;
-    apply(dispatchNow, loaded ? 'Paid cargo left the pad.' : 'Unpaid cargo loading started.'); return;
+  const act = button.dataset.act || '';
+  if (act === 'settings') { openOverlay('settings'); return; }
+  if (act === 'tree') { openOverlay('profile'); return; }
+  if (act === 'close') { closeOverlay(); return; }
+  if (act === 'pause') {
+    paused = !paused;
+    if (!paused && pendingCatchupSeconds > 0) { catchingUp = true; scheduleCatchup(); }
+    save(); render(); renderOverlay(); return;
   }
-  if (button.id === 'open-shaft-button') { apply(buyNextShaft, 'Shaft opened.'); return; }
-  if (button.id === 'hire-button') { apply((current) => hireWorkers(current, 1), 'Miner hired and assigned.'); return; }
-  if (button.id === 'more-upgrades') { moreOperationsOpen = !moreOperationsOpen; render(); return; }
-  if (button.id === 'grant-button') {
-    const amount = Number($('#grant-amount').value);
-    if (!Number.isSafeInteger(amount) || amount < 1) { toast('Enter a positive whole coin amount.', 'error'); return; }
-    apply((current) => grantDevCoins(current, amount), 'Local test grant recorded.'); return;
-  }
-  if (button.id === 'reset-button') { resetPromptOpen = true; $('#reset-confirm').classList.remove('hidden'); button.classList.add('hidden'); return; }
-  if (button.id === 'cancel-reset') { resetPromptOpen = false; $('#reset-confirm').classList.add('hidden'); $('#reset-button').classList.remove('hidden'); return; }
-  if (button.id === 'confirm-reset' && resetPromptOpen) {
-    state = createGameState(); paused = false; catchupRemaining = 0; catchingUp = false; catchupKind = 'offline'; resetPromptOpen = false; recovering = ''; save(); render(); toast('Fresh local mine opened.', 'success'); return;
-  }
-  if (button.dataset.destination) { apply((current) => selectDestination(current, button.dataset.destination)); return; }
-  if (button.dataset.buy) {
-    const rawCount = button.dataset.count || '1';
-    const count = rawCount === 'max' ? 'max' : Number(rawCount);
-    const shaftNumber = Number(button.dataset.shaft || 1);
-    apply((current) => purchaseUpgrade(current, button.dataset.buy, { shaftNumber, count }), 'Upgrade purchased.'); return;
-  }
-  if (button.dataset.forward) {
-    const seconds = Number(button.dataset.forward);
-    catchupRemaining += seconds;
-    catchupKind = 'fast-forward';
-    catchingUp = true;
-    save(); render(); setTimeout(catchUpBatch, 0);
+  if (button.dataset.forward) { startCatchup(Number(button.dataset.forward), 'fast-forward'); return; }
+  if (act === 'panel') {
+    $('#layout').classList.toggle('wide');
+    $('#panelBtn').textContent = $('#layout').classList.contains('wide') ? '⟨' : '⟩';
     return;
   }
-  if (button.dataset.recordTab) { selectedRecordTab = button.dataset.recordTab; renderRecords(); }
+  if (act === 'togglemap' || act === 'view:map') { mapView = true; scene?.setView('map'); if (act === 'view:map') selectTab('planet'); render(); return; }
+  if (act === 'view:side') { mapView = false; scene?.setView('side'); render(); return; }
+  if (act.startsWith('zoom:')) { scene?.zoom(act.slice(5)); return; }
+  if (act.startsWith('tab:')) { selectTab(act.slice(4)); return; }
+  if (act.startsWith('amount:')) { selectedAmount = act.slice(7); renderTab(); return; }
+  if (act.startsWith('records:')) { recordsView = act.slice(8); renderTab(); return; }
+  if (act.startsWith('species:')) {
+    profile.species = act.slice(8); save(); renderOverlay(); if (scene) scene.setState(state, sceneProfile()); return;
+  }
+  if (act === 'reset:prompt') { resetConfirm = true; renderOverlay(); return; }
+  if (act === 'reset:cancel') { resetConfirm = false; renderOverlay(); return; }
+  if (act === 'reset:confirm') {
+    state = createGameState(); profile = { guild: 'New Guild', species: 'Mosskin' }; paused = false; pendingCatchupSeconds = 0; catchingUp = false; catchupKind = 'offline'; resetConfirm = false; lastError = ''; save(); render(); renderOverlay(); toast('Fresh local mine opened.', 'success'); return;
+  }
+  if (act === 'grant') {
+    const raw = $('#grant-amount')?.value || '';
+    const amount = Number(raw.replaceAll(',', ''));
+    if (!Number.isSafeInteger(amount) || amount < 1) { toast('Enter a positive whole coin amount.', 'error'); return; }
+    apply((current) => grantDevCoins(current, amount), 'Local test grant recorded.'); renderOverlay(); return;
+  }
+  if (act.startsWith('buy:')) {
+    const type = act.slice(4); const count = button.dataset.count === 'max' ? 'max' : Number(button.dataset.count || 1); const shaftNumber = Number(button.dataset.shaft || 1);
+    apply((current) => purchaseUpgrade(current, type, { shaftNumber, count }), 'Upgrade purchased.'); return;
+  }
+  if (act === 'hire') {
+    const count = button.dataset.count === 'max' ? 'max' : Number(button.dataset.count || 1);
+    apply((current) => hireWorkers(current, count), 'Miners hired and assigned.'); return;
+  }
+  if (act === 'shaft:buy') {
+    const limit = button.dataset.count === 'max' ? 30 : Number(button.dataset.count || 1);
+    apply((current) => { let next = current; for (let i = 0; i < limit && next.production.shafts.length < 30; i += 1) { const cost = Math.floor(120 * 2.4 ** next.production.shafts.length + 0.5); if (next.coins < cost) break; next = buyNextShaft(next); } if (next === current) throw Object.assign(new Error('Not enough coin for another shaft.'), { code: 'INSUFFICIENT_FUNDS' }); return next; }, 'Shaft construction complete.'); return;
+  }
+  if (act === 'ship:buy') { apply(buyShip, 'Hauler added to the fleet.'); return; }
+  if (act === 'pad:buy') { apply(buyPad, 'Launch pad opened.'); return; }
+  if (act === 'ship:dispatch') {
+    const index = Number(button.dataset.ship || 0);
+    const ship = fleetShips(state)[index];
+    const loaded = ship?.cargoUnits > 0;
+    apply((current) => dispatchShip(current, index), loaded ? 'Cargo departed; payment recorded.' : 'Unpaid cargo loading started.'); return;
+  }
+  if (act.startsWith('destination:')) { apply((current) => selectDestination(current, act.slice(12))); return; }
+  if (act === 'inspect:shaft') { selectedShaft = Number(button.dataset.shaft || 1); renderTab(); scene?.focus('mine'); return; }
 });
 
-$('#auto-launch').addEventListener('change', (event) => apply((current) => setAutoLaunch(current, event.target.checked)));
 document.addEventListener('change', (event) => {
-  if (event.target.matches('#grant-amount')) return;
+  if (event.target.matches('[data-act="auto"]')) apply((current) => setAutoLaunch(current, event.target.checked));
+  if (event.target.id === 'guild-name') {
+    profile.guild = event.target.value.trim().slice(0, 32) || 'New Guild';
+    save(); renderMetrics(); scene?.setState(state, sceneProfile());
+  }
 });
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && !paused) {
-    const elapsed = Math.floor((Date.now() - savedAtMs) / 1000);
-    if (elapsed > 1 && Number.isSafeInteger(elapsed)) {
-      catchupRemaining += elapsed;
-      if (!catchingUp) { catchupKind = 'offline'; catchingUp = true; render(); setTimeout(catchUpBatch, 0); }
-    }
+document.addEventListener('input', (event) => {
+  if (event.target.id === 'guild-name') {
+    profile.guild = event.target.value.slice(0, 32) || 'New Guild';
+    $('#hGuild').textContent = profile.guild.slice(0, 10).toUpperCase();
+    save(); scene?.setState(state, sceneProfile());
   }
 });
 
-function animate() { drawScene(); requestAnimationFrame(animate); }
-requestAnimationFrame(animate);
-window.addEventListener('resize', drawScene);
+boot();

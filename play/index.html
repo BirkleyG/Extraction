@@ -1,130 +1,53 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#101615">
-  <title>Extraction Tycoon — Local Playtest</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23141c19'/%3E%3Cpath d='M16 3 29 16 16 29 3 16Z' fill='none' stroke='%23e39b59' stroke-width='2'/%3E%3Cpath d='M10 19h4V9h-4zm7 4h4V6h-4z' fill='%23e39b59'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="./styles.css">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#130d1f">
+<title>Extraction Tycoon — Local Playtest</title>
+<meta name="description" content="A pixel-art mining colony sandbox. Dig, build your fleet, and sell ore when cargo leaves the pad.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;500;600;700&family=Silkscreen:wght@400;700&family=VT323&display=swap">
+<link rel="stylesheet" href="../css/style.css">
+<link rel="stylesheet" href="./styles.css">
 </head>
 <body>
-  <div class="app-shell">
-    <header class="topbar">
-      <a class="brand" href="./" aria-label="Extraction Tycoon home">
-        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-        <span><strong>EXTRACTION</strong><small>TYCOON / LOCAL PLAYTEST</small></span>
-      </a>
-      <div class="topbar-actions">
-        <span class="live-pill"><i></i><span id="run-state">MINE RUNNING</span></span>
-        <button class="quick-forward-button" type="button" data-forward="60">＋1 min</button>
-        <button class="icon-button" id="pause-button" type="button" aria-pressed="false">Ⅱ <span>Pause</span></button>
-        <a class="prototype-link" href="../prototype/">Legacy prototype ↗</a>
+<div id="app">
+  <header class="hud">
+    <div class="brand">EXTRACTION<br><span>TYCOON</span></div>
+    <div class="stat coin"><small>Coin</small><b id="hCoin">—</b><i id="hRate">— / min</i></div>
+    <div class="stat"><small>Fleet</small><b id="hShips">—</b></div>
+    <button class="hudbtn" data-act="tree" aria-label="Open colony profile"><span>GUILD</span><b id="hGuild">LOCAL</b></button>
+    <div class="stat"><small>Mine</small><b id="run-state">—</b></div>
+    <div class="stat hide-sm"><small>Surface Ore</small><b id="hOre">—</b></div>
+    <div class="stat"><small>Local Time</small><b id="hTimer">00:00</b></div>
+    <button class="quick-forward-button" type="button" data-forward="60">＋1 min</button>
+    <div class="spacer"></div>
+    <button class="icon-btn" data-act="settings" aria-label="Settings, save and local controls">⚙</button>
+  </header>
+  <main class="layout" id="layout">
+    <section class="stage">
+      <div class="canvas-wrap" id="cwrap">
+        <canvas id="cv" aria-label="Your colony. Drag to pan, scroll or pinch to zoom, tap things to inspect."></canvas>
+        <button class="mapbtn" id="mapBtn" data-act="togglemap" aria-label="Switch between mine view and planet map"><canvas id="mini"></canvas><span id="mapBtnLbl">MAP</span></button>
+        <div class="stage-tag" id="stageTag">Single-player local test · multiplayer is not connected</div>
+        <button class="paneltoggle" data-act="panel" aria-label="Show or hide the control panel" id="panelBtn">⟩</button>
+        <div class="ctrl"><button data-act="zoom:in" aria-label="Zoom in">+</button><button data-act="zoom:out" aria-label="Zoom out">−</button><button data-act="zoom:fit" aria-label="Fit view">⤢</button></div>
+        <div class="focusbar" id="focusbar"></div>
+        <div class="alarm" id="alarm" hidden></div>
+        <div class="tip" id="tip" hidden></div>
+        <div class="mapcard" id="mapcard" hidden></div>
       </div>
-    </header>
-
-    <main>
-      <section class="intro-row">
-        <div>
-          <div class="eyebrow"><span class="eyebrow-line"></span> FRONTIER MINE / SINGLE PLAYER</div>
-          <h1>Make the ground<br><em>pay for itself.</em></h1>
-          <p class="intro-copy">Dig deeper. Keep the lift moving. Get paid the moment your cargo leaves the pad.</p>
-        </div>
-        <div class="sandbox-note"><span class="note-icon">LOCAL</span><p><strong>Browser sandbox</strong><br>Saves in this browser · multiplayer server not connected.</p></div>
-      </section>
-
-      <div class="recovery-banner hidden" id="recovery-banner" role="status"></div>
-      <div class="catchup-banner hidden" id="catchup-banner" role="status">CATCHING UP <span id="catchup-remaining"></span> seconds · the same one-second tick is running</div>
-
-      <section class="metric-strip" aria-label="Mine status">
-        <div class="metric metric-wallet"><span>COIN ON HAND</span><strong id="coin-value">500</strong><small>coin · whole units</small></div>
-        <div class="metric"><span>GROSS SALES</span><strong id="earned-value">0</strong><small>paid at departure</small></div>
-        <div class="metric"><span>ORE AT SURFACE</span><strong id="surface-value">0.0</strong><small id="surface-capacity">yard capacity · 100</small></div>
-        <div class="metric"><span>PRODUCTION</span><strong id="production-value">1.3</strong><small>units / minute · current crews</small></div>
-        <div class="metric metric-time"><span>LOCAL SIM TIME</span><strong id="time-value">00:00</strong><small id="crew-value">5 miners · 1 shaft</small></div>
-      </section>
-
-      <section class="primary-grid">
-        <article class="panel scene-panel">
-          <div class="panel-head scene-head">
-            <div><span class="eyebrow">SURFACE REPORT · SECTOR 07</span><h2>Rustglass basin</h2></div>
-            <div class="weather-chip"><span class="weather-sun">◈</span> CLEAR · 21°C</div>
-          </div>
-          <div class="scene-wrap">
-            <canvas id="mine-scene" aria-label="Animated pixel view of the mine, lift, ore yard, and launch pad"></canvas>
-            <div class="scene-label label-depth"><span>DEPTH</span><b id="depth-label">01</b></div>
-            <div class="scene-label label-lift"><span>LIFT</span><b id="lift-label">LV 1</b></div>
-            <div class="scene-alert hidden" id="storage-alert">! YARD FULL</div>
-            <div class="scene-alert buffer-alert hidden" id="buffer-alert">! SHAFT BUFFER FULL</div>
-            <div class="scene-legend"><span><i class="legend-worker"></i> MINERS</span><span><i class="legend-ore"></i> SURFACE STOCK</span><span><i class="legend-ship"></i> HAULER</span></div>
-          </div>
-          <div class="scene-footer">
-            <div class="scene-stat"><span>SHAFTS OPEN</span><b id="shaft-count">01 / 30</b></div>
-            <div class="scene-stat"><span>LIFT THROUGHPUT</span><b id="lift-rate">2.06 <small>units/min</small></b></div>
-            <div class="scene-stat"><span>HAULER STATUS</span><b id="ship-status"><i class="status-dot"></i> READY AT PAD</b></div>
-          </div>
-        </article>
-
-        <aside class="side-stack">
-          <article class="panel market-panel">
-            <div class="panel-head compact-head">
-              <div><span class="eyebrow">BUYER BOARD · FIXTURE OFFERS</span><h2>Where to sell</h2></div>
-              <span class="finite-tag">FINITE FUNDS</span>
-            </div>
-            <div class="offer-list" id="offer-list"></div>
-            <div class="market-foot"><span>Departure is the paid sale.</span><span id="auto-ship-state">AUTO-LAUNCH ON</span></div>
-            <div class="market-actions">
-              <button class="button button-primary" id="launch-button" type="button">Launch available cargo <span>↗</span></button>
-              <label class="toggle-row"><input id="auto-launch" type="checkbox" checked><span class="toggle"></span><span>Auto-launch first partial load</span></label>
-            </div>
-          </article>
-
-          <article class="panel upgrade-panel">
-            <div class="panel-head compact-head">
-              <div><span class="eyebrow">REINVEST · LOCAL TEST CURVES</span><h2>Mine upgrades</h2></div>
-              <span class="coin-token">◉</span>
-            </div>
-            <div class="upgrade-list" id="upgrade-list"></div>
-            <button class="button button-quiet full-button" id="more-upgrades" type="button">More operations <span>↓</span></button>
-            <div class="operations-more hidden" id="operations-more"><div id="operations-list" class="upgrade-list"></div></div>
-          </article>
-        </aside>
-      </section>
-
-      <section class="lower-grid">
-        <article class="panel mine-panel">
-          <div class="panel-head compact-head">
-            <div><span class="eyebrow">EXTRACTION LINES</span><h2>Your shafts</h2></div>
-            <button class="button button-small" id="open-shaft-button" type="button">＋ Open shaft <span id="shaft-cost">288 ◉</span></button>
-          </div>
-          <div id="shaft-list" class="shaft-list"></div>
-          <div class="capacity-row"><span>HABITAT CREW</span><div class="crew-bar"><i id="crew-bar-fill"></i></div><b id="crew-capacity">5 / 10</b><button class="text-button" id="hire-button" type="button">Hire + miner · 20 ◉</button></div>
-        </article>
-
-        <article class="panel records-panel">
-          <div class="panel-head compact-head">
-            <div><span class="eyebrow">LOCAL PAPER TRAIL</span><h2>Recent records</h2></div>
-            <span class="record-count" id="record-count">0 ENTRIES</span>
-          </div>
-          <div class="tab-row"><button class="tab-button active" data-record-tab="ledger" type="button">Ledger</button><button class="tab-button" data-record-tab="shipments" type="button">Cargo</button><button class="tab-button" data-record-tab="log" type="button">Events</button></div>
-          <div class="record-list" id="record-list"></div>
-        </article>
-      </section>
-
-      <details class="dev-tools panel" id="dev-tools">
-        <summary><span class="dev-icon">⌘</span><span><strong>Local developer tools</strong><small>Fixture controls · local state only</small></span><span class="summary-caret">＋</span></summary>
-        <div class="dev-body">
-          <div class="dev-control"><strong>Fast-forward</strong><p>Uses the same one-second sandbox tick.</p><div><button data-forward="60">1 min</button><button data-forward="600">10 min</button><button data-forward="3600">1 hour</button></div></div>
-          <div class="dev-control"><strong>Test grant</strong><p>Creates an explicit local source entry.</p><div><input id="grant-amount" type="number" min="1" step="1" value="10000" aria-label="Test grant amount"><button id="grant-button" type="button">Add test coins</button></div></div>
-          <div class="dev-control reset-control"><strong>Reset sandbox</strong><p>Starts a new local test save.</p><div id="reset-confirm" class="hidden"><span>Replace this browser save?</span><button id="confirm-reset" type="button">Reset mine</button><button id="cancel-reset" type="button">Keep playing</button></div><button id="reset-button" type="button">Reset local save…</button></div>
-          <p class="fixture-disclaimer">Rates, offers, construction costs, worker hiring, and buyer budgets are local test fixtures. This sandbox has no month competition, no multiplayer authority, and no paid production configuration.</p>
-        </div>
-      </details>
-
-      <footer class="page-footer"><span>EXTRACTION TYCOON · DEVELOPMENT PLAYTEST / LOCAL SANDBOX</span><span>ONE SHARED FLOW TICK · PAYMENT AT DEPARTURE · NO SERVER CONNECTED</span></footer>
-    </main>
-  </div>
-  <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script type="module" src="./app.js"></script>
+      <div class="ticker" id="ticker" aria-live="polite"></div>
+    </section>
+    <section class="panel">
+      <nav class="tabs" id="tabs" role="tablist" aria-label="Colony desk"></nav>
+      <div class="tabbody" id="tabbody"></div>
+    </section>
+  </main>
+  <div class="overlay" id="ov" hidden><div class="sheet" id="ovBody"></div></div>
+  <div class="toast" id="toast" hidden aria-live="polite"></div>
+</div>
+<script type="module" src="./app.js"></script>
 </body>
 </html>

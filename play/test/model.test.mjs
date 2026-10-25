@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createProductionState } from '../../backend/src/production.js';
 import {
-  advanceGame, createGameState, dispatchNow, selectDestination, setAutoLaunch, stepGame,
-  validateGameState, purchaseUpgrade, buyNextShaft, currentLiftRate,
+  advanceGame, createGameState, dispatchNow, dispatchShip, selectDestination, setAutoLaunch, stepGame,
+  validateGameState, purchaseUpgrade, buyNextShaft, currentLiftRate, fleetShips,
+  buyShip, buyPad, nextShipCost, nextPadCost, shipPurchaseCost, grantDevCoins,
 } from '../model.js';
 
 const code = (name) => (error) => error?.code === name;
@@ -96,7 +97,7 @@ test('a stranded sub-unit load clears as a paid partial sale when its ore has no
   });
   const launched = advanceGame(validateGameState(state), 1, 1).state;
   assert.equal(launched.shipments.length, 2);
-  assert.deepEqual(launched.shipments[0], oldShipment);
+  assert.deepEqual(launched.shipments[0], { ...oldShipment, shipIndex: 0 });
   assert.equal(launched.shipments[1].destinationId, 'cinder-buyer');
   assert.equal(launched.shipments[1].units, 0.304);
   assert.equal(launched.shipments[1].payment, 243);
@@ -169,4 +170,153 @@ test('starter wallet is exactly the recorded source grant and lift readout uses 
   assert.equal(state.ledger.length, 1);
   assert.equal(state.ledger[0].amount, 500);
   assert.equal(currentLiftRate(state), 2 * 1.0316);
+});
+
+test('older v1 saves migrate to one active pad and a single primary ship', () => {
+  const legacy = createGameState();
+  delete legacy.extraShips;
+  delete legacy.padCount;
+  delete legacy.ship.loading;
+  delete legacy.ship.cargoOreId;
+  delete legacy.ship.cargoUnits;
+  const oldShipment = { id: 'legacy-shipment', oreId: 'ferrite', units: 1, unitPrice: 500, payment: 500, destinationId: 'frontier-refinery', departureAtSecond: 0, arrivalAtSecond: 60, shipReadyAtSecond: 120, tripSeconds: 120, state: 'PAID_AT_DEPARTURE' };
+  legacy.shipments.push(oldShipment);
+  legacy.shipmentStatusById[oldShipment.id] = 'DELIVERED';
+  const migrated = validateGameState(legacy);
+  assert.equal(migrated.padCount, 1);
+  assert.deepEqual(migrated.extraShips, []);
+  assert.equal(fleetShips(migrated).length, 1);
+  assert.equal(migrated.ship.loading, false);
+  assert.equal(migrated.ship.cargoUnits, 0);
+  assert.equal(migrated.ship.cargoOreId, null);
+  assert.equal(migrated.shipments[0].shipIndex, 0);
+});
+
+test('ships without pads stay parked; buying the next pad activates fleet trade', () => {
+  let state = grantDevCoins(createGameState(), 25_000);
+  assert.equal(nextShipCost(state), 1800);
+  state = buyShip(state);
+  assert.equal(fleetShips(state).length, 2);
+  assert.equal(state.padCount, 1);
+  assert.equal(state.extraShips[0].loading, false);
+  assert.throws(() => dispatchShip(state, 1), code('SHIP_PARKED'));
+  const parked = advanceGame(state, 120, 120).state;
+  assert.equal(parked.extraShips[0].loading, false);
+  assert.equal(parked.extraShips[0].cargoUnits, 0);
+  assert(parked.shipments.every((shipment) => shipment.shipIndex === 0));
+  assert.equal(nextPadCost(parked), 4000);
+  const activated = buyPad(parked);
+  assert.equal(activated.padCount, 2);
+  assert.equal(nextPadCost(activated), 24_000);
+  const running = advanceGame(activated, 1200, 1200).state;
+  assert(running.shipments.some((shipment) => shipment.shipIndex === 1), 'the newly activated hauler eventually departs');
+});
+
+test('manual dispatch for an extra hauler loads unpaid first and tags its shipment index', () => {
+  let state = grantDevCoins(createGameState(), 10_000);
+  state = buyShip(state);
+  state = buyPad(state);
+  state.autoLaunch = false;
+  state.production = createProductionState({
+    ...state.production,
+    surface: { capacityUnits: 100, unitsByOre: [{ oreId: 'ferrite', units: 2 }] },
+    initialUnitsByOre: [{ oreId: 'ferrite', units: 2 }],
+    cumulativeMinedByOre: [],
+  });
+  state = validateGameState(state);
+  const wallet = state.coins;
+  const loading = dispatchShip(state, 1);
+  assert.equal(loading.coins, wallet);
+  const loaded = advanceGame(loading, 1, 1).state;
+  assert.equal(loaded.coins, wallet);
+  assert.equal(loaded.shipments.length, 0);
+  assert(loaded.extraShips[0].cargoUnits > 0);
+  const launched = dispatchShip(loaded, 1);
+  assert.equal(launched.shipments.length, 1);
+  assert.equal(launched.shipments[0].shipIndex, 1);
+  assert.equal(launched.shipments[0].payment, 500);
+  assert.equal(launched.coins, wallet + 500);
+  assert.equal(launched.ship.readyAtSecond, 0, 'the primary ship remains independent');
+});
+
+test('two active ships share buyer funds and capacity without overspending or over-reserving', () => {
+  let state = grantDevCoins(createGameState(), 10_000);
+  state = buyShip(state);
+  state = buyPad(state);
+  state.autoLaunch = true;
+  state.buyers[0].funds = 500;
+  state.buyers[0].capacityUnits = 1;
+  state.production = createProductionState({
+    ...state.production,
+    surface: { capacityUnits: 100, unitsByOre: [{ oreId: 'ferrite', units: 2 }] },
+    initialUnitsByOre: [{ oreId: 'ferrite', units: 2 }],
+    cumulativeMinedByOre: [],
+  });
+  state = validateGameState(state);
+  const afterOneSecond = stepGame(state);
+  assert.equal(afterOneSecond.shipments.length, 1);
+  const shipment = afterOneSecond.shipments[0];
+  assert.equal(shipment.shipIndex, 0, 'stable fleet order gets the finite buyer capacity first');
+  assert.equal(shipment.payment, 500);
+  assert.equal(afterOneSecond.buyers[0].funds, 0);
+  assert.equal(afterOneSecond.buyers[0].reservedUnits, 1);
+  assert(afterOneSecond.buyers[0].inventoryUnits + afterOneSecond.buyers[0].reservedUnits <= afterOneSecond.buyers[0].capacityUnits);
+  const wallet = afterOneSecond.coins;
+  const delivered = advanceGame(afterOneSecond, shipment.arrivalAtSecond - afterOneSecond.simSeconds, 300).state;
+  assert.equal(delivered.shipmentStatusById[shipment.id], 'DELIVERED');
+  assert.equal(delivered.coins, wallet, 'arrival adds no second payment');
+  assert.equal(delivered.buyers[0].inventoryUnits, 1);
+  assert.equal(delivered.buyers[0].reservedUnits, 0);
+});
+
+test('fleet-wide ship upgrades apply to primary and purchased haulers', () => {
+  let state = grantDevCoins(createGameState(), 100_000);
+  state = buyShip(state);
+  state = purchaseUpgrade(state, 'shipCapacity');
+  state = purchaseUpgrade(state, 'shipSpeed');
+  state = purchaseUpgrade(state, 'loading');
+  assert(fleetShips(state).every((ship) => ship.capacityUnits === 156));
+  assert(fleetShips(state).every((ship) => ship.speedPerMinute === 0.52));
+  assert(fleetShips(state).every((ship) => Math.abs(ship.loadingUnitsPerMinute - 62.4) < 1e-12));
+});
+
+test('fleet and pad fixture counts stop at twelve', () => {
+  let state = grantDevCoins(createGameState(), 1_000_000_000_000);
+  while (fleetShips(state).length < 12) state = buyShip(state);
+  assert.equal(nextShipCost(state), null);
+  assert.throws(() => buyShip(state), code('AT_CAP'));
+  while (state.padCount < 12) state = buyPad(state);
+  assert.equal(nextPadCost(state), null);
+  assert.throws(() => buyPad(state), code('AT_CAP'));
+});
+
+test('Hauler, Cruiser and Freighter classes preserve class stats through fleet upgrades and cost rounding', () => {
+  let state = grantDevCoins(createGameState(), 100_000);
+  assert.equal(shipPurchaseCost(state), 1800);
+  assert.equal(shipPurchaseCost(state, 'cruiser'), 1800);
+  assert.equal(shipPurchaseCost(state, 'freighter'), 3240);
+  assert.equal(nextShipCost(state), shipPurchaseCost(state, 'hauler'));
+  state = buyShip(state, 'cruiser');
+  state = buyShip(state, 'freighter');
+  let ships = fleetShips(state);
+  assert.deepEqual(ships.map((ship) => ship.shipClass), ['hauler', 'cruiser', 'freighter']);
+  assert.deepEqual(ships.map((ship) => ship.capacityUnits), [150, 52.5, 450]);
+  assert.deepEqual(ships.map((ship) => ship.speedPerMinute), [0.5, 1.5, 0.3]);
+  assert.deepEqual(ships.map((ship) => ship.loadingUnitsPerMinute), [60, 21, 180]);
+  state = purchaseUpgrade(state, 'shipCapacity');
+  state = purchaseUpgrade(state, 'shipSpeed');
+  state = purchaseUpgrade(state, 'loading');
+  ships = fleetShips(state);
+  assert.deepEqual(ships.map((ship) => ship.shipClass), ['hauler', 'cruiser', 'freighter']);
+  assert.deepEqual(ships.map((ship) => ship.capacityUnits), [156, 54.6, 468]);
+  assert(ships.every((ship, index) => Math.abs(ship.speedPerMinute - [0.52, 1.56, 0.312][index]) < 1e-12));
+  assert(ships.every((ship, index) => Math.abs(ship.loadingUnitsPerMinute - [62.4, 21.84, 187.2][index]) < 1e-12));
+});
+
+test('invalid ship classes fail atomically', () => {
+  const state = grantDevCoins(createGameState(), 10_000);
+  assert.throws(() => shipPurchaseCost(state, 'battleship'), code('INVALID_SHIP_CLASS'));
+  assert.throws(() => buyShip(state, 'battleship'), code('INVALID_SHIP_CLASS'));
+  assert.equal(fleetShips(state).length, 1);
+  assert.equal(state.coins, 10_500);
 });
