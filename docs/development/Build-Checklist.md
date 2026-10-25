@@ -57,9 +57,9 @@ Rules: 03, 04, 05, 10, 02 (commercial departure). Tests: T03, T04, T05, T10, T18
 - [ ] ⬜ Depth→ore yield bands; rare/mythic vein depletion with 20%/5% warnings (T04-02/03)
 - [ ] ⬜ Soil + weather modifiers (feeds production formula)
 - [ ] ⬜ Ships: Hauler/Cruiser/Freighter, pad loading, trip time = 2×travel + unload + dock wait (one shared function for UI and sim — T05-01)
-- [ ] ⬜ **Atomic paid departure** (the heart of the game): validate → reserve receiving capacity + quantity → debit buyer → credit seller → remove stock → shipment + arrival event, all in one transaction; failure mutates nothing (T02-03, T05-02/05, T18-03/11)
-- [ ] ⬜ Arrival converts reserved capacity → stock, **never pays again** (T05-02/03)
-- [ ] ⬜ NPC refineries (≥3/planet): offer formula, buyer budgets that run dry, explicit external coin source (no unlimited premium demand)
+- [x] ✅ **Atomic paid departure** (`game-service.js`, memory repo; Firestore adapter still to do) (the heart of the game): validate → reserve receiving capacity + quantity → debit buyer → credit seller → remove stock → shipment + arrival event, all in one transaction; failure mutates nothing (T02-03, T05-02/05, T18-03/11)
+- [x] ✅ Arrival converts reserved capacity → stock, **never pays again** (T05-02/03)
+- [x] 🟡 NPC refineries (token-bucket funds/capacity, fixed bids; ≥3/planet + market-driven offers still to do): offer formula, buyer budgets that run dry, explicit external coin source (no unlimited premium demand)
 - [ ] ⬜ Ship policies: best coin/min, nearest, fixed, preferred list; destination table showing price, trip time, coin/min
 - [ ] ⬜ Weather grounding (wait, no loss); dock reservation/queue
 
@@ -147,3 +147,4 @@ Rules: 03, 04, 05, 10, 02 (commercial departure). Tests: T03, T04, T05, T10, T18
 ## Progress log
 - 25 Oct: `upgrades.js` (registered curves, exact bulk pricing, Max, shaft/pad/dock/outpost prices; T10-01/03/07/08 covered) and `calibrate-early.mjs` + `C01-EARLY-01` profile (see [Early-Game-Calibration](calibration/Early-Game-Calibration.md)). 48 fast tests pass.
 - 25 Oct: `world.js` seeded planet generation (7 ores, exclusive common ore per region, ~37% rare coverage, ~5% mythic in tough ground, equal-value start sites; T04-01, T11-01). 56 fast tests pass. Next: shaft/mine state + transactional purchase command, then the atomic paid-departure transaction.
+- 25 Oct: `mine-engine.js` + `game-service.js`: enroll, buyUpgrade (1/10/100/max), hire, buyShaft, atomic paid dispatch with NPC token-bucket budget/capacity, idempotent receipts, ledger types SYSTEM_PURCHASE / NPC_RAW_PURCHASE (T02-01/03, T05-02/03/05, T18-10/11 covered on the in-memory repository). 66 fast tests. **Next:** Firestore repository `getDoc/putDoc`, durable scheduler/offline advance, month-close state machine.

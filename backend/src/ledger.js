@@ -27,6 +27,7 @@ function cloneState(state) {
     commands: new Map(state.commands),
     starterGrants: new Set(state.starterGrants),
     versions: new Map(state.versions),
+    docs: new Map(state.docs ?? []),
   };
 }
 
@@ -39,6 +40,8 @@ export function ledgerTransactionId(type, ownerId, monthId, reference) {
   if (type === 'START_GRANT') return `grant:${digest}`;
   if (type === 'ESCROW_FUND') return `escrow:fund:${digest}`;
   if (type === 'ESCROW_RELEASE') return `escrow:release:${digest}`;
+  if (type === 'SYSTEM_PURCHASE') return `purchase:${digest}`;
+  if (type === 'NPC_RAW_PURCHASE') return `npcraw:${digest}`;
   fail('INVALID_LEDGER', 'Unknown transaction reason');
 }
 
@@ -83,6 +86,13 @@ function applyTransaction(state, transaction) {
   const external = `source:${type}:${encodedId}`;
   if (type === 'START_GRANT') {
     if (postings.length !== 2 || postings[0]?.account !== spendable || postings[1]?.account !== external || postings[0]?.delta <= 0 || postings[1]?.delta !== -postings[0]?.delta) fail('INVALID_LEDGER', 'Invalid starter grant postings');
+  } else if (type === 'SYSTEM_PURCHASE') {
+    // Sink: owner spendable coin leaves the economy (section 02 SYSTEM_PURCHASE).
+    const sink = `sink:${type}:${encodedId}`;
+    if (postings.length !== 2 || postings[0]?.account !== spendable || postings[1]?.account !== sink || postings[0]?.delta >= 0 || postings[1]?.delta !== -postings[0]?.delta) fail('INVALID_LEDGER', 'Invalid system purchase postings');
+  } else if (type === 'NPC_RAW_PURCHASE') {
+    // Source: a computer-run buyer pays the owner at departure from an explicit external account.
+    if (postings.length !== 2 || postings[0]?.account !== spendable || postings[1]?.account !== external || postings[0]?.delta <= 0 || postings[1]?.delta !== -postings[0]?.delta) fail('INVALID_LEDGER', 'Invalid NPC purchase postings');
   } else {
     const expected = type === 'ESCROW_FUND' ? [spendable, escrow] : [escrow, spendable];
     if (postings.length !== 2 || postings[0]?.account !== expected[0] || postings[1]?.account !== expected[1] || postings[0]?.delta >= 0 || postings[1]?.delta !== -postings[0]?.delta) fail('INVALID_LEDGER', 'Invalid escrow transfer postings');
@@ -140,7 +150,7 @@ export function replayLedger(entries) {
 }
 
 export class MemoryLedgerRepository {
-  #state = { ledger: [], accounts: new Map(), commands: new Map(), starterGrants: new Set(), versions: new Map() };
+  #state = { ledger: [], accounts: new Map(), commands: new Map(), starterGrants: new Set(), versions: new Map(), docs: new Map() };
   #tail = Promise.resolve();
 
   // Deliberately process-local: this is not production persistence or cross-process locking.
@@ -164,6 +174,9 @@ export class MemoryLedgerRepository {
           return next;
         },
         snapshot() { return Object.freeze({ ledger: Object.freeze([...draft.ledger]), balances: new Map(draft.accounts) }); },
+        // Generic JSON documents (owner mine state, NPC buyers) committed atomically with ledger postings.
+        getDoc(path) { const value = draft.docs.get(path); return value === undefined ? null : JSON.parse(value); },
+        putDoc(path, value) { draft.docs.set(path, JSON.stringify(value)); },
       };
       const value = await work(tx);
       // Keep the committed copy isolated from a transaction handle retained by its callback.

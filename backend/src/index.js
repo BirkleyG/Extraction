@@ -7,3 +7,4 @@ export { EventKernelError, createEventState, createStepRng, runEventBatch } from
 export { withdrawSurfaceUnits } from './production.js';
 export { CURVES, UpgradeError, bulkPrice, nextLevelPrice, quote, shaftPrice, padPrice, dockPrice, outpostSitePrice } from './upgrades.js';
 export { generateWorld, siteValue, WorldError } from './world.js';
+export { GameService } from './game-service.js';
