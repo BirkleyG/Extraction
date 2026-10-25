@@ -72,3 +72,25 @@ test('unauthenticated and malformed requests are rejected', async () => {
     assert.equal(r.status, 400);
   });
 });
+
+test('T18-08 internal scheduler requires its secret and invokes durable tick, not browser state', async () => {
+  let ticks = 0;
+  const server = createGameHttpServer({
+    auth: { verifyIdToken: async () => { assert.fail('scheduler does not use browser identity'); } },
+    game: {}, internalToken: 'test-internal-token', clock: () => T0,
+    admin: { tick: async (scope) => { ticks += 1; assert.deepEqual(scope, { worldId: 'w1', nowMs: T0 }); return { done: true }; } },
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const url = `http://127.0.0.1:${server.address().port}/internal/tick`;
+  const send = (token, body = { worldId: 'w1' }) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { 'x-internal-token': token } : {}) }, body: JSON.stringify(body) });
+  try {
+    assert.equal((await send()).status, 401);
+    assert.equal((await send('wrong')).status, 401);
+    assert.equal(ticks, 0);
+    assert.equal((await send('test-internal-token', { worldId: '../escape' })).status, 400);
+    const r = await send('test-internal-token');
+    assert.equal(r.status, 200);
+    assert.deepEqual(await r.json(), { done: true });
+    assert.equal(ticks, 1);
+  } finally { await new Promise((r) => server.close(r)); }
+});

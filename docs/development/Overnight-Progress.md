@@ -13,10 +13,15 @@ The CEO supplied two files in chat: a pure sandbox economy module and a fluid pa
 | 1 | Record the supplied economy profile and integration boundaries | Recorded; implementation in progress |
 | 2 | Shared sandbox arithmetic, three global upgrade ladders, short shipping cadence, pacing evidence and safe saves | In progress |
 | 3 | Legacy UI polish, visible machine progression, first-session guidance, desktop/mobile browser tests | In progress |
-| 4 | Bounded background settlement for the existing trusted scheduler, retry/invariant tests | In progress |
+| 4 | Bounded background settlement for the existing trusted scheduler, retry/invariant tests | Implemented; unit/regression tests passed; emulator verification running; runtime not deployed |
 
 The supplied study is a fluid approximation. Its milestone table cannot certify the discrete game, offline equality, full-month balance or multiplayer security. Compare it with the actual model and report limitations before adopting coefficients elsewhere.
 
 ## Publishing and recovery
 
 Create small reviewable PRs and GitHub checkpoints as meaningful batches become ready. Publish the playable batch only after tests and browser checks pass. Keep online and sandbox economics clearly distinct. Do not deploy backend runtime changes without credentials and verification. Preserve earlier unfinished local work on its existing branch/worktree; it is not the new integration baseline.
+
+## Checkpoints
+
+- [PR #12](https://github.com/BirkleyG/Extraction/pull/12): direction and integration boundaries saved to GitHub.
+- Worker checkpoint: 26 game-service/month-close/worker tests passed, plus HTTP authentication/dispatch checks. Real emulator verification is recorded with its result before publishing the source batch.

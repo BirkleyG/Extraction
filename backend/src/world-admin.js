@@ -42,6 +42,31 @@ export class WorldAdmin {
     return { ok: true, worldId, monthId };
   }
 
+  /** Trusted scheduler entrypoint: no browser is needed, and each owner gets at most one bounded batch. */
+  async tick({ worldId, nowMs }) {
+    if (!Number.isSafeInteger(nowMs) || nowMs < 0) fail('INVALID_CLOCK');
+    const rollover = await this.rollover({ worldId, nowMs });
+    if (rollover.skipped) return rollover;
+    const monthId = monthOf(nowMs);
+    const roster = await this.repository.transact((tx) => tx.getDoc(rosterPath(worldId, monthId)),
+      { worldId, ownerId: 'system', monthId, readOnly: true });
+    const owners = roster?.owners ?? [];
+    // The private friends world is capped at ten. Fail closed on corrupt/oversized rosters; never scan owners.
+    if (!Array.isArray(owners) || owners.length > 10 || new Set(owners).size !== owners.length ||
+        owners.some((owner) => typeof owner !== 'string' || !owner || owner.length > 256)) fail('INVALID_ROSTER');
+    const settlements = [];
+    for (const ownerId of owners) {
+      try {
+        const done = await this.game.settleBatch({ worldId, ownerId, monthId, toSec: Math.floor(nowMs / 1000) });
+        settlements.push({ ownerId, done });
+      } catch (error) {
+        // Other owners can still advance. A failed owner remains unfinished and is retried next tick.
+        settlements.push({ ownerId, done: false, error: error?.code ?? 'SETTLEMENT_FAILED' });
+      }
+    }
+    return { ...rollover, settlements, done: settlements.every((s) => s.done) };
+  }
+
   /** Prepare the current month (planet, NPC budgets, active month) and close any finished months. Idempotent. */
   async rollover({ worldId, nowMs }) {
     const monthId = monthOf(nowMs);

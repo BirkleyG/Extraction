@@ -60,7 +60,7 @@ export function createGameHttpServer({ auth, game, clock = Date.now, allowOrigin
         if (!admin || !internalToken || typeof req.headers['x-internal-token'] !== 'string' || !safeEqual(req.headers['x-internal-token'], internalToken)) throw new LedgerError('UNAUTHENTICATED');
         const body = await readJson(req);
         if (typeof body.worldId !== 'string' || !/^[A-Za-z0-9_-]{1,160}$/.test(body.worldId)) throw new LedgerError('INVALID_WORLD');
-        const out = await admin.rollover({ worldId: body.worldId, nowMs: clock() });
+        const out = await admin.tick({ worldId: body.worldId, nowMs: clock() });
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(out)); return;
       }
       const match = /^\/v1\/worlds\/([A-Za-z0-9_-]{1,160})\/(state|join|commands\/([A-Za-z]+))$/.exec(url.pathname);

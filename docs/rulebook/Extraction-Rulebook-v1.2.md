@@ -1203,6 +1203,12 @@ Month-end ordering
 - Event priorities and domain handlers are explicit trusted inputs. A canonical cross-system priority table, automatic production tick generation, durable queue/checkpoint transactions, scheduled workers, retention and C-07 performance limits remain outstanding.
 - **T17-01/02 foundation evidence only:** 600 explicit fixture ticks yield identical checkpoints in one batch versus 600 one-event batches; duplicates, conflicting IDs, RNG continuation, handler rollback, ordering and boundary behavior are tested. These are not live/offline mining/economy acceptance results.
 
+### Bounded private-world worker · 26 October 2026
+
+- The trusted scheduler entry point performs month preparation/closure first, then settles the current month's enrolled mines with no browser connected. It reads one roster, capped at the approved 10-player private test size, and attempts one bounded transaction per owner. Ledger postings and owner simulation checkpoints commit atomically.
+- A partial or failed owner remains incomplete and resumes on the next tick; retries cannot pay a departure twice. Other owners may still advance. The existing internal authentication secret is required. This is a private-world checkpoint implementation, not the general durable indexed event queue or a guarantee of immediate catch-up for arbitrary backlogs.
+- Backend deployment and production cost/timeout measurements remain separate from committing this implementation. Existing month-close batches retain their own limits.
+
 ## 18 — Data Architecture, Persistence and Multiplayer Integrity
 
 **Status: consolidated revision 1.2.** Approved rules use the register in 00; C-numbered coefficients remain calibration work.
@@ -1559,6 +1565,11 @@ Changing a rule
 - **Sandbox model (`play/model.js`):** a site has one common ore (ferrite or cobalt) and a seeded rare-ore set. Each shaft generates its own veins on opening (chance rises with depth; shaft 3 always holds one rare vein so a first vein appears early). A tunnel face advances only from common digging; when it reaches a vein and the pick is hard enough, the shaft yields the vein ore until the vein is exhausted. Exact accounting caps the last second so mined vein units never exceed vein size (T04-03) and never go negative (T04-02). A pick too weak leaves the vein intact and flags it.
 - **Provisional, C-03:** vein size = richness 0.6-1.5 x tier constant (rare 900, mythic 3000) x (1 + 0.15 x (shaft-1)); tool hardness by pick tier 2/4/6/8/10; tunnel-face distance 40 x log2(1 + units/4), capped. The below-20-percent warning is implemented; the proportional taper below 5 percent is **not** implemented in the sandbox. These are sandbox fixtures, not certified balance.
 - A shaft changing ore flushes any old-ore buffer to the surface yard when room allows, otherwise digging holds until the lift clears it. Tests added for T04-02, T04-03, tool hardness, determinism and one common ore per site. Presentation (tunnel digging, deposits, miners reaching and mining veins) illustrates this state and never changes it (T03-02).
+
+### Private-world settlement checkpoint · 26 October 2026
+
+- Added bounded zero-client owner settlement to the trusted scheduler route; preserved ledger/checkpoint atomicity, internal authentication, month-boundary order and resumable retries. Tests cover duplicate ticks, payment rollback, roster limits and per-owner failure isolation.
+- Runtime deployment is not included in this source checkpoint. Full Release A acceptance, production cost evidence and the general event queue remain outstanding.
 
 ### Playability integration checkpoint · 26 October 2026
 
