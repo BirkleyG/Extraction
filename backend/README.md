@@ -87,3 +87,16 @@ Bootstrap is Admin-only and emulator-only; it refuses to overwrite an existing w
 ## Production hosting decision
 
 The CEO selected Firebase Blaze in principle, with a small budget to agree before deployment. **No numeric spending ceiling, production project, billing activation or deployment is authorized yet.** Firebase Functions deployment requires Blaze; local emulation does not. See [official setup](https://firebase.google.com/docs/functions/get-started) and [scheduled-function pricing](https://firebase.google.com/docs/functions/schedule-functions). Free allowances are not a zero-cost guarantee. This branch contains a local API, not a Functions deployment package.
+
+## Deterministic event kernel
+
+`src/events.js` exports `createEventState`, `runEventBatch`, `createStepRng` and `EventKernelError`. This is a pure server-side foundation, not an automatic scheduler or a mining simulation.
+
+- `createEventState({ monthId, seed, data, pendingEvents, ... })` creates a validated immutable version-1 checkpoint. It contains a processed-event fingerprint journal, the last ordering cursor and RNG draw cursors.
+- Events have exactly `id`, `monthId`, `atMs`, `priority`, `type`, `siteId` and JSON `payload`. Priorities are explicit caller inputs: this module does not invent a cross-system priority table.
+- `runEventBatch({ state, handlers, maxEvents, beforeMs })` applies at most the requested number of pending records with `atMs < beforeMs`, ordered by timestamp, priority and deterministic code-unit ID. The horizon cannot exceed that month’s UTC boundary. Same-month obligations with later ETAs stay pending for the future closing process; the kernel never carries their inventory into a new month.
+- Synchronous trusted handlers receive an isolated data copy, an immutable event and RNG. They must use only those inputs; they must not read wall time, call external APIs or write to a database. Returned JSON data becomes the new checkpoint. Any failure returns no partial batch and leaves the caller’s inputs unchanged.
+- RNG is versioned and keyed by world seed, site, absolute one-second step and draw index. Draw cursors preserve the sequence across batch boundaries and multiple events in the same second.
+- Exact duplicate events do nothing; conflicting duplicates, late new events, unknown handlers, invalid JSON, unsupported schema versions and unsafe timestamps fail closed. Never send the checkpoint’s seed or private data to a client.
+
+**Scope limits:** fixture tests demonstrate deterministic ordering/chunking with 600 explicit one-second events. They do not certify actual production, live/offline economic equivalence, zero-client scheduling or month closing. The kernel does not generate production ticks automatically. Event application is budgeted, but checkpoint validation still scans the pending queue/journal; this representation is not a certified large-world storage layout. Do not store a month’s full queue/journal in one Firestore document. A durable paginated queue, atomic checkpoint/effect commit and measured retention/performance limits remain to implement.

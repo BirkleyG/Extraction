@@ -21,6 +21,12 @@ This is the development questions tab. Approved R-01–R-10 decisions remain in 
 
 Sources checked: [Functions getting started](https://firebase.google.com/docs/functions/get-started) and [Scheduled functions](https://firebase.google.com/docs/functions/schedule-functions). Scheduler currently lists $0.10 per job/month with three jobs per Google account at no charge; function, database and network usage have separate pricing. These allowances do not establish a zero-cost production guarantee.
 
+## Production calibration checkpoint · 25 October 2026
+
+**Q-08 — Calibration authority (pending):** may engineering revise provisional C-01 rate formulas and missing base values through seeded simulations, document changes and report evidence, while preserving approved caps/accounting/principles? Alternative: keep the current formulas and bring specific proposed amendments before implementation.
+
+**Evidence:** sections 03/10 give shaft base output a factor of 2.2 per deeper shaft, so shaft 30 has about 8.52 billion times shaft 1’s base. A capped linear lift line multiplies its starting rate by only `1 + 0.04 × 1000 = 41`. For a balanced maximum mine with the same workers/modifiers per shaft, lift base throughput would need to be very large compared with early mine output. This conflicts with the intended useful early lift progression and late balanced-lift target. A fixed base value alone cannot resolve the progression shape. Actual balanced-max calculations and seeded affordability tests are still required; this is not permission to invent unregistered gameplay values.
+
 ## Answer history
 
 - 25 October 2026: CEO answered Q-01–Q-03 in chat. No numeric Pro allowance is known; platform selection delegated with setup documentation required; fresh saves approved and prototype preserved.
