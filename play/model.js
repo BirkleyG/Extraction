@@ -1,3 +1,5 @@
+import { createIndustry, validateIndustry, advanceIndustry, applyIndustryAction, refineryStats } from './industry.js';
+import { createFrontier, validateFrontier, advanceFrontier, applyFrontierAction } from './frontier.js';
 import * as E from './economy.js';
 import { createProductionState, liftRatePerMinute, shaftRatePerMinute, tickProductionSecond, withdrawSurfaceUnits } from '../backend/src/production.js';
 import { tierOf } from './upgrades.js';
@@ -179,7 +181,7 @@ function shaftBlueprint(number, upgrades = {}, workersAssigned = 0) {
   };
 }
 
-function addLedger(state, type, amount, description, externalAccount) {
+function addLedger(state, type, amount, description, externalAccount, actualDelta, escrowDelta = 0) {
   safeInt(amount, 'ledger amount');
   const id = `local-${String(state.nextRecordId).padStart(8, '0')}`;
   state.nextRecordId += 1;
@@ -188,19 +190,20 @@ function addLedger(state, type, amount, description, externalAccount) {
     atSecond: state.simSeconds,
     type,
     amount,
-    ownerDelta: type === 'NPC_RAW_PURCHASE' ? amount : type === 'START_GRANT' || type === 'DEV_TEST_GRANT' ? amount : -amount,
-    externalDelta: type === 'NPC_RAW_PURCHASE' ? -amount : type === 'START_GRANT' || type === 'DEV_TEST_GRANT' ? -amount : amount,
+    ownerDelta: actualDelta,
+    externalDelta: -actualDelta - escrowDelta,
+    ...(escrowDelta ? { escrowDelta } : {}),
     externalAccount,
     description,
   });
   state.ledger.push(entry);
 }
 
-function changeCoin(state, delta, type, description, externalAccount) {
+function changeCoin(state, delta, type, description, externalAccount, escrowDelta = 0) {
   const next = safeInt(state.coins + delta, 'wallet');
   if (delta < 0 && next > state.coins) fail('OVERFLOW');
   state.coins = next;
-  addLedger(state, type, Math.abs(delta), description, externalAccount);
+  addLedger(state, type, Math.abs(delta), description, externalAccount, delta, escrowDelta);
 }
 
 export function createGameState(siteOptions, { legacy = false } = {}) {
@@ -233,7 +236,7 @@ export function createGameState(siteOptions, { legacy = false } = {}) {
   syncSandbox(state);
   state.production.surface.unitsByOre = [{ oreId: site.commonOreId, units: E.START_YARD_UNITS }];
   state.production.initialUnitsByOre = [{ oreId: site.commonOreId, units: E.START_YARD_UNITS }];
-  return state;
+  return validateGameState(state);
 }
 
 function findShaft(state, shaftNumber) {
@@ -273,7 +276,7 @@ function availableSurface(state, oreId) {
   return state.production.surface.unitsByOre.find((row) => row.oreId === oreId)?.units ?? 0;
 }
 function preferredCargoOre(state, destinationId) {
-  return state.production.surface.unitsByOre.filter((row) => state.economyProfile ? Math.floor(row.units + 1e-9) >= 1 : row.units > 0).sort((a, b) => {
+  return state.production.surface.unitsByOre.filter((row) => state.economyProfile ? Math.floor(row.units) >= 1 : row.units > 0).sort((a, b) => {
     const valueOrder = priceFor(destinationFor(destinationId), b.oreId) - priceFor(destinationFor(destinationId), a.oreId);
     return valueOrder || (a.oreId < b.oreId ? -1 : a.oreId > b.oreId ? 1 : 0);
   })[0]?.oreId ?? null;
@@ -320,7 +323,7 @@ function loadOneSecond(state) {
   const cargoOreId = next.ship.cargoOreId ?? preferredCargoOre(next, next.selectedDestinationId);
   const room = Math.max(0, next.ship.capacityUnits - next.ship.cargoUnits);
   const available = cargoOreId ? availableSurface(next, cargoOreId) : 0;
-  const amount = Math.min(next.economyProfile ? Math.floor(available + 1e-9) : available, room, next.ship.loadingUnitsPerMinute / 60);
+  const amount = Math.min(next.economyProfile ? Math.floor(available) : available, room, next.ship.loadingUnitsPerMinute / 60);
   next.ship.loading = amount > 1e-9;
   if (amount <= 1e-9) return next;
   next.production = withdrawSurfaceUnits(next.production, cargoOreId, amount);
@@ -335,7 +338,7 @@ function rushLoad(state) {
   const cargoOreId = next.ship.cargoOreId ?? preferredCargoOre(next, next.selectedDestinationId);
   if (!cargoOreId) return { state: next, loaded: 0 };
   const available = availableSurface(next, cargoOreId);
-  const amount = Math.min(next.economyProfile ? Math.floor(available + 1e-9) : available, Math.max(0, next.ship.capacityUnits - next.ship.cargoUnits));
+  const amount = Math.min(next.economyProfile ? Math.floor(available) : available, Math.max(0, next.ship.capacityUnits - next.ship.cargoUnits));
   if (amount <= 1e-9) return { state: next, loaded: 0 };
   next.production = withdrawSurfaceUnits(next.production, cargoOreId, amount);
   next.ship.cargoOreId = cargoOreId;
@@ -346,7 +349,7 @@ function rushLoad(state) {
 /** The cargo ore has stopped arriving (vein dry, shaft idle) so waiting for a full hold would wait forever. */
 function cargoStranded(state) {
   const id = state.ship.cargoOreId;
-  if (!id || state.ship.cargoUnits < 1e-9 || (state.economyProfile ? Math.floor(availableSurface(state, id) + 1e-9) >= 1 : availableSurface(state, id) >= 1e-9)) return false;
+  if (!id || state.ship.cargoUnits < 1e-9 || (state.economyProfile ? Math.floor(availableSurface(state, id)) >= 1 : availableSurface(state, id) >= 1e-9)) return false;
   return !state.production.shafts.some((shaft) => shaft.workersAssigned > 0 && ((miningVein(state, shaft.shaftNumber)?.oreId ?? state.site.commonOreId) === id || shaft.bufferUnits > 1e-9 && shaft.oreId === id));
 }
 
@@ -376,7 +379,28 @@ export function stepGame(inputState) {
   const state = validateGameState(inputState);
   const next = clone(state);
   next.simSeconds += 1;
+  if (next.economyProfile) {
+    const step = advanceFrontier(next.frontier, 1);
+    next.frontier = step.frontier;
+    for (const shaft of next.production.shafts) shaft.buffsMultiplier = step.productionMultiplier;
+    for (const event of step.events) appendLog(next, event.description, 'frontier');
+  }
   mineOneSecond(next);
+  if (next.economyProfile) {
+    const step = advanceIndustry(next.industry, 1);
+    next.industry = step.industry;
+    for (const event of step.events) appendLog(next, 'Published refined-goods offers refreshed for the new market hour.', event.type);
+    if (next.industry.autoRoute && next.industry.refinery) {
+      let free = refineryStats(next.industry.refinery).inputCapacity - Object.values(next.industry.refinery.input).reduce((n, value) => n + value, 0);
+      for (const row of next.production.surface.unitsByOre.slice()) {
+        const units = Math.min(Math.floor(row.units), Math.floor(free));
+        if (units < 1) continue;
+        next.production = withdrawSurfaceUnits(next.production, row.oreId, units);
+        next.industry.refinery.input[row.oreId] += units;
+        free -= units;
+      }
+    }
+  }
   let advanced = arriveShipments(next);
   // Online play: the server owns takeoffs and payments; the browser only keeps the picture of the mine moving between polls.
   if (!advanced.remote) advanced = launchIfReady(advanced);
@@ -564,6 +588,14 @@ export function shipmentRows(state) {
 
 export function validateGameState(input) {
   if (!input || typeof input !== 'object' || input.schemaVersion !== SAVE_VERSION) fail('INVALID_SAVE');
+  input = { ...input };
+  if (input.economyProfile && !input.remote) {
+    input.industry = input.industry ?? createIndustry(input.site?.seed ?? 'sandbox', input.simSeconds);
+    input.frontier = input.frontier ?? createFrontier(input.site?.seed ?? 'sandbox', input.simSeconds);
+    validateIndustry(input.industry); validateFrontier(input.frontier);
+    if (input.industry.elapsedSeconds !== input.simSeconds || input.frontier.simSeconds !== input.simSeconds) fail('INVALID_SAVE', 'World clocks disagree');
+    safeInt(input.coins + (input.industry.refinery?.budget ?? 0), 'total owned coin');
+  }
   safeInt(input.simSeconds, 'simSeconds');
   safeInt(input.coins, 'wallet');
   safeInt(input.sourceGrants, 'source grants');
@@ -591,7 +623,7 @@ export function validateGameState(input) {
     if (!input.economyProfile || !input.historyArchive.shipments || !input.historyArchive.ledger) fail('INVALID_SAVE');
     const { shipments, ledger } = input.historyArchive;
     for (const value of [shipments.count, shipments.payment, ledger.count, ...Object.values(ledger.amountsByType)]) safeInt(value, 'archive total');
-    if (!Number.isSafeInteger(ledger.ownerDelta) || !Number.isSafeInteger(ledger.externalDelta) || ledger.ownerDelta + ledger.externalDelta !== 0 || !Array.isArray(shipments.unitsByOre)) fail('INVALID_SAVE');
+    if (!Number.isSafeInteger(ledger.ownerDelta) || !Number.isSafeInteger(ledger.externalDelta) || ledger.ownerDelta + ledger.externalDelta + (ledger.escrowDelta ?? 0) !== 0 || !Array.isArray(shipments.unitsByOre)) fail('INVALID_SAVE');
     for (const row of shipments.unitsByOre) { if (!ore(row.oreId)) fail('INVALID_SAVE'); number(row.units, 'archived ore'); }
   }
   const shipmentIds = new Set();
@@ -649,7 +681,7 @@ export const destinationsFor = (state) => state.economyProfile ? DESTINATIONS.ma
 // Keep recent local detail and aggregate every retired record explicitly. Paid shipments still in transit are never retired.
 function compactHistory(state) {
   if (state.shipments.length <= 32 && state.ledger.length <= 64) return;
-  const archive = state.historyArchive ??= { shipments: { count: 0, payment: 0, unitsByOre: [] }, ledger: { count: 0, ownerDelta: 0, externalDelta: 0, amountsByType: {} } };
+  const archive = state.historyArchive ??= { shipments: { count: 0, payment: 0, unitsByOre: [] }, ledger: { count: 0, ownerDelta: 0, externalDelta: 0, escrowDelta: 0, amountsByType: {} } };
   while (state.shipments.length > 32 && state.shipmentStatusById[state.shipments[0].id] === 'DELIVERED') {
     const row = state.shipments.shift();
     const totals = archive.shipments; totals.count += 1; totals.payment = addSafe(totals.payment, row.payment, 'archived payments');
@@ -660,8 +692,40 @@ function compactHistory(state) {
   }
   while (state.ledger.length > 64) {
     const row = state.ledger.shift(); const totals = archive.ledger; totals.count += 1;
-    totals.ownerDelta += row.ownerDelta; totals.externalDelta += row.externalDelta;
+    totals.ownerDelta += row.ownerDelta; totals.externalDelta += row.externalDelta; totals.escrowDelta = (totals.escrowDelta ?? 0) + (row.escrowDelta ?? 0);
     totals.amountsByType[row.type] = addSafe(totals.amountsByType[row.type] ?? 0, row.amount, 'archived ledger amount');
     totals.lastId = row.id; totals.lastAtSecond = row.atSecond;
   }
+}
+
+
+/** Local facilities use the same conserved yard and checked ledger as the mine. */
+export function industryCommand(inputState, action) {
+  const state = validateGameState(inputState);
+  if (!state.economyProfile || state.remote) fail('UNAVAILABLE', 'Industry is available in the new local sandbox.');
+  const next = clone(state);
+  const result = applyIndustryAction(next.industry, action, {
+    coins: next.coins, simSeconds: next.simSeconds,
+    availableRawByOre: Object.fromEntries(next.production.surface.unitsByOre.map(row => [row.oreId, row.units])),
+  });
+  next.industry = result.industry;
+  if (result.rawWithdrawal) next.production = withdrawSurfaceUnits(next.production, result.rawWithdrawal.oreId, result.rawWithdrawal.units);
+  if (result.coinDelta) {
+    const escrow = result.ledgerType === 'ESCROW_FUND' || result.ledgerType === 'ESCROW_RELEASE';
+    changeCoin(next, result.coinDelta, result.ledgerType, result.description, escrow ? 'owner:refinery:escrow' : result.coinDelta > 0 ? 'source:INDUSTRY' : 'sink:SYSTEM_PURCHASE', escrow ? -result.coinDelta : 0);
+    if (!escrow && result.coinDelta > 0) next.totalExternalEarnings = addSafe(next.totalExternalEarnings, result.coinDelta, 'external earnings');
+  }
+  appendLog(next, result.description, 'industry');
+  return validateGameState(next);
+}
+
+export function frontierCommand(inputState, action) {
+  const next = clone(validateGameState(inputState));
+  if (!next.economyProfile || next.remote) fail('UNAVAILABLE');
+  const result = applyFrontierAction(next.frontier, action, { coins: next.coins, simSeconds: next.simSeconds });
+  if (result.type === 'rejected') fail('INVALID_COMMAND', result.description);
+  next.frontier = result.frontier;
+  changeCoin(next, result.coinDelta, 'SYSTEM_PURCHASE', result.description, 'sink:SYSTEM_PURCHASE');
+  appendLog(next, result.description, 'frontier');
+  return validateGameState(next);
 }

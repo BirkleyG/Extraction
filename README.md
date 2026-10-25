@@ -53,3 +53,9 @@ GitHub Pages publishes `main`, root directory. Publishing changes must reach `ma
 Use **Play online** in the same pixel interface (or [open online mode](https://birkleyg.github.io/Extraction/play/?mode=online)), sign in and enter your private invite code. Online accounts and balances belong to the trusted server; sandbox saves and tuning do not transfer. [Deployment guide](docs/development/Deploy-Guide.md) explains setup. Backend source updates need a separate Cloud Run deployment; merging a PR only publishes browser changes through Pages.
 
 [Sandbox economy studies](play/sim/README.md) include the supplied fluid approximation, the adopted experimental tuning and reproducible actual-engine pacing. The actual scripted first hour earns 130,010 gross with no grants; full-month balance remains provisional. [Latest progress and verification](docs/development/Overnight-Progress.md).
+
+## Industry and colony preview
+
+The new-economy sandbox now includes **Industry** and **Colony** tabs. Build a refinery (25K local test coin), route raw ore into it, refine and sell to NPC stations. Build a station (250K), stock refined goods and complete published spot orders. Hourly simulated market quotes react to supply. Home infantry arrive by supply shuttle and help resolve bounded incidents. These local fixtures preview later systems; they are not shared multiplayer industry.
+
+Use Colony to request Maker facility names, buyer personalities and factual dispatches. Claude/OpenAI use the key configured in Tools; with no key the built-in chronicler works. Requests are explicit and presentation-only. Online play animates locally and reconciles with the trusted server about every 30 seconds, immediately after commands or returning to the tab. Local offline catch-up runs in a browser worker where available. [Scope, coefficients and verification](docs/development/Industry-Release.md).

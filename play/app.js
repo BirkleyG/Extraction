@@ -1,7 +1,12 @@
+import { createLocalRuntime } from './local-runtime.js';
+import { renderIndustry, actionFromIndustryButton } from './industry-ui.js';
+import { createMakerBrief, generateMakerContent } from './maker.js';
+import { FRONTIER_TUNE } from './frontier.js';
+import { RECONCILE_MS } from './sync-policy.js';
 import {
   expectedUnitValue, nextShaftCost, destinationsFor, HARDNESS, ORES, DESTINATIONS, SAVE_KEY, TOUGH_TERRAINS, toolHardness, veinStatus, advanceGame, buyNextShaft, createGameState, currentLiftRate, currentRates, shaftRateFor, habitatCapacity, hireCost,
   dispatchNow, grantDevCoins, hireWorkers, purchaseUpgrade, selectDestination,
-  setAutoLaunch, stepGame, upgradeCost, validateGameState,
+  setAutoLaunch, stepGame, upgradeCost, validateGameState, industryCommand, frontierCommand,
 } from './model.js';
 import { FX_SPOTS, MAPVIEW, veinSpot, VIEW, addFx, clampCam, clampMapCam, mapScale, mapTerrain, regionAtMap, renderMap, renderScene, sideScale } from './scene.js';
 import { TIERS, tierOf } from './upgrades.js';
@@ -98,6 +103,12 @@ const REMOTE = (() => { try { return localStorage.getItem('extraction_mode') ===
 let online = null;
 let pendingRemote = 0;
 let nextPollAt = 0;
+let remoteSyncPromise = null;
+let remoteSyncQueued = false;
+let remoteGeneration = 0;
+let makerBusy = false;
+const localRuntime = createLocalRuntime();
+let catchupInFlight = false;
 let world = loadPlanet();
 let planet = world.planet;
 let regionId = world.regionId;
@@ -201,12 +212,16 @@ function remoteMessage(error) {
 }
 
 /** Pull the server's view of the mine and replace the local picture of it (after commands, on a timer, and on return to the tab). */
-async function syncRemote() {
+async function syncRemote(force = false) {
   if (!REMOTE || pendingRemote > 0) return;
+  if (remoteSyncPromise) { if (force) remoteSyncQueued = true; return remoteSyncPromise; }
+  const generation = remoteGeneration;
+  remoteSyncQueued = false;
+  remoteSyncPromise = (async () => {
   try {
     const before = state;
     const r = await online.fetchView();
-    if (pendingRemote > 0) return;
+    if (pendingRemote > 0 || generation !== remoteGeneration) { remoteSyncQueued = true; return; }
     const seen = new Set(before.shipments.map((x) => x.id));
     const fresh = r.state.shipments.filter((x) => !seen.has(x.id));
     state = r.state; planet = r.planet; regionId = r.regionId; skinOres();
@@ -217,24 +232,29 @@ async function syncRemote() {
       toast(`Hauler took off automatically — ${fmt(pay)} ◉ paid.`, 'success'); blip([523, 659, 784]);
     }
     justSent = false;
-    const autoIn = state.online.autoInSeconds;
-    nextPollAt = Date.now() + (autoIn && autoIn > 0 ? Math.min(POLL_MS_LOCAL, autoIn * 1000 + 2500) : POLL_MS_LOCAL);
+    nextPollAt = Date.now() + RECONCILE_MS;
     render();
   } catch (error) {
     if (error?.status === 401) { toast('Signed out. Reload to sign in again.', 'error'); return; }
-    nextPollAt = Date.now() + 5000;
+    nextPollAt = Date.now() + RECONCILE_MS;
+  } finally {
+    remoteSyncPromise = null;
+    if (remoteSyncQueued && pendingRemote === 0) { remoteSyncQueued = false; queueMicrotask(() => syncRemote()); }
   }
+  })();
+  return remoteSyncPromise;
 }
 let justSent = false;
-const POLL_MS_LOCAL = 15_000;
+const POLL_MS_LOCAL = RECONCILE_MS;
 
 function applyRemote(before, next, success) {
+  remoteGeneration += 1;
   const cmds = online.commandsFor(before, next);
   state = next;
   if (!cmds.length) { render(); return true; }
   justSent = true; pendingRemote += 1; render();
   if (success) toast(success, 'success');
-  online.send(cmds).catch((error) => { toast(remoteMessage(error), 'error'); blip([140]); }).finally(() => { pendingRemote -= 1; syncRemote(); });
+  online.send(cmds).catch((error) => { toast(remoteMessage(error), 'error'); blip([140]); }).finally(() => { pendingRemote -= 1; syncRemote(true); });
   return true;
 }
 
@@ -266,7 +286,7 @@ function renderGuide() {
   el.hidden = !!state.remote || guideDismissed;
   if (el.hidden) return;
   const sold = state.shipments.length > 0;
-  const bought = state.ledger.some((e) => /upgrade/i.test(e.type + e.description));
+  const bought = state.ledger.some((e) => e.type === 'SYSTEM_PURCHASE') || (state.historyArchive?.ledger?.amountsByType?.SYSTEM_PURCHASE ?? 0) > 0;
   el.innerHTML = `<span class="${state.simSeconds > 0 ? 'done' : ''}">1. Mine</span><span class="${sold ? 'done' : ''}">2. Launch & earn</span><button data-tab="upgrades" type="button" class="${bought ? 'done' : ''}">3. Upgrade</button><button data-act="guide-dismiss" aria-label="Dismiss first steps" type="button">×</button><small>${sold ? 'Reinvest your coin in the Upgrades tab.' : `Your ${state.workersHired} miners are digging. Send your first ore from Sell.`}</small>`;
 }
 let audio = null;
@@ -357,7 +377,7 @@ function costButton(type, shaftNumber = 1) {
   return cost === null ? 'CAPPED' : `${fmt(cost)} ◉`;
 }
 
-const TABS = [['sell', 'Sell'], ['upgrades', 'Upgrades'], ['shafts', 'Shafts'], ['planet', 'Planet'], ['records', 'Records'], ['tools', 'Tools']];
+const TABS = [['sell', 'Sell'], ['upgrades', 'Upgrades'], ['shafts', 'Shafts'], ['planet', 'Planet'], ['industry', 'Industry'], ['colony', 'Colony'], ['records', 'Records'], ['tools', 'Tools']];
 const tabLabel = (id, label) => (REMOTE && id === 'tools' ? 'Account' : label);
 const shaftCost = () => nextShaftCost(state);
 const crewCap = () => habitatCapacity(state.upgrades.habitat);
@@ -383,6 +403,7 @@ function renderHud() {
   watchVeins();
   const rate = totalRate();
   $('#hCoin').textContent = fmt(state.coins);
+  $('#hCoin').title = `Spendable ${state.coins.toLocaleString()} · refinery escrow ${(state.industry?.refinery?.budget ?? 0).toLocaleString()} · total owned ${(state.coins + (state.industry?.refinery?.budget ?? 0)).toLocaleString()}`;
   $('#hRate').textContent = `${fmtUnits(rate)} ore / min`;
   $('#hSurface').textContent = `${fmtUnits(surfaceTotal())} / ${fmtUnits(state.production.surface.capacityUnits)}`;
   $('#hEarned').textContent = fmt(state.totalExternalEarnings);
@@ -412,7 +433,7 @@ function renderHud() {
 }
 
 function renderTabs() {
-  $('#tabs').innerHTML = TABS.map(([id, label]) => `<button class="tab" role="tab" data-tab="${id}" aria-selected="${tab === id}">${tabLabel(id, label)}</button>`).join('');
+  $('#tabs').innerHTML = TABS.filter(([id]) => !['industry', 'colony'].includes(id) || isNewEconomy()).map(([id, label]) => `<button class="tab" role="tab" data-tab="${id}" aria-selected="${tab === id}">${tabLabel(id, label)}</button>`).join('');
 }
 
 function shipStatus() {
@@ -425,9 +446,9 @@ function shipStatus() {
 /** units (and their value) that "Launch now" would send this second */
 function launchPreview() {
   const aboard = state.ship.cargoUnits;
-  const id = state.ship.cargoOreId ?? state.production.surface.unitsByOre.filter((r) => isNewEconomy() ? Math.floor(r.units + 1e-9) >= 1 : r.units > 0).sort((a, b) => expectedUnitValue(state, b.oreId) - expectedUnitValue(state, a.oreId) || (a.oreId < b.oreId ? -1 : a.oreId > b.oreId ? 1 : 0))[0]?.oreId ?? null;
+  const id = state.ship.cargoOreId ?? state.production.surface.unitsByOre.filter((r) => isNewEconomy() ? Math.floor(r.units) >= 1 : r.units > 0).sort((a, b) => expectedUnitValue(state, b.oreId) - expectedUnitValue(state, a.oreId) || (a.oreId < b.oreId ? -1 : a.oreId > b.oreId ? 1 : 0))[0]?.oreId ?? null;
   const yardUnits = id ? (state.production.surface.unitsByOre.find((r) => r.oreId === id)?.units ?? 0) : 0;
-  const loadable = isNewEconomy() ? Math.floor(yardUnits + 1e-9) : yardUnits;
+  const loadable = isNewEconomy() ? Math.floor(yardUnits) : yardUnits;
   const units = aboard + Math.min(loadable, Math.max(0, state.ship.capacityUnits - aboard));
   return { units, id, pay: id ? Math.floor(units * expectedUnitValue(state, id) + 0.5) : 0 };
 }
@@ -547,10 +568,48 @@ function tabRecords() {
   return `<h2>Paper trail</h2>${recent ? '<p class="lede">Recent entries are listed below. Older completed records are kept as totals; cargo in transit stays in the detailed history.</p>' : ''}<h3>Ledger · ${state.ledger.length} ${recent ? 'recent' : ''} entries</h3>${olderLedger}<div class="rows">${ledger}</div><h3>${recent ? 'Recent cargo' : 'Cargo'}</h3>${olderCargo}<div class="rows">${cargo}</div><h3>Events</h3><div class="feed">${events}</div>`;
 }
 
+function tabIndustry() {
+  return renderIndustry(state, { fmt, ores: ORES });
+}
+
+function tabColony() {
+  const f = state.frontier;
+  if (!f) return '<h2>Colony operations</h2><p>Available in the new local sandbox.</p>';
+  const maker = state.maker;
+  const names = maker?.content?.facilities ?? [];
+  const buyers = maker?.content?.buyers ?? [];
+  const news = maker?.content?.news ?? [];
+  return `<h2>Colony operations</h2><div class="note">Local sandbox: a playable preview of industry, safety and colony storytelling.</div>
+    <h3>Home safety</h3><div class="devbox"><b>${safeText(f.status)}</b><p class="d">${f.infantry.troops} infantry on patrol${f.infantry.incoming ? ` · ${f.infantry.incoming.troops} arrive in ${f.infantry.incoming.arrivesAt - f.simSeconds}s` : ''}. Home always remains operational. Paid cargo is protected.</p>
+    <button class="buy sm" data-frontier="recruit" type="button"${f.infantry.purchased || state.coins < FRONTIER_TUNE.infantryCost ? ' disabled' : ''}>${f.infantry.purchased ? 'Patrol ordered' : `Recruit ${FRONTIER_TUNE.infantryTroops} infantry · ${FRONTIER_TUNE.infantryCost} ◉`}</button></div>
+    <h3>The Maker's dispatch desk</h3><p class="lede">Give your works and visiting buyers a personality. Dispatches use events that really happened.</p>
+    <button class="buy" type="button" data-act="maker-create"${makerBusy ? ' disabled' : ''}>${makerBusy ? 'Writing the colony dispatch…' : aiReady() ? 'Ask the Maker · use my API key' : 'Build colony stories · no key needed'}</button>
+    <p class="d">${safeText(maker?.status || 'Built-in chronicler ready. Configure Claude or OpenAI in Tools for AI-generated names and prose.')}</p>
+    ${names.map(row => `<div class="row"><div class="t">${safeText(row.name)}</div></div>`).join('')}
+    ${buyers.map(row => `<div class="devbox"><b>${safeText(row.name)}</b><p class="d">${safeText(row.personality)}</p></div>`).join('')}
+    <h3>Colony dispatches</h3>${news.map(row => `<div class="devbox"><b>${safeText(row.headline)}</b><p>${safeText(row.text)}</p></div>`).join('') || '<p class="d">Mine, build and trade, then ask for a fresh dispatch.</p>'}
+    <h3>Safety log</h3><div class="feed">${f.news.slice(-5).reverse().map(event => `<div>${formatClock(event.simSeconds)} · ${safeText(event.description)}</div>`).join('') || 'Home crews are on shift.'}</div>`;
+}
+
+async function refreshMaker() {
+  if (makerBusy || state.remote || !isNewEconomy()) return;
+  makerBusy = true; render();
+  const seed = state.site.seed;
+  const brief = createMakerBrief({ planet,
+    facilities: ['refinery', 'station'].filter(id => state.industry?.[id]).map(id => ({ id, kind: id, name: id })),
+    buyers: destinationsFor(state).map(row => ({ id: row.id, name: row.name })),
+    events: state.log.slice(-5).map((event, index) => ({ id: `${seed}:${event.atSecond}:${index}`, text: event.message })),
+  });
+  try {
+    const result = await generateMakerContent(brief, { userInitiated: true });
+    if (!state.remote && state.site.seed === seed) { state = { ...state, maker: result }; save(); toast(result.how === 'ai' ? 'The Maker filed a colony dispatch.' : 'The built-in chronicler filed a colony dispatch.', 'success'); }
+  } finally { makerBusy = false; render(); }
+}
+
 function tabAccount() {
   return `<h2>Account</h2><p class="lede">Signed in as <b>${safeText(state.online.email || 'guest')}</b>. Your mine runs on the server, so it keeps working while you are away.</p>
     <div class="devbox"><b>Motion</b><div class="btnrow"><button class="buy ghost sm" data-act="motion" type="button">${reducedMotion ? 'Reduced motion: on' : 'Reduced motion: off'}</button></div></div><div class="devbox"><b>Sound</b><p class="d">Little chimes when you buy upgrades.</p><div class="btnrow"><button class="buy ghost sm" data-act="sound" type="button">${soundOn ? 'Sound: on' : 'Sound: off'}</button></div></div>
-    <div class="devbox"><b>Refresh from the server</b><p class="d">The game checks in every few seconds on its own.</p><div class="btnrow"><button class="buy ghost sm" data-act="resync" type="button">Refresh now</button></div></div>
+    <div class="devbox"><b>Refresh from the server</b><p class="d">The browser animates and predicts locally. Server reconciliation runs about every 30 seconds, and immediately after commands or returning to the game.</p><div class="btnrow"><button class="buy ghost sm" data-act="resync" type="button">Refresh now</button></div></div>
     <div class="devbox"><b>Sign out</b><div class="btnrow"><button class="buy ghost sm" data-act="signout" type="button">Sign out</button></div></div>
     <div class="note">Online play counts toward this month's competition. Coin, ore and ships are decided by the server; this page only shows them.</div>`;
 }
@@ -561,7 +620,7 @@ function tabTools() {
   return `<h2>Dev tools</h2><p class="lede">Local sandbox only. No server, no month competition.</p>
     <div class="devbox"><b>Fast-forward</b><p class="d">Runs the same one-second tick.</p><div class="btnrow"><button class="buy ghost sm" data-forward="60" type="button">1 min</button><button class="buy ghost sm" data-forward="600" type="button">10 min</button><button class="buy ghost sm" data-forward="3600" type="button">1 hour</button></div></div>
     <div class="devbox"><b>Test grant</b><p class="d">Creates an explicit local source entry.</p><div class="btnrow"><input id="grant-amount" type="number" min="1" step="1" value="${safeText(grantValue)}" aria-label="Test grant amount"><button class="buy sm" data-act="grant" type="button">Add test coins</button></div></div>
-    <div class="devbox"><b>AI engine · bring your own key</b><p class="d">Used only to design planets. Your key stays in this browser and goes straight to the provider.</p>
+    <div class="devbox"><b>AI engine · bring your own key</b><p class="d">Designs planets, names your facilities and writes dispatches from recorded facts. Calls happen only when you ask. Your key stays in this browser and goes straight to the provider.</p>
       <label class="f">Engine<select id="aiProvider"><option value="off"${ai.provider === 'off' ? ' selected' : ''}>Off</option><option value="anthropic"${ai.provider === 'anthropic' ? ' selected' : ''}>My Claude API key</option><option value="openai"${ai.provider === 'openai' ? ' selected' : ''}>My OpenAI API key</option></select></label>
       <label class="f">API key<input type="password" id="aiKey" autocomplete="off" value="${safeText(ai.key || '')}" placeholder="paste key"></label>
       <div class="btnrow"><button class="buy sm" data-act="ai-save" type="button">Save</button><button class="buy ghost sm" data-act="ai-test" type="button">Test connection</button></div></div>
@@ -578,7 +637,7 @@ function render() {
   const top = body.scrollTop;
   const active = document.activeElement;
   if (active && active.closest && active.closest('#tabbody') && active.matches('input[type=text],input[type=password],input[type=number],textarea,select')) { renderPending = true; return; }
-  body.innerHTML = { sell: tabSell, upgrades: tabUpgrades, shafts: tabShafts, planet: tabPlanet, records: tabRecords, tools: tabTools }[tab]();
+  body.innerHTML = { sell: tabSell, upgrades: tabUpgrades, shafts: tabShafts, planet: tabPlanet, industry: tabIndustry, colony: tabColony, records: tabRecords, tools: tabTools }[tab]();
   body.scrollTop = top;
   syncTip();
   drawScene();
@@ -628,7 +687,8 @@ function mapCardHTML(r) {
 }
 function showMapCard() { const c = $('#mapcard'); c.hidden = view !== 'map' || !mapSel; if (!c.hidden) c.innerHTML = mapCardHTML(mapSel); }
 
-function catchUpBatch() {
+async function catchUpBatch() {
+  if (catchupInFlight) return;
   if (catchupRemaining <= 0) {
     catchingUp = false; save(); render();
     toast(catchupKind === 'fast-forward' ? 'Fast-forward complete.' : 'Offline sandbox catch-up complete.', 'success');
@@ -636,14 +696,15 @@ function catchUpBatch() {
     return;
   }
   try {
-    const batch = advanceGame(state, catchupRemaining, 300);
+    catchupInFlight = true;
+    const batch = await localRuntime.advance(state, catchupRemaining, 300);
     state = batch.state; catchupRemaining = batch.remainingSeconds;
     save(); render(); setTimeout(catchUpBatch, 0);
   } catch {
     catchingUp = false;
     recovering = `${catchupKind === 'fast-forward' ? 'Fast-forward' : 'Offline catch-up'} stopped on invalid local state. The latest valid checkpoint is still saved.`;
     save(); render();
-  }
+  } finally { catchupInFlight = false; }
 }
 
 function startForward(seconds) {
@@ -681,11 +742,14 @@ document.addEventListener('click', (event) => {
   if (catchingUp) return;
   if (button.dataset.tab) { tab = button.dataset.tab; render(); return; }
   if (button.dataset.forward) { startForward(Number(button.dataset.forward)); return; }
+  if (button.dataset.industry) { const action = actionFromIndustryButton(button, state); if (action) apply(current => industryCommand(current, action), 'Industry order completed.'); return; }
+  if (button.dataset.frontier) { apply(current => frontierCommand(current, 'recruit-infantry'), 'Supply shuttle dispatched.'); return; }
   if (button.dataset.destination) { apply((current) => selectDestination(current, button.dataset.destination)); return; }
   if (button.dataset.buy) { const raw = button.dataset.count || '1'; buyUpgrade(button.dataset.buy, Number(button.dataset.shaft || 1), raw === 'max' ? 'max' : Number(raw)); return; }
   if (button.dataset.zoom) { const cm = view === 'map' ? camMap : camSide; if (button.dataset.zoom === 'fit') { cm.auto = true; cm.z = 1; } else { cm.auto = false; cm.z *= button.dataset.zoom === 'in' ? 1.4 : 1 / 1.4; } return; }
   if (button.id === 'mapBtn') { view = view === 'map' ? 'side' : 'map'; showMapCard(); return; }
   switch (button.dataset.act) {
+    case 'maker-create': void refreshMaker(); break;
     case 'motion': reducedMotion = !reducedMotion; document.documentElement.classList.toggle('reduce-motion', reducedMotion); try { localStorage.setItem('extraction_motion', reducedMotion ? 'reduced' : 'full'); } catch {} render(); break;
     case 'guide-dismiss': guideDismissed = true; try { localStorage.setItem('extraction_guide_done', 'yes'); } catch {} renderGuide(); break;
     case 'sound': soundOn = !soundOn; try { localStorage.setItem('extraction_sound', soundOn ? 'on' : 'off'); } catch { /* ignore */ } if (soundOn) blip([660, 880]); render(); break;
@@ -771,7 +835,7 @@ document.addEventListener('change', (event) => {
 document.addEventListener('input', (event) => { if (event.target.id === 'grant-amount') grantValue = event.target.value; if (event.target.id === 'planetPrompt') planetPromptValue = event.target.value; });
 document.addEventListener('focusout', (event) => { if (renderPending) { renderPending = false; render(); } });
 document.addEventListener('visibilitychange', () => {
-  if (REMOTE) { if (document.visibilityState === 'visible') syncRemote(); return; }
+  if (REMOTE) { if (document.visibilityState === 'visible') syncRemote(true); return; }
   if (document.visibilityState === 'visible' && !paused) {
     const elapsed = Math.floor((Date.now() - savedAtMs) / 1000);
     if (elapsed > 1 && Number.isSafeInteger(elapsed)) {
@@ -780,6 +844,8 @@ document.addEventListener('visibilitychange', () => {
     }
   }
 });
+
+window.addEventListener('focus', () => { if (REMOTE && !document.hidden) syncRemote(true); });
 
 function animate() { drawScene(); requestAnimationFrame(animate); }
 requestAnimationFrame(animate);

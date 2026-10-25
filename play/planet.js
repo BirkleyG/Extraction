@@ -296,21 +296,30 @@ function parseJSON(t) {
   if (a >= 0 && b > a) return JSON.parse(t.slice(a, b + 1));
   throw new Error('The AI replied with something that was not JSON');
 }
-export async function askJSON(prompt) {
+export async function askJSON(prompt, { timeoutMs = 12000, maxTokens = 1600 } = {}) {
   const s = aiSettings();
-  if (s.provider === 'anthropic') {
-    if (!s.key) throw new Error('No Claude API key set');
-    const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': s.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify({ model: s.model || 'claude-sonnet-5-5', max_tokens: 4000, messages: [{ role: 'user', content: prompt }] }) });
-    if (!r.ok) throw new Error(`Claude API ${r.status} ${(await r.text().catch(() => '')).slice(0, 160)}`);
-    const j = await r.json(); return parseJSON((j.content || []).map((b) => b.text || '').join(''));
-  }
-  if (s.provider === 'openai') {
-    if (!s.key) throw new Error('No OpenAI key set');
-    const r = await fetch('https://api.openai.com/v1/chat/completions', { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${s.key}` }, body: JSON.stringify({ model: s.model || 'gpt-5', messages: [{ role: 'user', content: prompt }], response_format: { type: 'json_object' } }) });
-    if (!r.ok) throw new Error(`OpenAI ${r.status} ${(await r.text().catch(() => '')).slice(0, 160)}`);
-    const j = await r.json(); return parseJSON(j.choices[0].message.content);
-  }
-  throw new Error('AI is switched off. Pick an engine in Tools.');
+  if (!['anthropic', 'openai'].includes(s.provider)) throw new Error('AI is switched off. Pick an engine in Tools.');
+  if (typeof s.key !== 'string' || !s.key.trim()) throw new Error('No API key set');
+  const controller = new AbortController();
+  let timer;
+  const deadline = new Promise((_, reject) => { timer = setTimeout(() => { controller.abort(); reject(new Error('AI request timed out')); }, Math.max(1, Math.min(30000, timeoutMs))); });
+  const request = async () => {
+    const claude = s.provider === 'anthropic';
+    const r = await fetch(claude ? 'https://api.anthropic.com/v1/messages' : 'https://api.openai.com/v1/chat/completions', {
+      method: 'POST', signal: controller.signal,
+      headers: claude ? { 'content-type': 'application/json', 'x-api-key': s.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' } : { 'content-type': 'application/json', authorization: `Bearer ${s.key}` },
+      body: JSON.stringify(claude ? { model: s.model || 'claude-sonnet-4-6', max_tokens: Math.min(4000, maxTokens), messages: [{ role: 'user', content: prompt }] } : { model: s.model || 'gpt-5', max_completion_tokens: Math.min(4000, maxTokens), messages: [{ role: 'user', content: prompt }], response_format: { type: 'json_object' } }),
+    });
+    // Provider bodies can echo credentials or arbitrary HTML. Never surface them.
+    if (!r.ok) throw new Error(`AI provider returned HTTP ${r.status}`);
+    const j = await r.json();
+    const value = claude ? (j.content || []).map((b) => b.text || '').join('') : j.choices?.[0]?.message?.content;
+    if (typeof value !== 'string' || value.length > 50000) throw new Error('Invalid AI response');
+    return parseJSON(value);
+  };
+  try { return await Promise.race([request(), deadline]); }
+  catch (e) { if (/^AI (provider returned HTTP \d{3}|request timed out)$/.test(e.message)) throw e; throw new Error('AI request failed or returned invalid JSON'); }
+  finally { clearTimeout(timer); }
 }
 
 const TERRAIN_CATALOG = () => TERRAIN_IDS.map((id) => `${id} (${TERRAINS[id].group === 'alien' ? 'alien' : 'earthlike'}: ${TERRAINS[id].label})`).join(', ');
@@ -339,14 +348,32 @@ Reply with ONLY a JSON object:
 Exotic is tier 4 only. Keep names short.`;
 }
 
-export function aiReady() { const s = aiSettings(); return s.provider !== 'off' && !!s.key; }
+export function aiReady() { const s = aiSettings(); return ['anthropic', 'openai'].includes(s.provider) && typeof s.key === 'string' && !!s.key.trim(); }
+
+export function validatePlanetContent(raw) {
+  const text = (v, n) => typeof v === 'string' && v.trim().length > 0 && v.length <= n && !/[<>\x00-\x1f]/.test(v);
+  const color = v => typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false;
+  const allowed = ['theme', 'name', 'tagline', 'story', 'sky', 'stars', 'moons', 'surface', 'layers', 'ores', 'regions'];
+  if (Object.keys(raw).some(k => !allowed.includes(k))) return false;
+  if (!text(raw.name, 40) || !text(raw.tagline, 90) || !text(raw.story, 800) || !color(raw.surface) || !color(raw.stars)) return false;
+  if (!Array.isArray(raw.sky) || raw.sky.length !== 2 || !raw.sky.every(color)) return false;
+  if (!raw.theme || !text(raw.theme.concept, 240) || !text(raw.theme.mood, 80) || !Array.isArray(raw.theme.motifs) || raw.theme.motifs.length < 3 || raw.theme.motifs.length > 5 || !raw.theme.motifs.every(m => text(m, 30))) return false;
+  if (!Array.isArray(raw.moons) || raw.moons.length < 1 || raw.moons.length > 3 || !raw.moons.every(m => m && color(m.color) && ['large', 'small'].includes(m.size))) return false;
+  if (!Array.isArray(raw.layers) || raw.layers.length !== 5 || !raw.layers.every(l => l && text(l.name, 40) && color(l.color))) return false;
+  if (!Array.isArray(raw.ores) || raw.ores.length !== 7 || !raw.ores.every((o, i) => o && text(o.name, 40) && text(o.blurb, 180) && color(o.color) && ORE_SLOTS[i].cats.includes(o.category))) return false;
+  if (!Array.isArray(raw.regions) || raw.regions.length < 5 || raw.regions.length > 7 || !raw.regions.every(r => r && text(r.name, 40) && text(r.blurb, 180) && color(r.color) && TERRAIN_IDS.includes(r.terrain))) return false;
+  return [raw.ores.map(o => o.name.toLowerCase()), raw.regions.map(r => r.name.toLowerCase()), raw.regions.map(r => r.terrain)].every(a => new Set(a).size === a.length);
+}
 
 /* AI is the default. If it is not set up or fails, the Maker improvises from a theme instead, so a click always builds a planet. */
 export async function generatePlanet(req) {
   let error = '';
   if (aiReady()) {
     try {
-      const raw = await askJSON(planetPrompt(req));
+      let raw = await askJSON(planetPrompt(req), { maxTokens: 4000 });
+      if (!validatePlanetContent(raw)) raw = await askJSON(planetPrompt(req) + '\nThe last response failed validation. Follow the complete schema exactly.', { maxTokens: 4000 });
+      if (!validatePlanetContent(raw)) throw new Error('Planet response failed validation');
       const planet = buildPlanet({ ...raw, prompt: req || '', ai: true }, `ai-${Date.now().toString(36)}`);
       recordPlanet(planet);
       return { planet, how: 'ai', error };
