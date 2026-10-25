@@ -1236,6 +1236,14 @@ Month rollover
 - T18-10: injected client ledger/payment/seed fields are rejected. T18-11: simultaneous dispatches cannot overspend money, daily limits or receiving capacity.
 - T18-12: after a crash at any closing phase, replay produces one snapshot, one commitment finalization and one reset.
 
+### A1 accounting foundation · 25 October 2026
+- Added a separate server-side library under `backend/` for checked whole-coin ledger postings, owner escrow funding/release, trusted-configured starter grants, command versioning and idempotent retries. Grant fixtures are not approved starting balances; no grant amount is configured for production.
+- Command identity, active month and receipt time are trusted server context, never accepted as player-controlled outcome fields. A future authenticated transport must verify identity before constructing that context. Owner wallet results use an explicit field allowlist.
+- The current transaction adapter is **in-memory, process-local and test-only**. Serialization and rollback tests do not certify durable storage, crash recovery, deployed authentication, Firestore authorization or distributed concurrency.
+- T18-13: repeated/concurrent commands apply once; a changed action/amount under the same request ID rejects; a retry returns the original result even after the wallet version advances.
+- T18-14: unauthenticated, cross-owner, stale-month and injected authoritative-field requests reject without mutation. Production identity verification and direct database access tests remain pending.
+- T02-01/02/04 and T18-01/02 have partial foundation coverage for grants and owner escrow only. Liabilities, commercial departure, storage reservations, tax/sinks, scheduler, closing and all other release tests remain outstanding. This library is not connected to the legacy browser game.
+
 ## 19 — AI Behavior, Procedural Generation and News
 
 **Status: consolidated revision 1.2.** Approved rules use the register in 00; C-numbered coefficients remain calibration work.
@@ -1476,6 +1484,12 @@ Changing a rule
 - **CEO direction recorded:** conserve Pro weekly usage; delegate platform choice with free operation preferred and a setup README required; use fresh authoritative saves while preserving the prototype. Paid infrastructure is not authorized. These are delivery decisions, not changes to R-01–R-10 gameplay.
 - Corrected the retired change-tag procedure and the incorrect R-06 approval cross-reference. No economic coefficients or gameplay decisions changed.
 - **Validation:** JavaScript syntax checks pass for all three existing script files. Runtime, multiplayer, security, determinism and month simulations are not certified. The legacy DOCX and arithmetic JSON remain historical v1.2 artifacts.
+
+### A1 implementation change log · 25 October 2026
+- Began A1 with the isolated accounting/command foundation and local transaction harness; added automated invariant checks and setup guidance in `backend/README.md`. No third-party runtime packages, paid infrastructure or changes to prototype saves are required.
+- Added a GitHub Actions workflow for backend tests and existing browser-script syntax checks. **Local verification: 17 foundation tests pass**, including retry/conflicts, isolation, safe inputs, escrow, replay, concurrency, rollback and immutable snapshot checks. Hosted CI status is tracked separately in the implementation PR.
+- Added T18-13/14 for command retry/conflict and ownership/input rejection behavior. Existing acceptance requirements remain in force; A1 and Release A are not complete.
+- Recorded CEO launch scope: **private friends test, up to 10 players**. Required section 21 simulations at larger populations are unchanged.
 
 ## 23 — Advanced Combat and AI Military Command
 

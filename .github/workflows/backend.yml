@@ -1,0 +1,34 @@
+name: Backend foundation
+
+on:
+  push:
+    paths:
+      - 'backend/**'
+      - '.nvmrc'
+      - '.github/workflows/backend.yml'
+  pull_request:
+    paths:
+      - 'backend/**'
+      - '.nvmrc'
+      - '.github/workflows/backend.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.19.0'
+      - name: Test accounting and command invariants
+        working-directory: backend
+        run: npm test
+      - name: Check legacy JavaScript syntax
+        run: |
+          node --check js/game.js
+          node --check js/backend.js
+          node --check js/config.js

@@ -1,6 +1,6 @@
 # Extraction Tycoon — Buildout Plan
 
-**Prepared: 25 October 2026 · A0 preparation complete · Release A not accepted**
+**Prepared: 25 October 2026 · A0 preparation complete · A1 in progress · Release A not accepted**
 
 [Rulebook](../rulebook/Extraction-Rulebook-v1.2.md) · [Questions for the Boss](Questions-for-the-Boss.md)
 
@@ -54,7 +54,7 @@ Internal A milestones below are integration checkpoints. **Only complete Release
 | B — Industry and trade | Player refineries, stations/contracts, hidden faction demand, intelligence, endogenous economic events, player trade and routing before departure. | All A regressions plus T06–T09, relevant economic proposal validation and security tests. Resolve contract defaults/forfeiture and closing liability policy before forward contracts. C-02 solver failure must roll back or stay pending atomically. |
 | C — Living world and Maker | Scouting/outposts/depletion, ecology, hazards, tribes/translation, campaigns, expanded military, nuking/SP/evolutions and Maker proposals. | T11/T13–T16, expanded T23, R-07/R-10, relevant T18/T19. Week-2 outpost calibration; translation payload secrecy/CAS; no repeat-SP farming; paid commitments survive nuke correctly; month scopes and home protection preserved. |
 
-**Release status:** A implementation not started by this documentation pass; B and C blocked on prior releases. C-01–C-09 remain provisional. No elapsed-time promises or balance certification are implied by arithmetic prices.
+**Release status:** A1 accounting foundation is in progress; B and C remain blocked on prior releases. C-01–C-09 remain provisional. No elapsed-time promises or balance certification are implied by arithmetic prices.
 
 ## Agent organization and credit control
 
@@ -84,3 +84,9 @@ Calibration ownership: lead coordinates C-01 progression and C-02 economy; imple
 ## CEO direction · 25 October 2026
 
 Conserve Pro weekly usage with small tasks and one lighter coding agent at a time. The platform is delegated to engineering, with free operation preferred and a complete setup README required. Retain Firebase provisionally, but verify whether scheduled trusted workers require billing; do not promise free production authority. Fresh authoritative saves are approved; preserve the legacy prototype and existing save keys. Paid infrastructure remains unauthorized.
+
+## A1 progress · 25 October 2026
+
+First implementation slice complete: dependency-free server-side accounting and idempotent wallet commands, with a serialized in-memory transaction adapter for local verification. The prototype remains unchanged. This is partial A1 progress: durable Firebase storage, verified transport identity, scheduler, production and commercial settlement are not yet implemented. Initial launch audience is approved as a private friends test for up to 10 players; section 21 simulation populations remain unchanged.
+
+Verification for the first A1 slice: 17 automated tests pass locally, including command retry/conflicts, owner/month isolation, exact escrow conservation, safe-input rejection, serialized concurrency, replay validation, rollback, immutable snapshots and ID edge cases. Browser script syntax and documentation links also pass. Next task: durable transactional storage and verified authentication integration, followed by deterministic engine/scheduler work. No deployed security or crash-recovery claim is made.
