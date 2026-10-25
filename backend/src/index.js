@@ -6,3 +6,4 @@ export { ProductionError, advanceProductionSeconds, createProductionState, liftR
 export { EventKernelError, createEventState, createStepRng, runEventBatch } from './events.js';
 export { withdrawSurfaceUnits } from './production.js';
 export { CURVES, UpgradeError, bulkPrice, nextLevelPrice, quote, shaftPrice, padPrice, dockPrice, outpostSitePrice } from './upgrades.js';
+export { generateWorld, siteValue, WorldError } from './world.js';
