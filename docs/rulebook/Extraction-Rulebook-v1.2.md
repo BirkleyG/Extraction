@@ -1171,6 +1171,12 @@ Month-end ordering
 4. Archive statistics, burn old balances, clear month-scoped data and create the new world atomically through a resumable idempotent closing state machine. New tasks never observe a half-reset month.
 - T17-05: closing after an outage yields the same ranking and archived ledger as continuous execution. T17-06: equal timestamps at B use the new-month rule. T17-07: a pre-B dispatch with post-B ETA pays once in the old snapshot, finalizes once, and creates no new-month stock.
 
+### A1 deterministic event foundation · 25 October 2026
+- Added a pure, schema-versioned server event kernel. Batches use explicit timestamp/priority/ID order, immutable input snapshots, replay fingerprints, a monotonic ordering cursor and seeded per-site/per-second random streams with saved draw cursors.
+- A required exclusive horizon prevents execution at or after the old month’s UTC boundary. Old-month event records with post-boundary ETAs remain pending for the future obligation-closing implementation; this utility neither finalizes obligations nor moves inventory into the next month.
+- Event priorities and domain handlers are explicit trusted inputs. A canonical cross-system priority table, automatic production tick generation, durable queue/checkpoint transactions, scheduled workers, retention and C-07 performance limits remain outstanding.
+- **T17-01/02 foundation evidence only:** 600 explicit fixture ticks yield identical checkpoints in one batch versus 600 one-event batches; duplicates, conflicting IDs, RNG continuation, handler rollback, ordering and boundary behavior are tested. These are not live/offline mining/economy acceptance results.
+
 ## 18 — Data Architecture, Persistence and Multiplayer Integrity
 
 **Status: consolidated revision 1.2.** Approved rules use the register in 00; C-numbered coefficients remain calibration work.
@@ -1502,6 +1508,11 @@ Changing a rule
 - Added Firestore transaction persistence, verified Firebase token transport, current-world/month/member guards and isolated local emulator configuration. Commands now support asynchronous transaction repositories while preserving existing retry and accounting behavior.
 - Added local bootstrap/demo scripts, locked dependencies, emulator CI checks and setup documentation. No prototype save, production resource or gameplay coefficient changed.
 - Recorded hosting direction: Firebase Blaze, with a budget still to agree before deployment. No paid deployment is authorized by that preference.
+
+### A1 deterministic event change log · 25 October 2026
+- Added pure event-batch and seeded RNG utilities, version-1 checkpoint validation and fixture tests; no production/hiring/storage base values or event-class priorities were invented.
+- **Local fast suite: 30 tests pass** after this slice. The existing 3 Auth/Firestore emulator tests remain required regressions; hosted checks run on the implementation PR.
+- Logged the C-01 production/lift calibration conflict and requested CEO direction in Q-08. The current formulas remain unchanged pending an answer and a documented evidence-based calibration change.
 
 ## 23 — Advanced Combat and AI Military Command
 
