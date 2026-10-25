@@ -8,7 +8,7 @@
 
 **Delivery note:** the Markdown file is the maintained specification. The accompanying v1.2 Word export is a historical snapshot and does not include the development preparation notes below. No Google Doc or gameplay code was changed by this preparation pass. Full gameplay balance has not been simulated.
 
-**Development status · 25 October 2026:** the repository contains a legacy browser prototype, not an accepted Release A. See [Buildout Plan](../development/Buildout-Plan.md) and [Questions for the Boss](../development/Questions-for-the-Boss.md). Approved gameplay rules remain unchanged; implementation proposals are explicitly marked pending.
+**Development status · 26 October 2026:** the repository contains a playable pixel sandbox and an invite-only trusted server core. Release A is not yet accepted. See [Buildout Plan](../development/Buildout-Plan.md) and [Questions for the Boss](../development/Questions-for-the-Boss.md). Approved gameplay rules remain unchanged; implementation proposals are explicitly marked pending.
 
 ## Contents
 
@@ -338,6 +338,12 @@ Bottlenecks
 - Current benchmark coefficients and candidate interpretation live in section 10 under C01-LIFT-02. No worker-pool allocation, habitat progression, UI, depletion, shipping or sale behavior is introduced by the study.
 - T03-01/02/03/05 have partial helper/fixture evidence only: formula checks, zero-worker output, rendering-independent calculations, cap validation, 600-step replay and ore conservation. No purchase endpoint exists for these helpers, so concurrent purchases and full gameplay acceptance remain pending.
 
+### Local sandbox mining profile · 26 October 2026
+
+**Scope: new local mines only (`sandbox-rebuild-v1`); authoritative server mining is unchanged.** Each shaft includes ten miners. A single global Pick line affects every shaft, including later purchases; shaft depth multiplies base digging by `2.05^(k−1)`. Shared economy data drives the model, machine tier labels and studies. Rare-vein size is `round(richness × 900 × 3^(k−1))` (mythic ×3.3); the pick must reach the matching hardness tier. Veins remain finite and deterministic. New sites always receive at least two distinct rare types in the fallback generation path.
+
+Each shaft buffer holds about ten seconds of lift flow; yard capacity is the greater of twenty seconds of lift flow, two holds or twenty units. All ore movement remains conserved. These are experimental sandbox capacities, not new authoritative storage upgrade rules. The original prototype and existing browser mines remain available with their own economics.
+
 ## 04 — Ores, Resource Generation and Depletion
 
 **Status: consolidated revision 1.2.** Approved rules use the register in 00; C-numbered coefficients remain calibration work.
@@ -451,6 +457,18 @@ Payment
 - Destination dock slots are scheduled or reserved at departure to support the displayed planned trip time. Clearly distinguish planned ETA from later delay due to an explicitly permitted interruption; cargo remains guaranteed.
 - Return-leg attacks may change actual empty-ship return time or availability. They do not alter the delivery commitment, sale or original disclosed estimate retroactively.
 - T05-05: first sale credits coin at departure while the ship is still outbound. T05-06: a pre-boundary departure is included exactly once in final coin even if its ETA follows closing.
+
+### Hauler and buyer rules update (Q-10) · 25 October 2026
+- **Supersedes** the finite-budget wording for computer-run buyers in 02, 06, 08 and 09 for raw ore: NPC buyers pay `units × bid` at takeoff with no budget or receiving-capacity limit (the coin remains an explicit external source, `NPC_RAW_PURCHASE`; fixed bids are C-02 provisional). Player-owned refineries and stations keep budgets, capacity reservations and daily limits (Release B).
+- **Takeoff:** a hauler leaves automatically when its hold is full (or, when the yard is smaller than the hold, when the yard is completely full). "Launch now" forces takeoff with the whole units on the yard (up to the hold). Both are the same paid departure; payment is at takeoff and never on arrival. Auto can be turned off; a pinned buyer overrides "best coin per minute". The trusted server evaluates automatic takeoffs at their exact second, so live play, catch-up and offline play agree (T17-01).
+- **Units:** one unit = one standard crate of ore. The interface explains units, coin, yard, hold, AU and takeoff payment with hover/tap tips.
+- Server yard base capacity is 300 units (two starting holds) so a hauler can fill while it is away. `/play/` still uses its own sandbox yard and loads ore onto the hauler continuously.
+
+### Local sandbox shipping profile · 26 October 2026
+
+**Scope: new local sandbox mines only.** Landing supplies ten units of common ore in kind, zero coin. Automatic takeoff sells a whole hold when ready; Launch now sends available whole crates. Base hold is ten crates, speed twelve AU/min, and fixed unload times are two/three/four seconds for the three published NPC buyers. Base bids are 10/18/50 coin per unit before ore modifiers. Apply ore modifiers and round the unit price first, then multiply by quantity for the actual integer payment and the UI preview.
+
+The unupgraded nearest-buyer trip is twelve seconds (`ceil(2 × distance/speed × 60 + unloadSeconds)`). Payment is final at takeoff, never repeated on arrival. Hold capacity grows ×1.4 per Hauler level (whole crates); speed grows ×1.04. Sandbox pad loading can move a hold per second. The trusted online server keeps its existing shipping formula, independent upgrade lines and coefficients.
 
 ## 06 — Refineries and Industrial Processing
 
@@ -760,6 +778,27 @@ Facility and expansion affordability
 ### Translation research
 
 Three independent purchasable lines: Vocabulary (initial 0, cap 100, +1 percentage point recognition per level); Accuracy (initial 0, cap 75, reduces conditional word-confusion chance from 75% to 0%, -1 point per level); Languages (initial 0, +1 distinct active language slot per level, no predetermined language list). Languages is intentionally expensive relative to the other two; use the initial calibrated base cost and growth listed above, and show its actual next price before purchase. Use the standard cost(level L)=round(baseCost × growth^L), with the explicit short-track curves listed above and Buy 1/10/100/Max limited by remaining levels, funds and caps. The Languages cap is a provisional world-language-count limit, not automatically 1000: it cannot exceed the number of distinct supported language IDs. No stage gate or milestone bonus is introduced. The player's comprehension is not a fourth purchasable statistic: effective correct-token probability = (Vocabulary/100) × (1 - max(0,75-Accuracy)/100). Coin charges are atomic and idempotent (02/18). T10-05 costs rise monotonically; T10-06 each Languages purchase adds exactly one assignable slot; T10-07 capped tracks cannot be overbought.
+
+### Early-game profile C01-EARLY-01 · 25 October 2026 (provisional)
+- CEO confirmed: starting coin 0; late-join grant 20% of median cumulative earnings; ore in whole units; engineering may tune missing coefficients. Adopted for development: NPC nearest-refinery bid 40 coin/unit, 1-unit minimum paid departure, NPC unload fixture 1,500 units/min, miner hire round(20×1.004^(owned−5)), habitat line 50×1.0195^L (cap 1000, capacity 10+2L). Evidence and caveats: [Early-game calibration](../development/calibration/Early-Game-Calibration.md). Not certified balance; the 10-level habitat cap implied elsewhere cannot staff 30 shafts and is superseded by this proposal pending review.
+- Same-timestamp event priority (engineering call): month close → hazards/ecology/combat → production → arrivals → departures/commands → contract deadlines → hourly market clear → news.
+- **C01-EARLY-02 (provisional):** landing grants 5 whole units of common ore on the yard, in kind (not coin, not earnings), so the first paid departure happens within seconds. A ship keeps loading while at least one whole unit waits and the hold has room, then departs; paid departure still happens at takeoff.
+
+### Sandbox pacing profile C01-SANDBOX-01 · 26 October 2026 (provisional)
+
+**The CEO supplied a separate economy/pacing rebuild and authorized engineering judgment.** Adopt it as a local playability experiment, retaining the purple pixel interface. It does not replace the authoritative level-1000 curves above.
+
+| Sandbox line | First next-level price | Price growth | Effect per level |
+|---|---:|---:|---|
+| Global Pick | 680 | 1.8 | ×1.4 ore/min per miner |
+| Global Lift | 900 | 1.8 | ×1.4 throughput, starting at 100 ore/min |
+| Hauler | 780 | 1.8 | ×1.4 hold; ×1.04 speed |
+
+Bulk buys sum individually rounded level prices and buy the affordable quantity up to the requested count. Shaft k costs `round(190 × 4.1^(k−2))`; ten miners are included. Nominal local line ceiling is 400 and mine ceiling is 30 shafts, but safe-integer prices become unaffordable/unavailable well before all these nominal ceilings. This is an unresolved experimental progression limit, not a claim that every line or shaft is reachable in a month. Full-wallet takeoff waits without overflowing.
+
+The supplied costs 34/45/39 and growth 1.75 produced 22.6M at hour one and 4.09Qa at day thirty in the fluid study. A bounded comparison selected the higher bases/growth above: actual one-second scripted play earns **100 coin at second one; shaft two is affordable at second thirteen; 130,010 gross at hour one**, with no test grants. The fluid approximation earns 184,358 at hour one, 62.4B at day seven and 3.013T at day thirty; corresponding targets are 100K, 1.139B and 12.783T. Daily-check-in fluid earnings are about 63% of active at day thirty. **Intermediate pacing still diverges substantially; neither this experiment nor the earlier profile certifies full-month balance.**
+
+Reproducible scripts, complete tables, policy assumptions and exact-model evidence: [Sandbox economy evidence](../../play/sim/README.md). Finite storage, discrete shipments and rare ores make the exact engine different from the fluid approximation.
 
 ## 11 — Exploration, Scouting and Expansion
 
@@ -1409,6 +1448,14 @@ Accessibility and devices
 - Show spendable coin and escrow separately while ranking total owned coin once. Show departure payment confirmation independently of arrival and empty-return status.
 - T20-05: no screen names a bottleneck or prescribes the cheapest/best next upgrade. T20-06: queued/full/idle markers match saved state. T20-07: translation tooltips and history never expose hidden canonical meanings.
 
+### Legacy presentation and local-save safety · 26 October 2026
+
+- Keep the purple pixel side view, animated miners, lift, yard, ship, minimap, planet map and tabbed controls. New global machine cards show cost, current → next effect, technology progress and Buy 1/10/100/Max. Tiers change presentation only; they never add hidden economic multipliers. Show ore waiting and capacity visually without naming the best upgrade.
+- New local mines use the experimental three-line profile. Existing local mines retain their economics until the player explicitly chooses Tools → Try new economy → Back up & start fresh. Preserve the previous wrapper and expose a download. Never import local coin into online accounts.
+- Preserve an unreadable save's exact raw text before replacing it. If recovery storage fails or already holds different data, block autosaving over the original and explain that the session is temporary until an explicit reset. Provide the recovery text for download.
+- First-session guidance is dismissible; reduced-motion and sound controls remain available. Desktop and 320–390px phone-width layouts must remain usable.
+- For new local mines, retain the latest 64 ledger details and 32 shipment details plus any active commitments. Retired rows enter explicit source/sink and paid-ore aggregate archives shown in Records; totals, coin and inventory do not change. Online and original-profile histories are unchanged. This bounds exact catch-up work without introducing a different offline economy.
+
 ## 21 — Testing, Validation and Acceptance Criteria
 
 **Status: consolidated revision 1.2.** Approved rules use the register in 00; C-numbered coefficients remain calibration work.
@@ -1578,6 +1625,12 @@ Changing a rule
 - Existing prototype, browser saves and server accounts must remain intact. Online clients continue to use trusted server commands. Presentation reuse must not make the browser authoritative.
 - Work and verification are tracked in [Playability progress](../development/Overnight-Progress.md). Release A remains incomplete.
 
+### Playable economy and recovery batch · 26 October 2026
+
+- Integrated the supplied sandbox economy/pacing study, calibrated a provisional three-line profile and retained independent trusted-server economics. Added exact one-second pacing evidence and bounded history archives. Owning sections 03/05/10 document every adopted coefficient and limitation.
+- Preserved the legacy pixel UI; added machine effect previews, bulk controls, onboarding, reduced motion, explicit old-save migration backups and corruption recovery. Section 20 owns these presentation/save requirements.
+- Existing prototype saves and online accounts are preserved. Browser and invariant verification is tracked in [Playability progress](../development/Overnight-Progress.md); incomplete Release A systems remain incomplete.
+
 ## 23 — Advanced Combat and AI Military Command
 
 **Status: consolidated revision 1.2.** Approved rules use the register in 00; C-numbered coefficients remain calibration work.
@@ -1625,15 +1678,3 @@ T23-01 same saved state, seed and tick produce identical results in watched/offl
 - 12 and 14 now use this resolver. 10 defines cost families; 18 stores command queues and event outcomes; 19 controls narration; 21 includes the T23 suite. Numerical HQ examples remain C-04 calibration, not required finalized coefficients.
 - **Each branch has its four specialty lines plus a shared protection line; where a specialty is already named armor, that line supplies protection and is not charged twice. No individual loadouts.**
 - T23-11: visible combat effects meet the reasonably graphic cartoon style while combat facts are identical with rendering disabled.
-
-
-### Early-game profile C01-EARLY-01 · 25 October 2026 (provisional)
-- CEO confirmed: starting coin 0; late-join grant 20% of median cumulative earnings; ore in whole units; engineering may tune missing coefficients. Adopted for development: NPC nearest-refinery bid 40 coin/unit, 1-unit minimum paid departure, NPC unload fixture 1,500 units/min, miner hire round(20×1.004^(owned−5)), habitat line 50×1.0195^L (cap 1000, capacity 10+2L). Evidence and caveats: [Early-game calibration](../development/calibration/Early-Game-Calibration.md). Not certified balance; the 10-level habitat cap implied elsewhere cannot staff 30 shafts and is superseded by this proposal pending review.
-- Same-timestamp event priority (engineering call): month close → hazards/ecology/combat → production → arrivals → departures/commands → contract deadlines → hourly market clear → news.
-- **C01-EARLY-02 (provisional):** landing grants 5 whole units of common ore on the yard, in kind (not coin, not earnings), so the first paid departure happens within seconds. A ship keeps loading while at least one whole unit waits and the hold has room, then departs; paid departure still happens at takeoff.
-
-### Hauler and buyer rules update (Q-10) · 25 October 2026
-- **Supersedes** the finite-budget wording for computer-run buyers in 02, 06, 08 and 09 for raw ore: NPC buyers pay `units × bid` at takeoff with no budget or receiving-capacity limit (the coin remains an explicit external source, `NPC_RAW_PURCHASE`; fixed bids are C-02 provisional). Player-owned refineries and stations keep budgets, capacity reservations and daily limits (Release B).
-- **Takeoff:** a hauler leaves automatically when its hold is full (or, when the yard is smaller than the hold, when the yard is completely full). "Launch now" forces takeoff with the whole units on the yard (up to the hold). Both are the same paid departure; payment is at takeoff and never on arrival. Auto can be turned off; a pinned buyer overrides "best coin per minute". The trusted server evaluates automatic takeoffs at their exact second, so live play, catch-up and offline play agree (T17-01).
-- **Units:** one unit = one standard crate of ore. The interface explains units, coin, yard, hold, AU and takeoff payment with hover/tap tips.
-- Server yard base capacity is 300 units (two starting holds) so a hauler can fill while it is away. `/play/` still uses its own sandbox yard and loads ore onto the hauler continuously.

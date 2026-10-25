@@ -1,0 +1,82 @@
+{
+  "scope": "Exact one-second sandbox, seeded default site, greedy lookahead; no grants. Fluid study is an approximation, not certification.",
+  "tune": {
+    "growth": 1.4,
+    "costGrowth": 1.8,
+    "pickCost": 680,
+    "lift": 100,
+    "liftCost": 900,
+    "haulCost": 780,
+    "depth": 2.05,
+    "shaftBase": 190,
+    "shaftGrowth": 4.1,
+    "orePerMiner": 6,
+    "holdBase": 10,
+    "speedBase": 12,
+    "speedGrowth": 1.04,
+    "veinGrowth": 3,
+    "veinBase": 900
+  },
+  "snapshots": [
+    {
+      "second": 1,
+      "earned": 100,
+      "coins": 100,
+      "departures": 1,
+      "pick": 0,
+      "lift": 0,
+      "hauler": 0,
+      "shafts": 1
+    },
+    {
+      "second": 10,
+      "earned": 100,
+      "coins": 100,
+      "departures": 1,
+      "pick": 0,
+      "lift": 0,
+      "hauler": 0,
+      "shafts": 1
+    },
+    {
+      "second": 60,
+      "earned": 500,
+      "coins": 310,
+      "departures": 5,
+      "pick": 0,
+      "lift": 0,
+      "hauler": 0,
+      "shafts": 2
+    },
+    {
+      "second": 300,
+      "earned": 2820,
+      "coins": 391,
+      "departures": 25,
+      "pick": 1,
+      "lift": 0,
+      "hauler": 1,
+      "shafts": 3
+    },
+    {
+      "second": 900,
+      "earned": 11440,
+      "coins": 1660,
+      "departures": 75,
+      "pick": 3,
+      "lift": 2,
+      "hauler": 2,
+      "shafts": 3
+    },
+    {
+      "second": 3600,
+      "earned": 130010,
+      "coins": 15366,
+      "departures": 324,
+      "pick": 6,
+      "lift": 6,
+      "hauler": 6,
+      "shafts": 5
+    }
+  ]
+}

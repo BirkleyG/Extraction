@@ -1,3 +1,4 @@
+import { LINES } from './economy.js';
 /* Named tiers for every upgrade line. The model still counts plain levels; this layer gives each stretch of levels a
  * real machine to look at (and the scene redraws the lift, pick and hauler to match). */
 export const TIERS = {
@@ -11,6 +12,8 @@ export const TIERS = {
   bunkhouse: { label: 'Bunkhouse', icon: '▭', base: 0, tiers: [[0, 'Cots'], [3, 'Bunk Beds'], [6, 'Barracks'], [9, 'Sleep Pods']] },
   cart: { label: 'Mine Carts', icon: '◫', base: 0, tiers: [[0, 'Wheelbarrows'], [3, 'Rail Carts'], [6, 'Ore Trains'], [9, 'Maglev Trains']] },
 };
+
+for (const [id, line] of Object.entries(LINES)) TIERS[id] = { label: line.label, icon: line.icon, base: 0, tiers: line.tiers };
 
 export function tierOf(type, level) {
   const def = TIERS[type]; let i = 0;
