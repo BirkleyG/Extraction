@@ -13,6 +13,8 @@ Legend: ✅ built and tested · 🟡 partial / sandbox-only · ⬜ not started �
 | `play/` | Single-player local sandbox: mine view, hire, upgrades, shafts, local shipping. Not authoritative, no market, no month. |
 | `prototype/` + `js/game.js` | Legacy Mineshaft Capital. Kept for reference/saves; not a base for the new rules (10-shaft cap, pays on return, 48h offline cap, client-side time). |
 
+**Baseline note:** the table above records the initial assessment; the progress log and latest checkpoint below supersede its implementation counts.
+
 **The core problem Codex hit:** the rules need a trusted server that owns time, money and hidden state. The legacy game is a client-side sim. So the build is a backend-first job; the browser is a thin renderer on top. Build in the order below — each phase unblocks the next.
 
 ---
@@ -156,3 +158,11 @@ Rules: 03, 04, 05, 10, 02 (commercial departure). Tests: T03, T04, T05, T10, T18
 - 25 Oct: **Online client** (`online/`): Firebase sign-in (Google + email/password), invite-code join, enroll, 20 s polling with local ore extrapolation, sell / build / records tabs, bulk-buy modes. Verified in headless Chromium against the Auth + Firestore emulators and the real game server (sign up → wrong invite → join → sell 5 units for 200 → buy Max dig). Server additions: `world-admin.js` (invite-only join, month prepare + rollover + close), `/internal/tick` (shared-secret), `Dockerfile`, `backend/deploy.sh` (Cloud Run + Secret Manager + hourly Cloud Scheduler). **Next:** you run `deploy.sh` in Cloud Shell, set `API_BASE`, merge to `main`.
 - 25 Oct (Q-10): NPC buyers unlimited; hauler auto-takeoff when full + `Launch now`/`setPolicy` on server and sandbox; plain-language unit glossary and hover tips in `/play/` and `/online/`; automatic takeoffs are ledgered at their own second and settle in committed batches (offline == live, T17-01); month close settles takeoffs before B. 79 fast + 9 emulator tests pass. `/play/` remains the default site; `/online/` is opt-in.
 - 25 Oct: **Online mode inside the pixel game** (`play/online.js`): Firebase sign-in + invite join overlay, server view adapted into the renderer's state, optimistic local actions turned into server commands (diff of state), 15 s polling plus a poll at the predicted automatic takeoff, auto-takeoff toasts. Offline sandbox remains the default. Verified in headless Chromium against the emulators.
+
+## Latest playable checkpoint · 26 October 2026
+
+- ✅ Published pixel sandbox now includes real local refining, finite stock/loss accounting, NPC refined sales, station spot contracts, bounded hourly simulated offers, delayed infantry, reversible home incidents and validated Maker presentation.
+- ✅ Heavy catch-up runs in a local browser worker; online passive reconciliation is 30 seconds with immediate command/return refresh and stale-response protection.
+- ✅ Refineries have optional automatic NPC selling or own-station fill; existing saves default to manual output.
+- 🟡 These industry/home-safety systems are local previews. Full CES, cross-owner industry, facility logistics/forward contracts, section 23 combat, comprehensive month certification and production cost evidence remain open. A and B are not accepted releases.
+- Evidence: [Industry and responsive client](Industry-Release.md). The earlier checkboxes remain historical and must not be read as a claim that preview implementations satisfy every canonical acceptance test.

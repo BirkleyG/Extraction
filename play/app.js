@@ -423,7 +423,7 @@ function renderHud() {
   const yard = state.production.surface.capacityUnits ? surfaceTotal() / state.production.surface.capacityUnits : 0;
   const buf = Math.max(0, ...state.production.shafts.map((s) => (s.bufferCapacityUnits ? s.bufferUnits / s.bufferCapacityUnits : 0)));
   const banner = $('#banner');
-  const msg = catchingUp ? `CATCHING UP · ${fmt(catchupRemaining)} s left` : recovering || (yard >= 0.9 ? 'ORE YARD · near capacity' : buf >= 0.9 ? 'ORE WAITING BELOW · crews at work' : '');
+  const msg = catchingUp ? `CATCHING UP · ${fmt(catchupRemaining)} s left` : recovering || state.frontier?.incident && state.frontier.status || (yard >= 0.9 ? 'ORE YARD · near capacity' : buf >= 0.9 ? 'ORE WAITING BELOW · crews at work' : '');
   banner.hidden = !msg;
   banner.classList.toggle('bad', !catchingUp && !recovering && !!msg);
   banner.textContent = msg;
@@ -660,9 +660,11 @@ function drawScene() {
   const t = reducedMotion || paused ? 0 : performance.now() / 1000;
   if (view === 'map') renderMap(canvas, ctx, { planet, regionId, t, cam: camMap, selected: mapSel });
   else renderScene(canvas, ctx, { state, planet, region: region(), t, frac: paused || reducedMotion ? 0 : Math.min(1, (performance.now() - lastTickMs) / 1000), oreIndex, cam: camSide });
-  if (t - miniT > 0.5) { miniT = t; drawMini(); }
+  const thumbnailKey = `${view}|${planet.id}|${regionId}`;
+  if (thumbnailKey !== miniKey || t - miniT > 0.5) { miniKey = thumbnailKey; miniT = t; drawMini(); }
 }
-let miniT = 0;
+let miniT = -Infinity;
+let miniKey = '';
 function drawMini() {
   const mc = $('#mini'); if (!mc) return;
   const dpr = window.devicePixelRatio || 1; const W = Math.round(96 * dpr); const H = Math.round(76 * dpr);

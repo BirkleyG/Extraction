@@ -77,3 +77,43 @@ test('new modules anchor legacy sandbox saves at present without replaying old e
   assert(loaded.industry.market.offers.every(o=>o.expiresAt>100000));
   assert.equal(loaded.coins,0);
 });
+
+test('automatic refined sales use the same checked ledger and exact catch-up as manual sale policy',()=>{
+  const start=industryCommand(factory(),{type:'setOutputPolicy',policy:'npc'});
+  let state=advanceGame(start,600,600).state;
+  assert(state.totalExternalEarnings>0);
+  assert(state.industry.accounting.soldRefinedByOre[state.site.commonOreId]>0);
+  assert(Object.values(state.industry.refinery.output).reduce((n,u)=>n+u,0)<2);
+  let repeated=start; for(let i=0;i<600;i++)repeated=stepGame(repeated);
+  assert.deepEqual(state,repeated);
+  const source=state.ledger.filter(r=>r.type==='NPC_REFINED_PURCHASE').reduce((n,r)=>n+r.amount,0)+(state.historyArchive?.ledger.amountsByType.NPC_REFINED_PURCHASE??0);
+  assert.equal(source,state.totalExternalEarnings);
+  assertMass(state);
+});
+
+test('automatic station fill is an inventory transfer and full wallets do not crash automatic sales',()=>{
+  const start=industryCommand(factory(),{type:'setOutputPolicy',policy:'station'});
+  const state=advanceGame(start,120,120).state;
+  assert(Object.values(state.industry.station.stock).some(units=>units>0));
+  assert.equal(state.totalExternalEarnings,0);
+  assertMass(state);
+  let rich=industryCommand(factory(),{type:'setOutputPolicy',policy:'npc'});
+  rich.coins=Number.MAX_SAFE_INTEGER;
+  rich=advanceGame(rich,60,60).state;
+  assert.equal(rich.coins,Number.MAX_SAFE_INTEGER);
+  assert.equal(rich.totalExternalEarnings,0);
+  assert(Object.values(rich.industry.refinery.output).some(units=>units>0));
+});
+
+test('archived escrow moves conserve total owner wealth as well as external cash',()=>{
+  let state=factory();
+  for(let i=0;i<40;i++){
+    state=industryCommand(state,{type:'fundBudget',amount:10});
+    state=industryCommand(state,{type:'releaseBudget',amount:10});
+  }
+  state=stepGame(state);
+  const archive=state.historyArchive.ledger;
+  assert.equal(archive.ownerDelta+archive.externalDelta+(archive.escrowDelta??0),0);
+  assert.equal(state.ledger.reduce((n,r)=>n+r.ownerDelta+(r.escrowDelta??0),0)+archive.ownerDelta+(archive.escrowDelta??0),owned(state));
+  assert.deepEqual(validateGameState(JSON.parse(JSON.stringify(state))),state);
+});

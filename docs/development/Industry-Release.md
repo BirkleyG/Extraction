@@ -23,8 +23,20 @@ New modules attach to existing new-economy saves at their current simulated seco
 
 ## Verification and delivery
 
-Model and browser verification is in progress. Publish only after engine, transaction/replay, worker and browser checks pass; record exact results below. No paid infrastructure or AI request is needed for this batch. Trusted backend runtime deployment remains separate.
+PR #16 passed 63 local engine/AI/runtime tests, 86 backend tests and 10 real Auth/Firestore emulator tests, and was published from main merge `8801e567439cd903f861c4a77932ad605fd72436`. Public browser testing passed the full industry sale/contract loop, infantry arrival, no-key factual Maker, exact paused reload and 390px layout with no JavaScript errors. No paid infrastructure or AI request is needed for this batch. Trusted backend runtime deployment remains separate.
 
 ## Outstanding release gates
 
 Release A still needs the complete durable event pipeline, accepted defense resolver, leaderboard/onboarding/accessibility coverage, comprehensive month simulations, recovery/performance/cost evidence and formal acceptance. Refineries/stations are Release B systems in the maintained roadmap; this local preview lets the CEO play them early without calling B complete. Online industry must use server validation and private projections before sharing economic outcomes.
+
+## Automation and responsiveness follow-up
+
+Refinery output has an explicit policy: **Hold/manual**, **Sell to NPC**, or **Fill own station**. Every 30 simulated seconds the latter policies move only existing whole refined units, using the same checked commands and ledger as manual actions. Full output silos or full wallets leave goods waiting; no inventory or money is discarded. Automatic station fill creates no revenue. Existing industry saves default to Hold/manual and are not reset. This is a local operations policy; automatic NPC exports use the same disclosed instant-transfer fixture as manual exports.
+
+Follow-up unit coverage: **68 local tests pass**, including automated sale sources, whole-material accounting, station self-transfer without revenue, exact replay/catch-up and full-wallet behavior; escrow archive rows preserve owned-coin conservation.
+
+Browser timing verified one passive refresh at about 31 seconds over a 35-second observation, even when takeoff ETA was one second; commands/focus trigger immediate reconciliation. A real module worker completed a one-hour catch-up while 97 animation frames and 157 ten-millisecond heartbeat callbacks ran. Reload during a persisted intermediate worker checkpoint resumed exactly to the same one-hour state, with no duplicate sales, output or incidents. These are development measurements, not production latency guarantees.
+
+**AI verification:** schema, timeout, retry and deterministic fallback paths are tested with mocked providers. No live paid AI request was made; real provider content requires the player's configured key and an explicit request. The public no-key path is verified.
+
+The minimap now renders on paused/reduced-motion startup and refreshes when switching view or planet, even when the visual clock is frozen.
