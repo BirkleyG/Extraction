@@ -1,6 +1,6 @@
 // Pure owner-state rules for the mine -> NPC buyer loop (sections 03, 05, 10). No I/O, no coin movement:
 // GameService applies the returned changes together with ledger postings in one transaction.
-import { createProductionState, advanceProductionSeconds, withdrawSurfaceUnits, shaftRatePerMinute, liftRatePerMinute } from './production.js';
+import { createProductionState, advanceProductionFast, withdrawSurfaceUnits, shaftRatePerMinute, liftRatePerMinute } from './production.js';
 import { CURVES, bulkPrice, habitatCapacity, shaftPrice, shaftWorkerCapacity } from './upgrades.js';
 
 export class MineError extends Error {
@@ -52,11 +52,11 @@ export function createOwnerState({ ownerId, monthId, siteId, commonOreId, nowSec
   };
 }
 
-/** Advance the mine to `toSec` through the shared one-second tick. Bounded; returns what remains. */
+/** Advance the mine to `toSec` through the shared one-second tick (steady stretches are extrapolated). `maxSteps` bounds explicit ticks; returns what remains. */
 export function advanceOwner(state, toSec, maxSteps) {
   const gap = toSec - state.simSecond;
   if (gap < 0) fail('CLOCK_REGRESSION');
-  const result = advanceProductionSeconds(state.production, { seconds: gap, maxSteps });
+  const result = advanceProductionFast(state.production, { seconds: gap, maxTicks: maxSteps });
   const next = clone(state);
   next.production = result.state;
   next.simSecond = state.simSecond + result.processedSeconds;

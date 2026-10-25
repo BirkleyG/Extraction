@@ -10,7 +10,7 @@ const fail = (code, message = code) => { throw new LedgerError(code, message); }
 const monthPattern = /^\d{4}-(0[1-9]|1[0-2])$/;
 const encode = (v) => Buffer.from(JSON.stringify(v)).toString('base64url');
 const ownerAccount = (ownerId, monthId, bucket) => `owner:${encode(ownerId)}:${encode(monthId)}:${bucket}`;
-export const MAX_COMMAND_CATCHUP_SECONDS = 7 * 24 * 3600;
+export const MAX_COMMAND_CATCHUP_TICKS = 20_000; // explicit one-second ticks per command; steady stretches are extrapolated
 
 const PAYLOAD_KEYS = {
   enroll: [],
@@ -113,7 +113,7 @@ export class GameService {
   async #loadOwner(tx, scope) {
     const doc = await tx.getDoc(ownerPath(scope.worldId, scope.actorId, scope.monthId));
     if (!doc) fail('NOT_ENROLLED');
-    const advanced = advanceOwner(doc, scope.nowSec, MAX_COMMAND_CATCHUP_SECONDS);
+    const advanced = advanceOwner(doc, scope.nowSec, MAX_COMMAND_CATCHUP_TICKS);
     if (advanced.remainingSeconds > 0) fail('CATCHING_UP', 'Simulation is catching up; retry shortly');
     return advanced.state;
   }
