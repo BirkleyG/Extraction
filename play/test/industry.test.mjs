@@ -280,3 +280,62 @@ test("lifetime refined sales preserve ore accounting across clearing and failed 
   assert.ok(Math.abs(1000 - accounted) < 1e-7);
   assert.equal(industry.accounting.soldRefinedByOre.ferrite, 100 + offer.units);
 });
+
+test("output policy is opt-in, supports old saves, and rejects invalid changes atomically", () => {
+  let industry = setup();
+  assert.equal(industry.outputPolicy, "hold");
+  delete industry.outputPolicy;
+  assert.equal(validateIndustry(industry), true);
+  const unchanged = advanceIndustry(industry, 30);
+  assert.equal(unchanged.industry.outputPolicy ?? "hold", "hold");
+  assert.deepEqual(unchanged.events, []);
+  const before = structuredClone(industry);
+  for (const policy of ["bad", null, true, {}, "station"]) {
+    assert.throws(() => action(industry, "setOutputPolicy", { policy }));
+    assert.deepEqual(industry, before);
+  }
+  const npc = action(industry, "setOutputPolicy", { policy: "npc" });
+  assert.equal(npc.coinDelta, 0);
+  assert.equal(npc.industry.outputPolicy, "npc");
+  industry = action(npc.industry, "buildStation").industry;
+  industry = action(industry, "setOutputPolicy", {
+    policy: "station",
+  }).industry;
+  assert.equal(industry.outputPolicy, "station");
+  assert.deepEqual(advanceIndustry(industry, 30).events, []);
+  industry.outputPolicy = "invalid";
+  assert.throws(() => validateIndustry(industry));
+});
+
+test("output policy UI renders escaped content and parses only supported intents", async () => {
+  const { renderIndustry, actionFromIndustryButton } =
+    await import("../industry-ui.js");
+  const industry = setup();
+  const state = {
+    industry,
+    coins: 1000000,
+    maker: {
+      content: {
+        facilities: [{ id: "refinery", name: "<script>alert(1)</script>" }],
+      },
+    },
+  };
+  const html = renderIndustry(state);
+  assert.ok(html.includes("Hold / manual"));
+  assert.ok(html.includes("Auto-sell to NPC"));
+  assert.ok(html.includes('data-policy="station" disabled'));
+  assert.ok(html.includes("&lt;script&gt;"));
+  assert.ok(!html.includes("<script>"));
+  const el = (policy) => ({ dataset: { industry: "setOutputPolicy", policy } });
+  assert.deepEqual(actionFromIndustryButton(el("npc"), state), {
+    type: "setOutputPolicy",
+    policy: "npc",
+  });
+  assert.equal(actionFromIndustryButton(el("station"), state), null);
+  assert.equal(actionFromIndustryButton(el("<bad>"), state), null);
+  state.industry = action(industry, "buildStation").industry;
+  assert.deepEqual(actionFromIndustryButton(el("station"), state), {
+    type: "setOutputPolicy",
+    policy: "station",
+  });
+});

@@ -1,4 +1,4 @@
-import { createIndustry, validateIndustry, advanceIndustry, applyIndustryAction, refineryStats } from './industry.js';
+import { createIndustry, validateIndustry, advanceIndustry, applyIndustryAction, refineryStats, stationStats, npcRefinedPrice } from './industry.js';
 import { createFrontier, validateFrontier, advanceFrontier, applyFrontierAction } from './frontier.js';
 import * as E from './economy.js';
 import { createProductionState, liftRatePerMinute, shaftRatePerMinute, tickProductionSecond, withdrawSurfaceUnits } from '../backend/src/production.js';
@@ -398,6 +398,25 @@ export function stepGame(inputState) {
         next.production = withdrawSurfaceUnits(next.production, row.oreId, units);
         next.industry.refinery.input[row.oreId] += units;
         free -= units;
+      }
+    }
+  }
+  // Optional local refinery exports are batched, using the same checked commands as manual orders.
+  if (next.economyProfile && next.simSeconds % 30 === 0 && next.industry.refinery) {
+    const policy = next.industry.outputPolicy ?? 'hold';
+    for (const [oreId, stock] of Object.entries(next.industry.refinery.output)) {
+      let units = Math.floor(stock);
+      if (units < 1 || policy === 'hold') continue;
+      if (policy === 'station') {
+        if (!next.industry.station) continue;
+        units = Math.min(units, Math.floor(stationStats(next.industry.station).siloCapacity - next.industry.station.stock[oreId]));
+        if (units > 0) Object.assign(next, industryCommand(next, { type: 'transferToStation', oreId, units }));
+      } else if (policy === 'npc') {
+        const payment = units * npcRefinedPrice(next.industry, oreId);
+        const owned = next.coins + (next.industry.refinery.budget ?? 0);
+        // Full wallets keep physical output waiting rather than minting or discarding anything.
+        if (!Number.isSafeInteger(payment) || payment > MAX_COIN - owned || payment > MAX_COIN - next.totalExternalEarnings) continue;
+        Object.assign(next, industryCommand(next, { type: 'sellRefinedNpc', oreId, units }));
       }
     }
   }

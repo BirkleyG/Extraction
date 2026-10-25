@@ -79,6 +79,7 @@ export function createIndustry(seed = "local", startSecond = 0) {
     seed: String(seed),
     elapsedSeconds: startSecond,
     autoRoute: false,
+    outputPolicy: "hold",
     accounting: { soldRefinedByOre: map() },
     refinery: null,
     station: null,
@@ -96,6 +97,11 @@ export function createIndustry(seed = "local", startSecond = 0) {
   return i;
 }
 export function validateIndustry(i) {
+  check(
+    i?.outputPolicy === undefined ||
+      ["hold", "npc", "station"].includes(i.outputPolicy),
+    "Invalid refined output policy",
+  );
   for (const id of ids)
     check(
       stock(i?.accounting?.soldRefinedByOre?.[id]) &&
@@ -296,7 +302,20 @@ export function applyIndustryAction(industry, action, context = {}) {
     s = i.station,
     id = action.oreId,
     u = action.units;
-  if (action.type === "setAutoRoute") {
+  if (action.type === "setOutputPolicy") {
+    check(
+      ["hold", "npc", "station"].includes(action.policy),
+      "Invalid refined output policy",
+    );
+    check(action.policy === "hold" || r, "Build a refinery first");
+    check(action.policy !== "station" || s, "Build a station first");
+    i.outputPolicy = action.policy;
+    description = {
+      hold: "Holding refined output for manual sale or transfer",
+      npc: "Enabled automatic refined sales to NPC stations",
+      station: "Enabled automatic transfers to own station",
+    }[action.policy];
+  } else if (action.type === "setAutoRoute") {
     check(typeof action.enabled === "boolean", "Invalid automatic routing");
     i.autoRoute = action.enabled;
     description = action.enabled

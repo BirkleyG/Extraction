@@ -423,7 +423,7 @@ function renderHud() {
   const yard = state.production.surface.capacityUnits ? surfaceTotal() / state.production.surface.capacityUnits : 0;
   const buf = Math.max(0, ...state.production.shafts.map((s) => (s.bufferCapacityUnits ? s.bufferUnits / s.bufferCapacityUnits : 0)));
   const banner = $('#banner');
-  const msg = catchingUp ? `CATCHING UP · ${fmt(catchupRemaining)} s left` : recovering || (yard >= 0.9 ? 'ORE YARD · near capacity' : buf >= 0.9 ? 'ORE WAITING BELOW · crews at work' : '');
+  const msg = catchingUp ? `CATCHING UP · ${fmt(catchupRemaining)} s left` : recovering || state.frontier?.incident && state.frontier.status || (yard >= 0.9 ? 'ORE YARD · near capacity' : buf >= 0.9 ? 'ORE WAITING BELOW · crews at work' : '');
   banner.hidden = !msg;
   banner.classList.toggle('bad', !catchingUp && !recovering && !!msg);
   banner.textContent = msg;

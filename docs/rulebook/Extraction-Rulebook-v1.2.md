@@ -536,6 +536,10 @@ Players can reserve docks for their own shipments to ensure that their shipments
 
 Yard → own refinery is an instant local transfer with no coin or revenue; optional automatic routing feeds available whole crates into free input storage. Processing consumes real raw units, records yield loss and stops at full output. Refined goods can be sold to an NPC station at 80% of its current published reference quote or transferred into the owner's station. No raw ore reaches the galactic end market. Budget funding/release, where exercised, remains an internal escrow movement, not earnings. Cross-owner purchasing and full facility logistics are not implemented in this preview.
 
+### Local refinery output policies · 26 October 2026
+
+Choose Hold/manual, Sell to NPC, or Fill own station. Automatic exports run every 30 simulated seconds using existing whole output and the same checked inventory/ledger commands as manual orders. NPC exports are the explicit `NPC_REFINED_PURCHASE` source; station fill is a zero-revenue own-inventory transfer. Full wallets or silos keep goods waiting. Missing policies in existing saves mean Hold/manual. These local operations use the instant-transfer fixture disclosed above; they are not shared server-side industry or canonical facility shipping.
+
 ## 07 — Space Stations and Commercial Contracts
 
 **Status: consolidated revision 1.2.** Approved rules use the register in 00; C-numbered coefficients remain calibration work.
@@ -1673,6 +1677,10 @@ Changing a rule
 Added the local refinery → refined goods → station/spot buyer loop, simulated hourly offers, bounded home-safety incidents and delayed infantry reinforcement, explicit-action Maker names/factual dispatches, 30-second online reconciliation and a browser worker for heavy local catch-up. Owning sections 06/07/08/12/17/19 document scope and coefficients. Existing saves initialize new systems at the current second; no old progress is replayed into invented earnings.
 
 The legacy pixel interface remains the visual contract. Industry and Colony tabs expose actual inventory, processing, contracts and safety status; no controls claim unimplemented shared industry or full combat. [Implementation and acceptance evidence](../development/Industry-Release.md) tracks this batch. Release A/B remain unaccepted pending their full gates.
+
+### Public industry playtest and automation follow-up · 26 October 2026
+
+PR #16 is merged and publicly verified: refinery/stock/sale/contract, infantry arrival, no-key Maker and mobile/save behavior all passed. Added optional automatic refinery exports after playtesting identified repeated manual selling as a chore. Follow-up invariant coverage includes automatic revenue, self-transfer, full-wallet waits and escrow archive reconciliation; 68 local tests pass. Exact worker catch-up/reload and approximately 30-second online polling were browser-verified. Live paid AI execution and full Release A/B acceptance are not claimed. [Detailed evidence and scope](../development/Industry-Release.md).
 
 ## 23 — Advanced Combat and AI Military Command
 
