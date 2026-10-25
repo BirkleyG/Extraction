@@ -12,7 +12,7 @@ const app = initializeApp({ projectId: 'demo-extraction' }, `game-${randomUUID()
 const db = getFirestore(app);
 const now = new Date();
 const monthId = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
-const buyers = [{ id: 'near', distance: 1, bidPerUnit: 40, unloadUnitsPerMinute: 1500, fundsCap: 200, fundsRefillPerSecond: 0, capacityCap: 100_000, capacityRefillPerSecond: 0 }];
+const buyers = [{ id: 'near', distance: 1, bidPerUnit: 40, unloadUnitsPerMinute: 1500 }];
 const code = (c) => (e) => e.code === c;
 
 async function world(uids) {
@@ -31,7 +31,6 @@ test('Firestore: enroll, paid departure, idempotent retry across service instanc
   const t0 = Date.now();
   const repo = new FirestoreGameRepository(db);
   const a = new GameService(repo, { npcBuyers: buyers });
-  await a.seedNpcBuyers({ worldId, monthId, nowSec: Math.floor(t0 / 1000) });
   const e = await a.enroll(cmd(0), ctx(worldId, 'u1', t0));
   const b = new GameService(new FirestoreGameRepository(db), { npcBuyers: buyers });
   const sale = cmd(e.version, { destinationId: 'near' });
@@ -44,23 +43,33 @@ test('Firestore: enroll, paid departure, idempotent retry across service instanc
   await assert.rejects(a.dispatch({ ...sale, destinationId: 'other' }, ctx(worldId, 'u1', t0 + 900_000)), code('IDEMPOTENCY_CONFLICT'));
 });
 
-test('Firestore: two owners racing for one NPC buyer budget never overspend it', async () => {
+test('Firestore: owners launching at the same moment are each paid in full (buyers have no budget to race for)', async () => {
   const worldId = await world(['u1', 'u2']);
   const t0 = Date.now();
-  const svc = (i) => new GameService(new FirestoreGameRepository(db), { npcBuyers: buyers });
-  const s1 = svc(1); const s2 = svc(2);
-  await s1.seedNpcBuyers({ worldId, monthId, nowSec: Math.floor(t0 / 1000) });
+  const s1 = new GameService(new FirestoreGameRepository(db), { npcBuyers: buyers });
+  const s2 = new GameService(new FirestoreGameRepository(db), { npcBuyers: buyers });
   const e1 = await s1.enroll(cmd(0), ctx(worldId, 'u1', t0));
   const e2 = await s2.enroll(cmd(0), ctx(worldId, 'u2', t0));
-  const tt = t0 + 2 * 3600_000; // ~2h of ore each: far more than the 200-coin (5-unit) budget
-  const out = await Promise.allSettled([
+  const tt = t0 + 2 * 3600_000;
+  const out = await Promise.all([
     s1.dispatch(cmd(e1.version, { destinationId: 'near' }), ctx(worldId, 'u1', tt)),
     s2.dispatch(cmd(e2.version, { destinationId: 'near' }), ctx(worldId, 'u2', tt)),
   ]);
-  const paid = out.filter((o) => o.status === 'fulfilled').reduce((a, o) => a + o.value.shipment.payment, 0);
-  assert(paid <= 200 && paid > 0, `paid ${paid}`);
-  const losers = out.filter((o) => o.status === 'rejected');
-  for (const l of losers) assert(['BUYER_OUT_OF_FUNDS'].includes(l.reason.code), l.reason.code);
+  for (const o of out) assert.equal(o.shipment.payment, o.shipment.units * 40);
+});
+
+test('Firestore: automatic takeoffs settle in committed batches with one ledger entry each', async () => {
+  const worldId = await world(['u1']);
+  const t0 = Date.now();
+  const repo = new FirestoreGameRepository(db);
+  const game = new GameService(repo, { npcBuyers: buyers });
+  await game.enroll(cmd(0), ctx(worldId, 'u1', t0));
+  await game.settleThrough({ worldId, ownerId: 'u1', monthId, toSec: Math.floor(t0 / 1000) + 12 * 3600 });
+  const view = await game.ownerView('u1', monthId, ctx(worldId, 'u1', t0 + 12 * 3600_000));
+  assert(view.doc.shipments.length >= 3);
+  assert.equal(view.spendable, view.doc.shipments.reduce((a, x) => a + x.payment, 0));
+  const ledger = await db.collection('worlds').doc(sha(worldId)).collection('owners').doc(sha('u1')).collection('months').doc(monthId).collection('ledger').get();
+  assert.equal(ledger.size, view.doc.shipmentCounter);
 });
 
 test('Firestore: month close resumes after a crash with one snapshot and one burn per owner', async () => {
@@ -70,20 +79,21 @@ test('Firestore: month close resumes after a crash with one snapshot and one bur
   const t0 = Date.now();
   let clock = t0;
   const mk = () => new FirestoreGameRepository(db, { clock: () => clock });
-  const game = new GameService(mk(), { npcBuyers: [{ ...buyers[0], fundsCap: 1e9 }] });
-  await game.seedNpcBuyers({ worldId, monthId, nowSec: Math.floor(t0 / 1000) });
-  const e1 = await game.enroll(cmd(0), ctx(worldId, 'u1', t0));
-  const e2 = await game.enroll(cmd(0), ctx(worldId, 'u2', t0));
+  const game = new GameService(mk(), { npcBuyers: [{ ...buyers[0] }] });
+  let e1 = await game.enroll(cmd(0), ctx(worldId, 'u1', t0));
+  let e2 = await game.enroll(cmd(0), ctx(worldId, 'u2', t0));
+  e1 = await game.setPolicy(cmd(e1.version, { auto: false }), ctx(worldId, 'u1', t0));
+  e2 = await game.setPolicy(cmd(e2.version, { auto: false }), ctx(worldId, 'u2', t0));
   await game.dispatch(cmd(e1.version, { destinationId: 'near' }), ctx(worldId, 'u1', t0 + 1000));
   const B = monthEndMs(monthId);
   clock = B + 60_000; // the wall clock is now past the boundary
   let crashed = false;
-  const crashing = new MonthCloser(mk(), { hooks: { afterPhase: (n) => { if (n === 'snapshot' && !crashed) { crashed = true; throw new Error('outage'); } } } });
+  const crashing = new MonthCloser(mk(), { game, hooks: { afterPhase: (n) => { if (n === 'snapshot' && !crashed) { crashed = true; throw new Error('outage'); } } } });
   await assert.rejects(crashing.close({ worldId, monthId, nowMs: B + 60_000 }), /outage/);
-  const archive = await new MonthCloser(mk()).close({ worldId, monthId, nowMs: B + 120_000 });
+  const archive = await new MonthCloser(mk(), { game }).close({ worldId, monthId, nowMs: B + 120_000 });
   assert.equal(archive.ranking.length, 2);
   assert.equal(archive.winnerId, 'u1');
-  const again = await new MonthCloser(mk()).close({ worldId, monthId, nowMs: B + 180_000 });
+  const again = await new MonthCloser(mk(), { game }).close({ worldId, monthId, nowMs: B + 180_000 });
   assert.deepEqual(again, archive);
   void e2;
 });
@@ -98,9 +108,8 @@ test('HTTP game API with emulator-issued ID tokens end to end on Firestore', asy
   });
   const { idToken, localId } = await res.json();
   const worldId = await world([localId]);
-  const game = new GameService(new FirestoreGameRepository(db), { npcBuyers: buyers.map((b) => ({ ...b, fundsCap: 1e9 })) });
+  const game = new GameService(new FirestoreGameRepository(db), { npcBuyers: buyers });
   await game.storePlanet({ worldId, monthId, planet: generateWorld({ seed: `e2e-seed-${randomUUID()}`, monthId, players: 2 }) });
-  await game.seedNpcBuyers({ worldId, monthId, nowSec: Math.floor(Date.now() / 1000) });
   const server = createGameHttpServer({ auth: getAuth(app), game });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   try {

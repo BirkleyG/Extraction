@@ -15,9 +15,23 @@ const fmt = (n) => (n == null ? '—' : new Intl.NumberFormat('en-US', { maximum
 const compact = (n) => (n == null ? '—' : n >= 1e12 ? `${(n / 1e12).toFixed(2)}T` : n >= 1e9 ? `${(n / 1e9).toFixed(2)}B` : n >= 1e6 ? `${(n / 1e6).toFixed(2)}M` : n >= 1e4 ? `${(n / 1e3).toFixed(1)}K` : fmt(n));
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+const GLOSSARY = {
+  unit: 'UNIT — one standard crate of ore. Everything is counted in units: mining rate (units/min), the ore yard, the hauler hold (150 to start) and buyer prices (coin per unit). Example: 150 units at 40 ◉ each pays 6,000 ◉.',
+  coin: 'COIN (◉) — your money. Spend it on upgrades. The player with the most coin at the end of the month wins; buildings and ore in the yard do not count.',
+  yard: 'ORE YARD — surface storage where mined ore waits for the hauler (units now / units it can hold). A full yard stops the lift.',
+  month: 'MONTH ENDS — each month is a fresh planet. Everything resets at the end; only the hall of fame and your all-time stats stay.',
+  hold: 'HOLD — how many units the hauler carries per trip (150 at the start).',
+  launch: 'LAUNCH NOW — send the hauler immediately with the ore waiting in the yard (up to its hold), even if it is not full. You are paid at takeoff.',
+  auto: 'AUTO TAKE-OFF — the hauler leaves by itself the moment the hold is full (or the yard is completely full), even while you are away. Turn off to launch only by hand.',
+  au: 'AU — map distance unit. Trip time = 2 × distance ÷ hauler speed + unloading.',
+  bid: 'PRICE PER UNIT — what this buyer pays for each unit. Total pay = units × price.',
+  endless: 'Computer-run buyers never run out of coin or room, so you can always sell. Their prices are fixed test values for now.',
+  takeoff: 'You are paid at takeoff — never again on arrival. Once paid, the cargo is on its way and cannot be lost.',
+  best: 'BEST RATE — auto and Launch now pick the buyer that pays the most coin per minute of hauler time. Pin a buyer to override.',
+};
+const tipAttr = (k) => ` data-tip="${esc(GLOSSARY[k] || k)}"`;
 const ERRORS = {
-  INSUFFICIENT_FUNDS: 'Not enough coin.', SHIP_BUSY: 'The Hauler is still away.', NO_CARGO: 'No ore on the yard yet.',
-  BUYER_FULL: 'That buyer has no room left right now.', BUYER_OUT_OF_FUNDS: 'That buyer is out of funds right now. Try another.',
+  INSUFFICIENT_FUNDS: 'Not enough coin.', SHIP_BUSY: 'The Hauler is still away.', NO_CARGO: 'No ore in the yard yet.',
   AT_CAP: 'Already at the maximum.', NO_HABITAT_CAPACITY: 'Build more habitat first.', NO_SHAFT_CAPACITY: 'Add bunkhouse levels or a new shaft first.',
   MONTH_CLOSED: 'The month has ended. Reload to start the next one.', FORBIDDEN: 'You are not a member of this world.',
   STALE_VERSION: 'Out of date — refreshed. Try again.', CATCHING_UP: 'The server is catching up. Try again in a moment.', WORLD_FULL: 'The guild is full.',
@@ -42,6 +56,7 @@ async function call(path, body) {
   return json;
 }
 
+render.first = true;
 let state = null; let stateAt = 0; let mode = 1; let tab = 'sell'; let timer = null; let busy = false;
 const show = (id) => { for (const s of ['auth', 'join', 'game']) $(s).hidden = s !== id; };
 
@@ -121,12 +136,21 @@ const live = () => {
 function render() {
   if (!state) return;
   const s = state;
+  if (s.autoTakeoffs > 0 && !render.first) say(`${s.autoTakeoffs} automatic takeoff${s.autoTakeoffs === 1 ? '' : 's'} while you were away.`);
+  render.first = false;
   $('coin').textContent = compact(s.coin.totalOwned); $('coin').title = `${fmt(s.coin.spendable)} spendable · ${fmt(s.coin.escrow)} escrow`;
-  $('status').textContent = s.ship.readyInSeconds > 0 ? `Hauler away · back in ${Math.ceil(s.ship.readyInSeconds / 60)} min · paid at takeoff` : 'Hauler ready at the pad.';
   const f = (n) => fmt(n);
-  const eta = (o) => (o.estimate ? `${f(o.estimate.units)} u → ${f(o.estimate.payment)} ◉ · ${Math.ceil(o.estimate.tripSeconds / 60)} min round trip` : 'No ore ready');
-  $('tab-sell').innerHTML = `<h2>Where to sell</h2><p class="hint">Payment lands the moment the Hauler takes off. Each buyer has a limited daily budget.</p>`
-    + s.offers.map((o) => `<div class="line"><div class="name">${esc(o.name)} <span class="tag">${o.distance} AU</span><small>${eta(o)}</small></div><div class="price">${o.bidPerUnit} ◉/u</div><button data-act="dispatch" data-id="${esc(o.id)}" ${s.ship.readyInSeconds > 0 || !o.estimate ? 'disabled' : ''}>Launch</button></div>`).join('');
+  const pol = s.ship.policy;
+  const when = s.ship.readyInSeconds > 0 ? `back in ${Math.ceil(s.ship.readyInSeconds / 60)} min` : s.ship.autoInSeconds === 0 ? 'full — taking off' : s.ship.autoInSeconds == null ? 'waiting for ore' : `full in about ${Math.max(1, Math.ceil(s.ship.autoInSeconds / 60))} min`;
+  const eta = (o) => (o.estimate ? `${f(o.estimate.units)} units → ${f(o.estimate.payment)} ◉ · ${Math.ceil(o.estimate.tripSeconds / 60)} min round trip` : 'No ore ready');
+  $('status').textContent = s.ship.readyInSeconds > 0 ? `Hauler away · back in ${Math.ceil(s.ship.readyInSeconds / 60)} min · paid at takeoff` : (pol.auto ? `Hauler loading · ${when}` : 'Hauler waiting for your launch order.');
+  const holdPct = Math.round(Math.min(1, s.ship.holdUnits / Math.max(1, s.ship.takeoffAtUnits)) * 100);
+  $('tab-sell').innerHTML = `<h2>Where to sell</h2><p class="hint">Ore is counted in <b${tipAttr('unit')}>units</b> (one unit = one crate). Buyers pay <b>coin per unit</b> the moment the hauler takes off.</p>`
+    + `<div class="line"><div class="name">Hauler<small${tipAttr('hold')}>Hold ${f(s.ship.holdUnits)} / ${f(s.ship.takeoffAtUnits)} units · ${when}</small><div class="bar"><i style="width:${holdPct}%"></i></div></div><button class="primary" data-act="dispatch" ${s.ship.readyInSeconds > 0 || s.ship.holdUnits < 1 ? 'disabled' : ''}${tipAttr('launch')}>LAUNCH NOW ↗<br>${s.ship.holdUnits >= 1 ? `${f(s.ship.holdUnits)} units` : 'no ore yet'}</button></div>`
+    + `<label class="line"${tipAttr('auto')}><input type="checkbox" data-act="auto" ${pol.auto ? 'checked' : ''} style="width:auto;margin:0"> <span class="name">Take off automatically when the hold is full</span></label>`
+    + `<p class="hint"${tipAttr('best')}>Sends to: <b>${pol.destinationId ? esc((s.offers.find((o) => o.id === pol.destinationId) || { name: pol.destinationId }).name) : 'best coin per minute'}</b></p>`
+    + s.offers.map((o) => `<div class="line"><div class="name">${esc(o.name)} <span class="tag"${tipAttr('au')}>${o.distance} AU</span><small>${eta(o)}</small><small${tipAttr('endless')}>Buys every unit · never runs out</small></div><div class="price"${tipAttr('bid')}>${o.bidPerUnit} ◉/unit</div><button data-act="pin" data-id="${esc(o.id)}" class="${pol.destinationId === o.id ? 'on' : ''}">${pol.destinationId === o.id ? 'Pinned' : 'Pin'}</button><button data-act="dispatch" data-id="${esc(o.id)}" ${s.ship.readyInSeconds > 0 || !o.estimate ? 'disabled' : ''}>Launch here</button></div>`).join('')
+    + `<p class="hint"${tipAttr('takeoff')}>You are paid at takeoff — never again on arrival.</p>`;
   const enough = (p) => p != null && p <= s.coin.spendable;
   const m = (n) => (mode === 'max' ? 'Max' : `×${n}`);
   $('tab-build').innerHTML = `<h2>Build</h2><div class="mode">${[1, 10, 100, 'max'].map((x) => `<button data-mode="${x}" class="${String(mode) === String(x) ? 'on' : ''}">${x === 'max' ? 'MAX' : `×${x}`}</button>`).join('')}</div>`
@@ -174,10 +198,34 @@ document.addEventListener('click', (e) => {
   if (t.dataset.tab) { tab = t.dataset.tab; for (const b of document.querySelectorAll('#tabs button')) b.classList.toggle('on', b.dataset.tab === tab); for (const n of ['sell', 'build', 'records']) $(`tab-${n}`).hidden = n !== tab; return; }
   if (t.dataset.mode) { mode = t.dataset.mode === 'max' ? 'max' : Number(t.dataset.mode); render(); return; }
   const act = t.dataset.act; if (!act) return;
-  if (act === 'dispatch') return void command('dispatch', { destinationId: t.dataset.id }, (r) => `Sent ${fmt(r.shipment.units)} units — paid ${fmt(r.shipment.payment)} ◉ at takeoff.`);
+  if (act === 'dispatch') return void command('dispatch', t.dataset.id ? { destinationId: t.dataset.id } : {}, (r) => `Sent ${fmt(r.shipment.units)} units — paid ${fmt(r.shipment.payment)} ◉ at takeoff.`);
+  if (act === 'pin') return void command('setPolicy', { destinationId: state.ship.policy.destinationId === t.dataset.id ? null : t.dataset.id }, 'Buyer preference saved.');
   if (act === 'hire') return void command('hire', { count: 1 }, 'Miner hired.');
   if (act === 'shaft') return void command('buyShaft', {}, 'New shaft opened.');
   const [kind, line, num] = act.split(':');
   if (kind === 'line') return void command('buyUpgrade', { line, mode }, (r) => `${LINE_LABEL[line] || line} → level ${r.newLevel}.`);
   if (kind === 'shaft') return void command('buyUpgrade', { line, shaftNumber: Number(num), mode }, (r) => `${line} → level ${r.newLevel}.`);
 });
+
+document.addEventListener('change', (e) => {
+  if (e.target.matches('[data-act="auto"]')) command('setPolicy', { auto: e.target.checked }, e.target.checked ? 'Auto take-off on.' : 'Auto take-off off — launch by hand.');
+});
+
+// ---- hover tips ----
+const tipBox = document.createElement('div'); tipBox.id = 'gtip'; tipBox.hidden = true; document.body.append(tipBox);
+let tipAnchor = null; let mx = 0; let my = 0;
+const hideTip = () => { tipBox.hidden = true; tipAnchor = null; };
+function showTip(el) {
+  tipAnchor = el; tipBox.textContent = el.getAttribute('data-tip'); tipBox.hidden = false;
+  const r = el.getBoundingClientRect(); const w = tipBox.offsetWidth; const h = tipBox.offsetHeight;
+  tipBox.style.left = `${Math.min(Math.max(8, r.left + r.width / 2 - w / 2), innerWidth - w - 8)}px`;
+  tipBox.style.top = `${r.bottom + 8 + h > innerHeight ? Math.max(8, r.top - h - 8) : r.bottom + 8}px`;
+}
+document.addEventListener('mousemove', (e) => { mx = e.clientX; my = e.clientY; });
+document.addEventListener('mouseover', (e) => { const t = e.target.closest?.('[data-tip]'); if (t && t !== tipAnchor) showTip(t); else if (!t) hideTip(); });
+document.addEventListener('focusin', (e) => { const t = e.target.closest?.('[data-tip]'); if (t) showTip(t); });
+document.addEventListener('focusout', hideTip);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideTip(); });
+document.addEventListener('click', (e) => { const t = e.target.closest?.('[data-tip]'); if (t && matchMedia('(pointer: coarse)').matches) { showTip(t); setTimeout(hideTip, 5000); } });
+new MutationObserver(() => { if (tipAnchor && !document.contains(tipAnchor)) { const t = document.elementFromPoint(mx, my)?.closest?.('[data-tip]'); if (t) showTip(t); else hideTip(); } }).observe(document.getElementById('screens'), { childList: true, subtree: true });
+for (const [id, key] of [['coin', 'coin'], ['yard', 'yard'], ['clock', 'month']]) $(id).closest('.stat').setAttribute('data-tip', GLOSSARY[key]);

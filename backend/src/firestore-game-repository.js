@@ -63,7 +63,7 @@ export class FirestoreGameRepository {
 
       const staged = { ledger: [], accounts: new Map([[account(ownerId, monthId, 'spendable'), spendable], [account(ownerId, monthId, 'escrow'), escrow]]), commands: new Map(), starterGrants: new Set(), versions: new Map() };
       let nextVersion = version;
-      let ledgerToWrite = null;
+      const ledgerToWrite = [];
       let receiptToWrite = null;
       const docWrites = new Map();
       const docCache = new Map();
@@ -77,14 +77,15 @@ export class FirestoreGameRepository {
         hasStarterGrant: () => false,
         markStarterGrant: () => {},
         async append(entry) {
-          if (ledgerToWrite) fail('INVALID_LEDGER');
-          if (entry.ownerId !== ownerId || entry.monthId !== monthId || entry.reference !== requestId) fail('INVALID_SCOPE');
+          // A command posts under its request id; automatic takeoffs post under `auto:<shipment number>` (unique per owner and month).
+          if (entry.ownerId !== ownerId || entry.monthId !== monthId || !(entry.reference === requestId || /^auto:\d+$/.test(entry.reference))) fail('INVALID_SCOPE');
           const ledgerRef = monthRef.collection('ledger').doc(digest(entry.id));
-          if ((await dbtx.get(ledgerRef)).exists) fail('DUPLICATE_LEDGER_ID');
+          if (ledgerToWrite.some((w) => w.ref.path === ledgerRef.path) || (await dbtx.get(ledgerRef)).exists) fail('DUPLICATE_LEDGER_ID');
+          const before = staged.ledger.length;
           applyLedgerTransaction(staged, Object.freeze({ ...entry, postings: Object.freeze(entry.postings.map((p) => Object.freeze({ ...p }))) }));
-          ledgerToWrite = { ref: ledgerRef, entry: staged.ledger[0] };
+          ledgerToWrite.push({ ref: ledgerRef, entry: staged.ledger[before] });
         },
-        bumpVersion: (uid, month) => { assertScope(uid, month); nextVersion += 1; if (!Number.isSafeInteger(nextVersion)) fail('OVERFLOW'); return nextVersion; },
+                bumpVersion: (uid, month) => { assertScope(uid, month); nextVersion += 1; if (!Number.isSafeInteger(nextVersion)) fail('OVERFLOW'); return nextVersion; },
         saveCommand: (uid, month, id, payloadHash, result) => { assertScope(uid, month); if (id !== requestId) fail('INVALID_SCOPE'); receiptToWrite = { payloadHash, resultJson: JSON.stringify(result) }; },
         async getDoc(path) {
           if (docWrites.has(path)) return JSON.parse(docWrites.get(path));
@@ -98,8 +99,8 @@ export class FirestoreGameRepository {
       const value = await work(tx);
       if (readOnly) return value;
       // Buffered writes happen only after every read above has completed.
-      if (ledgerToWrite) {
-        dbtx.create(ledgerToWrite.ref, ledgerToWrite.entry);
+      if (ledgerToWrite.length) {
+        for (const w of ledgerToWrite) dbtx.create(w.ref, w.entry);
         for (const bucket of ['spendable', 'escrow']) dbtx.set(refFor(bucket), { balance: staged.accounts.get(account(ownerId, monthId, bucket)) ?? 0 });
       }
       if (nextVersion !== version) dbtx.set(stateRef, { version: nextVersion });

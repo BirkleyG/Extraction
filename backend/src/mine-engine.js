@@ -19,7 +19,7 @@ const clone = (v) => JSON.parse(JSON.stringify(v));
 const linear = (base, level) => base * (1 + 0.04 * level);
 
 export const bufferCapacity = (liftLevel) => 25 * (1 + 0.04 * liftLevel);
-export const yardCapacity = (level) => linear(100, level);
+export const yardCapacity = (level) => linear(300, level); // holds two full starting loads so a Hauler can fill while it is away
 export const shipCapacityUnits = (level) => Math.floor(linear(150, level));
 export const shipSpeedPerMinute = (level) => linear(0.5, level);
 export const loadUnitsPerMinute = (level) => linear(60, level);
@@ -49,6 +49,8 @@ export function createOwnerState({ ownerId, monthId, siteId, commonOreId, nowSec
       syntheticDownstreamDrain: { unitsPerSecond: 0 },
     }),
     shipments: [], shipmentCounter: 0, totalExternalEarnings: 0,
+    // Ship policy: take off automatically when the hold is full; destinationId null = best coin per minute.
+    policy: { auto: true, destinationId: null },
   };
 }
 
@@ -151,3 +153,98 @@ export function surfaceUnits(state, oreId) {
   return state.production.surface.unitsByOre.find((r) => r.oreId === oreId)?.units ?? 0;
 }
 export { withdrawSurfaceUnits, liftRatePerMinute, CURVES, bulkPrice };
+
+// ---------------------------------------------------------------------------------------------------------
+// Departures. Computer-run buyers never run out of coin or room (CEO decision, Q-10): they simply pay
+// units x bid at takeoff. The ship takes off automatically when the hold is full; "Launch now" forces it.
+// ---------------------------------------------------------------------------------------------------------
+const enc = (v) => Buffer.from(JSON.stringify(v)).toString('base64url');
+export const getPolicy = (state) => state.policy ?? { auto: true, destinationId: null };
+
+/** Best buyer by coin per minute of ship time (payment / busy seconds); a pinned destination wins when set and valid. */
+export function chooseBuyer(state, buyers, units) {
+  const pinned = getPolicy(state).destinationId;
+  const found = pinned ? buyers.find((b) => b.id === pinned) : null;
+  if (found) return found;
+  let best = null; let bestRate = -1;
+  for (const b of buyers) {
+    const rate = (units * b.bidPerUnit) / tripEstimate(state, b, units).busySeconds;
+    if (rate > bestRate + 1e-12 || (Math.abs(rate - bestRate) <= 1e-12 && best && b.id < best.id)) { best = b; bestRate = rate; }
+  }
+  return best;
+}
+
+/** Take `units` off the yard and pay for them at `atSec`. The state must already be advanced to atSec. */
+export function departureFor(state, buyer, units, atSec) {
+  const oreId = state.production.shafts[0].oreId;
+  if (!Number.isSafeInteger(units) || units < 1) fail('INVALID_UNITS');
+  const next = clone(state);
+  const available = surfaceUnits(state, oreId);
+  next.production = withdrawSurfaceUnits(state.production, oreId, units > available && units - available <= ORE_EPSILON ? available : units);
+  const plan = tripEstimate(state, buyer, units);
+  const payment = buyer.bidPerUnit * units;
+  if (!Number.isSafeInteger(payment)) fail('OVERFLOW');
+  next.shipmentCounter += 1;
+  const shipment = {
+    id: `shp:${enc(state.ownerId)}:${state.monthId}:${next.shipmentCounter}`, number: next.shipmentCounter, oreId, units, unitPrice: buyer.bidPerUnit, payment,
+    destinationId: buyer.id, departureSecond: atSec, arrivalSecond: atSec + plan.arrivalOffsetSeconds, tripSeconds: plan.tripSeconds, state: 'PAID_AT_DEPARTURE',
+  };
+  next.shipments.push(shipment);
+  if (next.shipments.length > 100) next.shipments.splice(0, next.shipments.length - 100);
+  next.ship.readyAtSecond = atSec + plan.busySeconds;
+  next.totalExternalEarnings += payment;
+  if (!Number.isSafeInteger(next.totalExternalEarnings)) fail('OVERFLOW');
+  return { state: next, shipment, plan };
+}
+
+// Ore flows are floating point; a stock within 1e-6 of a whole unit counts as that unit (sub-micro-unit dust is never sold).
+const ORE_EPSILON = 1e-6;
+const yardStock = (state) => Math.floor(surfaceUnits(state, state.production.shafts[0].oreId) + ORE_EPSILON);
+
+/** A takeoff is due when the hold is full, or when the yard is completely full (nothing more could arrive). */
+export const takeoffTarget = (state) => Math.max(1, Math.min(shipCapacityUnits(state.levels.shipCapacity), Math.floor(state.production.surface.capacityUnits)));
+
+/** Earliest second in [fromSec, toSec] at which the yard holds at least `target` whole units, or null. Stock only grows between departures. */
+function firstSecondWithStock(state, fromSec, toSec, target, maxTicks) {
+  const stockAt = (t) => yardStock(advanceOwner(state, t, maxTicks).state);
+  if (stockAt(fromSec) >= target) return fromSec;
+  if (stockAt(toSec) < target) return null;
+  let lo = fromSec; let hi = toSec; // stock(lo) < target <= stock(hi)
+  while (hi - lo > 1) { const mid = lo + Math.floor((hi - lo) / 2); if (stockAt(mid) >= target) hi = mid; else lo = mid; }
+  return hi;
+}
+
+/**
+ * Advance to `toSec`, taking off automatically each time the hold is full and the ship is ready.
+ * Pure: returns the new state and the departures made (each needs a ledger posting at its own second).
+ */
+export function settleAuto(inputState, buyers, toSec, { maxDepartures = 150, maxTicks = 20_000 } = {}) {
+  let cur = inputState;
+  const departures = [];
+  const cap = takeoffTarget(cur);
+  while (getPolicy(cur).auto) {
+    const from = Math.max(cur.simSecond, cur.ship.readyAtSecond);
+    if (from > toSec) break;
+    if (departures.length >= maxDepartures) return { state: cur, departures, done: false };
+    const t = firstSecondWithStock(cur, from, toSec, cap, maxTicks);
+    if (t === null) break;
+    const atT = advanceOwner(cur, t, maxTicks);
+    if (atT.remainingSeconds > 0) return { state: atT.state, departures, done: false };
+    const buyer = chooseBuyer(atT.state, buyers, cap);
+    const dep = departureFor(atT.state, buyer, cap, t);
+    departures.push({ ...dep.shipment, atSecond: t });
+    cur = dep.state;
+  }
+  const end = advanceOwner(cur, toSec, maxTicks);
+  return { state: end.state, departures, done: end.remainingSeconds === 0 };
+}
+
+/** Seconds until an automatic takeoff, assuming the current inflow; 0 when the hold is already full; null when ore is not arriving. */
+export function secondsUntilFull(state) {
+  const cap = takeoffTarget(state);
+  const stock = surfaceUnits(state, state.production.shafts[0].oreId);
+  if (stock >= cap) return 0;
+  const probe = advanceOwner(state, state.simSecond + 60, 100).state;
+  const rate = (surfaceUnits(probe, probe.production.shafts[0].oreId) - stock) / 60;
+  return rate > 1e-9 ? Math.ceil((cap - stock) / rate) : null;
+}

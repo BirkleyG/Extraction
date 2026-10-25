@@ -6,7 +6,7 @@ import { UpgradeError } from './upgrades.js';
 import { safeEqual } from './world-admin.js';
 
 const BODY_LIMIT = 8192;
-const KINDS = new Set(['enroll', 'buyUpgrade', 'hire', 'buyShaft', 'dispatch']);
+const KINDS = new Set(['enroll', 'buyUpgrade', 'hire', 'buyShaft', 'dispatch', 'setPolicy']);
 const monthAt = (ms) => `${new Date(ms).getUTCFullYear()}-${String(new Date(ms).getUTCMonth() + 1).padStart(2, '0')}`;
 
 function statusFor(code) {

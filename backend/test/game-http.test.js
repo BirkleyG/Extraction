@@ -6,13 +6,12 @@ import { MemoryLedgerRepository } from '../src/ledger.js';
 import { generateWorld } from '../src/world.js';
 
 const T0 = Date.parse('2026-11-03T12:00:00Z');
-const buyers = [{ id: 'near', name: 'Frontier Refinery', distance: 1, bidPerUnit: 40, unloadUnitsPerMinute: 1500, fundsCap: 1e7, fundsRefillPerSecond: 0, capacityCap: 1e6, capacityRefillPerSecond: 0 }];
+const buyers = [{ id: 'near', name: 'Frontier Refinery', distance: 1, bidPerUnit: 40, unloadUnitsPerMinute: 1500 }];
 
 async function withServer(run) {
   const game = new GameService(new MemoryLedgerRepository(), { npcBuyers: buyers });
   const planet = generateWorld({ seed: 'http-test-seed-1', monthId: '2026-11', players: 3 });
   await game.storePlanet({ worldId: 'w1', monthId: '2026-11', planet });
-  await game.seedNpcBuyers({ worldId: 'w1', monthId: '2026-11', nowSec: T0 / 1000 });
   let now = T0;
   const auth = { async verifyIdToken(t) { if (!t.startsWith('token-')) throw new Error('bad'); return { uid: t.slice(6) }; } };
   const server = createGameHttpServer({ auth, game, clock: () => now });
@@ -41,8 +40,12 @@ test('enrol via planet start slots, read filtered state, sell, upgrade; secrets 
     assert.equal(s.offers[0].estimate.units, 5);
     const sale = await call('ann', 'commands/dispatch', { requestId: 'd1', expectedVersion: s.version, destinationId: 'near' });
     assert.equal(sale.status, 200);
+    const pol = await call('ann', 'commands/setPolicy', { requestId: 'p1', expectedVersion: sale.body.version, auto: false });
+    assert.equal(pol.status, 200);
+    assert.equal((await call('ann', 'state')).body.ship.policy.auto, false);
     s = (await call('ann', 'state')).body;
     assert.equal(s.coin.spendable, 200);
+    s = (await call('ann', 'state')).body;
     const buy = await call('ann', 'commands/buyUpgrade', { requestId: 'u1', expectedVersion: s.version, line: 'dig', shaftNumber: 1, mode: 10 });
     assert.equal(buy.status, 200);
     assert.equal(buy.body.newLevel, 11);

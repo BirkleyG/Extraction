@@ -4,12 +4,13 @@
 import { createHash } from 'node:crypto';
 import { LedgerError, ledgerTransactionId } from './ledger.js';
 import { UpgradeError, quote } from './upgrades.js';
-import { MineError, PURCHASABLE_LINES, addShaft, advanceOwner, applyLevel, createOwnerState, hire, shipCapacityUnits, shaftLevelLine, surfaceUnits, tripEstimate, withdrawSurfaceUnits } from './mine-engine.js';
+import { MineError, PURCHASABLE_LINES, addShaft, advanceOwner, applyLevel, chooseBuyer, createOwnerState, departureFor, getPolicy, hire, settleAuto, shipCapacityUnits, shaftLevelLine, surfaceUnits, tripEstimate } from './mine-engine.js';
 
 const fail = (code, message = code) => { throw new LedgerError(code, message); };
 const monthPattern = /^\d{4}-(0[1-9]|1[0-2])$/;
 const encode = (v) => Buffer.from(JSON.stringify(v)).toString('base64url');
 const ownerAccount = (ownerId, monthId, bucket) => `owner:${encode(ownerId)}:${encode(monthId)}:${bucket}`;
+export const MAX_DEPARTURES_PER_TX = 150;
 export const MAX_COMMAND_CATCHUP_TICKS = 20_000; // explicit one-second ticks per command; steady stretches are extrapolated
 
 const PAYLOAD_KEYS = {
@@ -18,6 +19,7 @@ const PAYLOAD_KEYS = {
   hire: ['count'],
   buyShaft: [],
   dispatch: ['destinationId', 'units'],
+  setPolicy: ['auto', 'destinationId'],
 };
 const BASE_KEYS = ['monthId', 'requestId', 'expectedVersion'];
 export const monthEndMs = (monthId) => { const [y, m] = monthId.split('-').map(Number); return Date.UTC(y, m, 1); };
@@ -26,7 +28,6 @@ export const rosterPath = (worldId, monthId) => `world/${encode(worldId)}/roster
 export const ownerPath = (worldId, ownerId, monthId) => `world/${encode(worldId)}/owner/${encode(ownerId)}/${monthId}`;
 export const planetPath = (worldId, monthId) => `world/${encode(worldId)}/planet/${monthId}`;
 const slotsPath = (worldId, monthId) => `world/${encode(worldId)}/slots/${monthId}`;
-const npcPath = (worldId, monthId, id) => `world/${encode(worldId)}/npc/${monthId}/${encode(id)}`;
 
 function scopeOf(kind, command, context) {
   if (!command || typeof command !== 'object' || Array.isArray(command)) fail('INVALID_COMMAND');
@@ -47,15 +48,6 @@ function scopeOf(kind, command, context) {
 }
 const fingerprint = (scope) => createHash('sha256').update(JSON.stringify([scope.kind, scope.monthId, scope.payload])).digest('hex');
 
-/** Token bucket: path-independent, so lazy refill at touch time equals continuous refill. */
-function refill(bucket, nowSec) {
-  const dt = Math.max(0, nowSec - bucket.updatedAtSecond);
-  const next = { ...bucket, updatedAtSecond: Math.max(bucket.updatedAtSecond, nowSec) };
-  next.funds = Math.min(bucket.fundsCap, bucket.funds + Math.floor(dt * bucket.fundsRefillPerSecond));
-  next.freeCapacityUnits = Math.min(bucket.capacityCap, bucket.freeCapacityUnits + Math.floor(dt * bucket.capacityRefillPerSecond));
-  return next;
-}
-
 export class GameService {
   constructor(repository, { npcBuyers }) {
     if (!Array.isArray(npcBuyers) || npcBuyers.length < 1) throw new TypeError('At least one NPC buyer is required');
@@ -63,22 +55,15 @@ export class GameService {
     this.npcBuyers = npcBuyers;
   }
 
-  /** Server/bootstrap: seed NPC buyer budget docs for a month. Idempotent. */
-  async seedNpcBuyers({ worldId = 'default', monthId, nowSec }) {
-    return this.repository.transact(async (tx) => {
-      for (const b of this.npcBuyers) {
-        const path = npcPath(worldId, monthId, b.id);
-        if (await tx.getDoc(path)) continue;
-        await tx.putDoc(path, { ...b, funds: b.fundsCap, freeCapacityUnits: b.capacityCap, updatedAtSecond: nowSec });
-      }
-    }, { worldId, monthId, ownerId: 'system', requestId: `seed-npc-${monthId}` });
-  }
+  /** Computer-run buyers have no budget or capacity to track (CEO decision Q-10), so there is nothing to seed. Kept for callers. */
+  async seedNpcBuyers() { return undefined; }
 
   enroll(command, context) { return this.#run('enroll', command, context); }
   buyUpgrade(command, context) { return this.#run('buyUpgrade', command, context); }
   hire(command, context) { return this.#run('hire', command, context); }
   buyShaft(command, context) { return this.#run('buyShaft', command, context); }
   dispatch(command, context) { return this.#run('dispatch', command, context); }
+  setPolicy(command, context) { return this.#run('setPolicy', command, context); }
 
   /** Server/bootstrap: store the generated planet (server-only truth). Idempotent. */
   async storePlanet({ worldId = 'default', monthId, planet }) {
@@ -96,15 +81,14 @@ export class GameService {
     return this.repository.transact(async (tx) => {
       const stored = await tx.getDoc(ownerPath(worldId, ownerId, monthId));
       if (!stored) fail('NOT_ENROLLED');
-      const advanced = advanceOwner(stored, Math.floor(context.now / 1000), MAX_COMMAND_CATCHUP_TICKS);
-      const offers = [];
-      for (const b of this.npcBuyers) {
-        const doc = await tx.getDoc(npcPath(worldId, monthId, b.id));
-        if (doc) offers.push({ id: b.id, name: b.name, bidPerUnit: b.bidPerUnit, distance: b.distance, unloadUnitsPerMinute: b.unloadUnitsPerMinute });
-      }
+      // Preview only: automatic takeoffs that have happened by now are computed (not saved) so the player sees current coin.
+      const settled = settleAuto(stored, this.npcBuyers, Math.floor(context.now / 1000), { maxDepartures: 1000 });
+      const earned = settled.departures.reduce((sum, d) => sum + d.payment, 0);
       return projectOwner({
-        doc: advanced.state, offers, nowMs: context.now, version: await tx.version(ownerId, monthId),
-        spendable: await tx.balance(ownerId, monthId, 'spendable'), escrow: await tx.balance(ownerId, monthId, 'escrow'),
+        doc: settled.state, offers: this.npcBuyers.map((b) => ({ id: b.id, name: b.name, bidPerUnit: b.bidPerUnit, distance: b.distance, unloadUnitsPerMinute: b.unloadUnitsPerMinute })),
+        nowMs: context.now, version: await tx.version(ownerId, monthId),
+        spendable: (await tx.balance(ownerId, monthId, 'spendable')) + earned, escrow: await tx.balance(ownerId, monthId, 'escrow'),
+        autoTakeoffs: settled.departures.length, catchingUp: !settled.done,
       });
     }, { worldId, ownerId, monthId, readOnly: true });
   }
@@ -123,6 +107,11 @@ export class GameService {
   async #run(kind, command, context) {
     const scope = scopeOf(kind, command, context);
     const payloadHash = fingerprint(scope);
+    if (kind !== 'enroll') {
+      // Offline stretches can hold hundreds of automatic takeoffs; settle them in committed batches first.
+      try { await this.settleThrough({ worldId: scope.worldId, ownerId: scope.actorId, monthId: scope.monthId, toSec: scope.nowSec }); }
+      catch (error) { if (error?.code !== 'NOT_ENROLLED') throw error; }
+    }
     return this.repository.transact(async (tx) => {
       await tx.validateWorld?.(scope.actorId, scope.monthId);
       const prior = await tx.getCommand(scope.actorId, scope.monthId, scope.requestId);
@@ -163,18 +152,48 @@ export class GameService {
     return { siteId: site.id, commonOreId: planet.ores[region.commonOreIndex].id };
   }
 
-  async #loadOwner(tx, scope) {
+  /** Bring the owner to `scope.nowSec`, posting a ledger entry for every automatic takeoff at its own second. */
+  async #loadOwner(tx, scope, toSec = scope.nowSec) {
     const doc = await tx.getDoc(ownerPath(scope.worldId, scope.actorId, scope.monthId));
     if (!doc) fail('NOT_ENROLLED');
-    const advanced = advanceOwner(doc, scope.nowSec, MAX_COMMAND_CATCHUP_TICKS);
-    if (advanced.remainingSeconds > 0) fail('CATCHING_UP', 'Simulation is catching up; retry shortly');
-    return advanced.state;
+    const settled = settleAuto(doc, this.npcBuyers, toSec, { maxDepartures: MAX_DEPARTURES_PER_TX, maxTicks: MAX_COMMAND_CATCHUP_TICKS });
+    for (const d of settled.departures) await this.#postDeparture(tx, scope, d, `auto:${d.number}`, d.atSecond * 1000);
+    if (!settled.done) fail('CATCHING_UP', 'Simulation is catching up; retry shortly');
+    return settled.state;
+  }
+
+  async #postDeparture(tx, scope, shipment, reference, timestamp) {
+    const id = ledgerTransactionId('NPC_RAW_PURCHASE', scope.actorId, scope.monthId, reference);
+    await tx.append({
+      id, ownerId: scope.actorId, monthId: scope.monthId, timestamp, type: 'NPC_RAW_PURCHASE', reference,
+      postings: [{ account: ownerAccount(scope.actorId, scope.monthId, 'spendable'), delta: shipment.payment }, { account: `source:NPC_RAW_PURCHASE:${encode(id)}`, delta: -shipment.payment }],
+    });
+  }
+
+  /**
+   * Settle a backlog of automatic takeoffs in committed batches (an offline stretch can hold more takeoffs than one
+   * transaction should carry). Used before commands, by the scheduler and by month close. Idempotent.
+   */
+  async settleThrough({ worldId = 'default', ownerId, monthId, toSec, closing = false }) {
+    for (let batch = 0; batch < 200; batch += 1) {
+      const done = await this.repository.transact(async (tx) => {
+        const scope = { worldId, actorId: ownerId, monthId };
+        const doc = await tx.getDoc(ownerPath(worldId, ownerId, monthId));
+        if (!doc || doc.closedAtMs) return true;
+        const settled = settleAuto(doc, this.npcBuyers, toSec, { maxDepartures: MAX_DEPARTURES_PER_TX, maxTicks: MAX_COMMAND_CATCHUP_TICKS });
+        for (const d of settled.departures) await this.#postDeparture(tx, scope, d, `auto:${d.number}`, d.atSecond * 1000);
+        if (settled.departures.length || settled.state.simSecond !== doc.simSecond) await tx.putDoc(ownerPath(worldId, ownerId, monthId), await this.#withPeak(tx, scope, settled.state, settled.departures.at(-1)?.atSecond * 1000 ?? toSec * 1000));
+        return settled.done && (settled.departures.length < MAX_DEPARTURES_PER_TX);
+      }, { worldId, ownerId, monthId, requestId: `settle-${monthId}`, closing });
+      if (done) return;
+    }
+    fail('CATCHING_UP', 'Backlog too large to settle in one pass');
   }
 
   /** Track the highest coin-on-hand total and when it was first reached (tie-break: who reached an amount first). */
-  async #withPeak(tx, scope, owner) {
+  async #withPeak(tx, scope, owner, atMs = scope.nowMs) {
     const total = (await tx.balance(scope.actorId, scope.monthId, 'spendable')) + (await tx.balance(scope.actorId, scope.monthId, 'escrow'));
-    if (!owner.peak || total > owner.peak.amount) return { ...owner, peak: { amount: total, firstReachedMs: scope.nowMs } };
+    if (!owner.peak || total > owner.peak.amount) return { ...owner, peak: { amount: total, firstReachedMs: atMs } };
     return owner;
   }
 
@@ -224,58 +243,41 @@ export class GameService {
       owner = r.state; spent = r.cost; extra = { shaftCount: owner.production.shafts.length };
     } else if (scope.kind === 'dispatch') {
       return this.#dispatch(tx, scope, owner, path);
+    } else if (scope.kind === 'setPolicy') {
+      if (p.auto !== undefined && typeof p.auto !== 'boolean') fail('INVALID_COMMAND', 'auto must be true or false');
+      if (p.destinationId !== undefined && p.destinationId !== null && !this.npcBuyers.some((b) => b.id === p.destinationId)) fail('UNKNOWN_DESTINATION');
+      const prior = getPolicy(owner);
+      owner = { ...owner, policy: { auto: p.auto ?? prior.auto, destinationId: p.destinationId === undefined ? prior.destinationId : p.destinationId } };
+      await tx.putDoc(path, owner);
+      return { ok: true, kind: 'setPolicy', policy: owner.policy };
     }
     await this.#spend(tx, scope, spent, scope.requestId);
     await tx.putDoc(path, await this.#withPeak(tx, scope, owner));
     return { ok: true, kind: scope.kind, spent, ...extra };
   }
 
-  /** The atomic paid departure (section 02): validate -> reserve funds/capacity/quantity -> pay seller -> remove stock -> create shipment. */
+  /** "Launch now": the same paid departure the automatic takeoff makes, forced with whatever whole units are on the yard. */
   async #dispatch(tx, scope, owner, path) {
     const p = scope.payload;
-    if (typeof p.destinationId !== 'string') fail('UNKNOWN_DESTINATION');
     if (p.units !== undefined && (!Number.isSafeInteger(p.units) || p.units < 1)) fail('INVALID_UNITS');
-    const buyerPath = npcPath(scope.worldId, scope.monthId, p.destinationId);
-    const stored = await tx.getDoc(buyerPath);
-    if (!stored) fail('UNKNOWN_DESTINATION');
     if (owner.ship.readyAtSecond > scope.nowSec) fail('SHIP_BUSY');
-    const buyer = refill(stored, scope.nowSec);
-    const oreId = owner.production.shafts[0].oreId; // common-ore band only until depth bands land
     const capacity = shipCapacityUnits(owner.levels.shipCapacity);
-    const stock = Math.floor(surfaceUnits(owner, oreId));
-    const price = buyer.bidPerUnit;
-    const sellable = Math.min(capacity, stock, buyer.freeCapacityUnits, Math.floor(buyer.funds / price));
-    const units = p.units === undefined ? sellable : p.units;
-    if (units < 1) fail(stock < 1 ? 'NO_CARGO' : buyer.freeCapacityUnits < 1 ? 'BUYER_FULL' : 'BUYER_OUT_OF_FUNDS');
-    if (p.units !== undefined && units > sellable) fail(units > stock ? 'INSUFFICIENT_STOCK' : units > capacity ? 'EXCEEDS_SHIP_CAPACITY' : units > buyer.freeCapacityUnits ? 'BUYER_FULL' : 'BUYER_OUT_OF_FUNDS');
-    const payment = price * units;
-    if (!Number.isSafeInteger(payment)) fail('OVERFLOW');
-
-    const plan = tripEstimate(owner, buyer, units);
-    const next = JSON.parse(JSON.stringify(owner));
-    next.production = withdrawSurfaceUnits(owner.production, oreId, units);
-    next.shipmentCounter += 1;
-    const shipmentId = `shp:${encode(scope.actorId)}:${scope.monthId}:${next.shipmentCounter}`;
-    const shipment = {
-      id: shipmentId, requestId: scope.requestId, oreId, units, unitPrice: price, payment, destinationId: buyer.id,
-      departureSecond: scope.nowSec, arrivalSecond: scope.nowSec + plan.arrivalOffsetSeconds, tripSeconds: plan.tripSeconds, state: 'PAID_AT_DEPARTURE',
-    };
-    next.shipments.push(shipment);
-    if (next.shipments.length > 100) next.shipments.splice(0, next.shipments.length - 100);
-    next.ship.readyAtSecond = scope.nowSec + plan.busySeconds;
-    next.totalExternalEarnings += payment;
-    if (!Number.isSafeInteger(next.totalExternalEarnings)) fail('OVERFLOW');
-
-    const id = ledgerTransactionId('NPC_RAW_PURCHASE', scope.actorId, scope.monthId, scope.requestId);
-    await tx.append({
-      id, ownerId: scope.actorId, monthId: scope.monthId, timestamp: scope.nowMs, type: 'NPC_RAW_PURCHASE', reference: scope.requestId,
-      postings: [{ account: ownerAccount(scope.actorId, scope.monthId, 'spendable'), delta: payment }, { account: `source:NPC_RAW_PURCHASE:${encode(id)}`, delta: -payment }],
-    });
-    buyer.funds -= payment;
-    buyer.freeCapacityUnits -= units;
-    await tx.putDoc(buyerPath, buyer);
-    await tx.putDoc(path, await this.#withPeak(tx, scope, next));
-    return { ok: true, kind: 'dispatch', shipment, plan };
+    const stock = Math.floor(surfaceUnits(owner, owner.production.shafts[0].oreId) + 1e-6);
+    if (stock < 1) fail('NO_CARGO');
+    if (p.units !== undefined && p.units > stock) fail('INSUFFICIENT_STOCK');
+    if (p.units !== undefined && p.units > capacity) fail('EXCEEDS_SHIP_CAPACITY');
+    const units = p.units ?? Math.min(capacity, stock);
+    let buyer;
+    if (p.destinationId !== undefined) {
+      if (typeof p.destinationId !== 'string') fail('UNKNOWN_DESTINATION');
+      buyer = this.npcBuyers.find((b) => b.id === p.destinationId);
+      if (!buyer) fail('UNKNOWN_DESTINATION');
+    } else buyer = chooseBuyer(owner, this.npcBuyers, units);
+    const dep = departureFor(owner, buyer, units, scope.nowSec);
+    await this.#postDeparture(tx, scope, dep.shipment, scope.requestId, scope.nowMs);
+    dep.shipment.requestId = scope.requestId;
+    await tx.putDoc(path, await this.#withPeak(tx, scope, dep.state));
+    return { ok: true, kind: 'dispatch', shipment: dep.shipment, plan: dep.plan };
   }
 }
 export { MineError };

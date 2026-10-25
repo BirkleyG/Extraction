@@ -37,3 +37,6 @@ table{width:100%;border-collapse:collapse;font-size:15px}td,th{padding:6px 4px;t
 #toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#000c;border:2px solid var(--orange);padding:10px 16px;border-radius:6px;z-index:9}
 footer{padding:12px 18px;color:var(--dim);font-size:13px;border-top:2px solid var(--line)}footer a{color:var(--orange)}
 @media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
+#gtip{position:fixed;z-index:50;max-width:300px;padding:9px 11px;background:#0d0818;color:#efe6d4;border:2px solid var(--orange);font-size:14px;line-height:1.4;pointer-events:none;box-shadow:0 6px 18px #000a}
+[data-tip]{cursor:help}[data-tip] button,[data-tip] input{cursor:pointer}
+button.on{border-color:var(--gold);color:var(--gold)}

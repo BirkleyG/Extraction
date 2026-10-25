@@ -50,7 +50,6 @@ export class WorldAdmin {
     if (!world.exists) return { skipped: true, reason: 'world not created yet' };
     const seed = sha(`${this.seedSecret}|${worldId}|${monthId}`);
     await this.game.storePlanet({ worldId, monthId, planet: generateWorld({ seed, monthId, players: this.players }) });
-    await this.game.seedNpcBuyers({ worldId, monthId, nowSec: Math.floor(nowMs / 1000) });
     if (world.data().activeMonthId < monthId) await ref.update({ activeMonthId: monthId });
     const closed = [];
     // Close the previous month if it had any players and is not finished yet.
@@ -59,7 +58,7 @@ export class WorldAdmin {
       if (archived) break;
       const roster = await this.repository.transact((tx) => tx.getDoc(rosterPath(worldId, m)), { worldId, ownerId: 'system', monthId: m, readOnly: true, closing: true });
       if (!roster?.owners?.length) continue; // nobody played that month; nothing to close
-      const result = await new MonthCloser(this.repository).close({ worldId, monthId: m, nowMs });
+      const result = await new MonthCloser(this.repository, { game: this.game }).close({ worldId, monthId: m, nowMs });
       if (result) closed.push(m);
     }
     return { monthId, closed };

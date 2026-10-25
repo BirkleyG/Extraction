@@ -2,8 +2,7 @@
 // transaction and records its progress, so a crash at any point resumes to the same single snapshot, single
 // commitment finalization and single reset (T17-05, T18-12). Coin is burned only after the snapshot exists.
 import { LedgerError, ledgerTransactionId } from './ledger.js';
-import { MAX_COMMAND_CATCHUP_TICKS, monthEndMs, ownerPath, rosterPath } from './game-service.js';
-import { advanceOwner } from './mine-engine.js';
+import { monthEndMs, ownerPath, rosterPath } from './game-service.js';
 
 const fail = (code, message = code) => { throw new LedgerError(code, message); };
 const encode = (v) => Buffer.from(JSON.stringify(v)).toString('base64url');
@@ -15,9 +14,11 @@ export const hallPath = (worldId, monthId) => `world/${encode(worldId)}/hall/${m
 
 export class MonthCloser {
   /** @param hooks optional `{ afterPhase(name) }` used by crash tests to interrupt between phases. */
-  constructor(repository, { hooks = {} } = {}) {
+  constructor(repository, { hooks = {}, game } = {}) {
+    if (!game) throw new TypeError('MonthCloser needs the GameService so automatic takeoffs are settled with ledger postings');
     this.repository = repository;
     this.hooks = hooks;
+    this.game = game;
   }
 
   /** Run (or resume) the close of `monthId`. Safe to call repeatedly and concurrently. */
@@ -41,17 +42,8 @@ export class MonthCloser {
     // Phase 1: bring every private business to exactly B (events < B only). No payments, no new departures.
     for (const ownerId of closing.owners) {
       if (closing.advanced.includes(ownerId)) continue;
-      let remaining = 1;
-      while (remaining > 0) {
-        remaining = await this.repository.transact(async (tx) => {
-          const doc = await tx.getDoc(ownerPath(worldId, ownerId, monthId));
-          if (!doc) return 0;
-          if (doc.simSecond >= boundarySec) return 0;
-          const r = advanceOwner(doc, boundarySec, MAX_COMMAND_CATCHUP_TICKS);
-          await tx.putDoc(ownerPath(worldId, ownerId, monthId), r.state);
-          return r.remainingSeconds;
-        }, { worldId, ownerId, monthId, requestId: `close-advance-${monthId}`, closing: true });
-      }
+      // Takeoffs strictly before B belong to this month; one at B or later belongs to the next (T17-06).
+      await this.game.settleThrough({ worldId, ownerId, monthId, toSec: boundarySec - 1, closing: true });
       await sys(async (tx) => {
         const c = await tx.getDoc(closingPath(worldId, monthId));
         if (!c.advanced.includes(ownerId)) { c.advanced.push(ownerId); await tx.putDoc(closingPath(worldId, monthId), c); }

@@ -28,7 +28,6 @@ export function buildGameServer(env = process.env) {
 /** Idempotent month setup for a world: generated planet (server-only) and NPC buyer budgets. */
 export async function prepareMonth(game, { worldId, monthId, seed, players, nowMs }) {
   await game.storePlanet({ worldId, monthId, planet: generateWorld({ seed, monthId, players }) });
-  await game.seedNpcBuyers({ worldId, monthId, nowSec: Math.floor(nowMs / 1000) });
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
