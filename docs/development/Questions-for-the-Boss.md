@@ -23,9 +23,9 @@ Sources checked: [Functions getting started](https://firebase.google.com/docs/fu
 
 ## Production calibration checkpoint · 25 October 2026
 
-**Q-08 — Calibration authority (pending):** may engineering revise provisional C-01 rate formulas and missing base values through seeded simulations, document changes and report evidence, while preserving approved caps/accounting/principles? Alternative: keep the current formulas and bring specific proposed amendments before implementation.
+**Q-08 — Calibration authority (answered):** **APPROVED: tune provisional values and report evidence.** Engineering may revise provisional C-01 rate formulas and missing production base values through simulations, document every adopted change in the owning rule sections, and report results. Approved caps, accounting and gameplay principles remain binding. This authorizes calibration work, not an automatic balance-certification claim.
 
-**Evidence:** sections 03/10 give shaft base output a factor of 2.2 per deeper shaft, so shaft 30 has about 8.52 billion times shaft 1’s base. A capped linear lift line multiplies its starting rate by only `1 + 0.04 × 1000 = 41`. For a balanced maximum mine with the same workers/modifiers per shaft, lift base throughput would need to be very large compared with early mine output. This conflicts with the intended useful early lift progression and late balanced-lift target. A fixed base value alone cannot resolve the progression shape. Actual balanced-max calculations and seeded affordability tests are still required; this is not permission to invent unregistered gameplay values.
+**Evidence:** sections 03/10 give shaft base output a factor of 2.2 per deeper shaft, so shaft 30 has about 8.52 billion times shaft 1’s base. A capped linear lift line multiplies its starting rate by only `1 + 0.04 × 1000 = 41`. For a balanced maximum mine with the same workers/modifiers per shaft, lift base throughput would need to be very large compared with early mine output. This conflicts with the intended useful early lift progression and late balanced-lift target. A fixed base value alone cannot resolve the progression shape. Actual balanced-max calculations and seeded affordability tests are still required. Every experimental profile and adopted coefficient must be named and documented; the CEO approval does not make untested coefficients certified balance.
 
 ## Answer history
 
@@ -35,3 +35,5 @@ Sources checked: [Functions getting started](https://firebase.google.com/docs/fu
 - 25 October 2026: CEO answered Q-04: private friends test, up to 10 players.
 
 - 25 October 2026: CEO answered Q-07: Firebase Blaze, with a small budget to agree before deployment. Continue emulator development; do not enable billing or deploy yet.
+
+- 25 October 2026: CEO answered Q-08: “Yes—tune provisional values and report evidence.” C-01 calibration work is authorized within approved caps/accounting/principles.

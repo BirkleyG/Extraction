@@ -143,7 +143,7 @@ Shared constants. Other documents cite these and do not redefine them.
 - R-08 — APPROVED: AI can propose structured economic causes; engine validation/scoring decides acceptance, numeric effects and market recalculation. No direct benchmark-price override.
 - R-09 — APPROVED: server-run economy and settlement continue without connected players. Clients submit authorized commands, not authoritative outcomes.
 - R-10 — APPROVED: stable language slots, deterministic translation snapshots and server-only canonical meanings. Translation upgrades have no stage gate.
-- C-01 — PROVISIONAL CALIBRATION: section 10 cost/effect coefficients, affordability targets and active/idle balance need seeded month simulations; arithmetic checks are not a gameplay balance certification.
+- C-01 — PROVISIONAL CALIBRATION: section 10 cost/effect coefficients, affordability targets and active/idle balance need seeded month simulations; arithmetic checks are not a gameplay balance certification. The CEO authorized engineering to tune provisional production/lift formulas and missing production base values through simulations and report evidence (25 October 2026, Q-08). Document adopted coefficients and preserve approved caps, accounting and principles.
 - C-02 — PROVISIONAL CALIBRATION: faction budgets, CES elasticities, supply curves, solver tolerances, market cadence and intelligence costs (08).
 - C-03 — PROVISIONAL CALIBRATION: vein sizes, ore distribution, scouting confidence, outpost base price and drone cost/time curves (04/11).
 - C-04 — PROVISIONAL CALIBRATION: troop costs, branch unlocks, HQ coefficients, encounter parameters, home loss bounds and campaign results (12/13/23).
@@ -332,6 +332,11 @@ Bottlenecks
 ### Open questions
 - **HARD CAP: 30 shafts per mine. Shaft 30 is intentionally a very late, difficult investment; costs never permit shaft 31.**
 - Should miners cost upkeep, or only a one-time hire cost? Only one time hires
+
+### C-01 production study implementation · 25 October 2026
+- Added validated pure shaft/lift rate helpers and a one-second finite-buffer flow model with bounded catch-up. The same tick function is used in the study’s stepped and catch-up runs; explicit assigned workers are checked against per-shaft capacity and shaft 31 is rejected.
+- Current benchmark coefficients and candidate interpretation live in section 10 under C01-LIFT-02. No worker-pool allocation, habitat progression, UI, depletion, shipping or sale behavior is introduced by the study.
+- T03-01/02/03/05 have partial helper/fixture evidence only: formula checks, zero-worker output, rendering-independent calculations, cap validation, 600-step replay and ore conservation. No purchase endpoint exists for these helpers, so concurrent purchases and full gameplay acceptance remain pending.
 
 ## 04 — Ores, Resource Generation and Depletion
 
@@ -708,9 +713,30 @@ Calibrated line families
 - Those totals are per line, not an assertion that every shaft and every facility can be maxed in one month. Reaching level 1000 should require late-month specialization. Target most actively used core lines above 80% at month-end; optional/unused lines and every line on every outpost are excluded.
 - The first week prioritizes cheap levels and operational growth; the final third funds expensive high levels. Remove the former rigid “first 250 in week 1, remaining 750 only in final third” rule. Measure actual progression against scripted-player simulations.
 Effects and throughput
-- Dig effect remains baseRate × (1+0.04L). Lift, shipping, loading and numeric capacity lines initially use baseStat × (1+0.04L); this shared initial coefficient is C-01 calibration, not a hidden boost. Ship speed units remain units/minute.
+- Dig effect remains baseRate × (1+0.04L). Shipping, loading and numeric capacity lines retain the initial baseStat × (1+0.04L) comparison calibration. The original linear lift effect is retained as a historical reference; the current C-01 lift benchmark candidate is defined below. These coefficients remain provisional; ship speed units remain units/minute.
 - Refinery yield caps at 95%: 70% + 25% × min(L/1000,1), using the processing family’s base/growth. Its yield upgrade cannot create more than that output fraction.
 - Calibrate lift base throughput and storage so a fully upgraded balanced 30-shaft configuration is not permanently lift-bound. This is a throughput acceptance test, not a promise that arbitrary worker counts or evolution combinations cannot constrain it.
+### C-01 production benchmark candidate C01-LIFT-02
+
+**Status: experimental benchmark for further pipeline calibration; not certified economic balance or a universal production default.** The CEO authorized this tuning in Q-08. No deployed browser gameplay changed.
+
+| Parameter | Explicit benchmark input / result |
+|---|---|
+| Shaft 1 base dig rate | 1 unit per assigned worker per minute; study input only |
+| Shaft depth / dig / cart effects | Existing 2.2 per shaft depth; 1+0.04L dig; 0.25+0.075×cartLevel utilization |
+| Candidate lift throughput | **2 × 1.0316^L units/minute**, L=0…1000; smooth growth, no milestones |
+| Lift cost and cap | Existing base 25, cost growth 1.0205, cap 1000; unchanged |
+| Maximum shaft benchmark | 30 shafts, 60 assigned workers each, dig 1000, carts 10; neutral modifiers: approximately 38.409T units/minute |
+| Candidate maximum lift | Approximately 64.918T units/minute |
+| Selected analytical modifier envelope | Soil 1.25, weather 1.25, buffs 1: approximately 60.014T units/minute; **study envelope only, not world limits** |
+| Envelope lift headroom | Approximately **8.17%**; neutral and both seeded comparison scenarios also pass the rate comparison |
+
+- The earlier growth 1.0311 candidate reaches approximately 39.978T units/minute. It passes the neutral comparison but fails both positive-modifier seeded fixtures and the selected analytical envelope; it is retained only as a comparison profile in the report and small flow fixtures.
+- Evidence and exact deterministic inputs: [Production calibration study](../development/calibration/Production-Calibration.md) and its [JSON results](../development/calibration/Production-Calibration.json). All 1001 reachable lift levels per exponential candidate were checked for finite rates below MAX_COIN magnitude; ore rates are fractional quantities, not integer coin postings.
+- The flow model is a bounded one-second study with explicit workforce assignment, finite shaft buffers, one shared lift, finite surface yard and a synthetic downstream drain. The drain is not a shipment, sale, ledger source or market. Material/habitat/automatic allocation, depletion, weather generation and the mine-to-market pipeline remain unimplemented in this model.
+- Passing these rate comparisons is **partial structural evidence only**, not completion of T10-11 or section 21. Storage, loading, fleets, buyer budgets, prices, strategy, payback and 28/29/30/31-day full simulations still require calibration. Do not infer storage bases from a one-second burst artifact or silently apply this study’s bases to every material/world.
+- Coin remains exact whole-integer accounting. The floating-point ore-unit study reports its residual and per-ore numerical tolerance separately; it cannot certify commercial inventory settlement precision.
+
 Specific caps and physical counts
 - Shafts: hard cap 30. Shaft k costs round(120 × 2.4^(k−1)); shaft 1 is supplied. Shaft 30 is intentionally extremely expensive relative to month earnings. No shaft 31 exists.
 - Lights, supports, carts and bunkhouse: cap 10; initial cost base 150/200/400/100 respectively, growth 1.8 per level. Utilization = 0.25+0.075×cartLevel (cap 1). Supports hazard factor = 100^(−supportLevel/10). Lights affect insanity and eligible encounter detection/rates under 14/15, never universal immunity. Shaft worker capacity = 10+5×bunkhouseLevel.
@@ -1512,7 +1538,12 @@ Changing a rule
 ### A1 deterministic event change log · 25 October 2026
 - Added pure event-batch and seeded RNG utilities, version-1 checkpoint validation and fixture tests; no production/hiring/storage base values or event-class priorities were invented.
 - **Local fast suite: 30 tests pass** after this slice. The existing 3 Auth/Firestore emulator tests remain required regressions; hosted checks run on the implementation PR.
-- Logged the C-01 production/lift calibration conflict and requested CEO direction in Q-08. The current formulas remain unchanged pending an answer and a documented evidence-based calibration change.
+- Logged the C-01 production/lift calibration conflict in Q-08. The CEO subsequently approved tuning provisional formulas and reporting evidence; the authorization is recorded in the single C-01 register. Adopted changes require documented profiles and measured results.
+
+### C-01 production calibration change log · 25 October 2026
+- Recorded CEO approval for provisional formula/base-value calibration and evidence reporting. Added benchmark candidate C01-LIFT-02 in section 10: explicit study bases, smooth exponential lift growth 1.0316 and unchanged cost/cap. Earlier linear and 1.0311 lift profiles remain comparison references; no universal production default is silently changed.
+- Added pure production/flow helpers, bounded one-second catch-up, a reproducible seeded fixture study, JSON/Markdown evidence and CI report-regeneration checks. **Local fast suite: 37 tests pass.** Auth/Firestore emulator regressions remain required.
+- Positive-modifier fixtures disproved the neutral-only 1.0311 candidate; the selected 1.0316 benchmark clears the stated analytical fixture envelope by approximately 8.17%. This is not economic, fleet/storage, deployment or full-month certification. No coin, price, grant, hard cap or deployed prototype behavior changed.
 
 ## 23 — Advanced Combat and AI Military Command
 

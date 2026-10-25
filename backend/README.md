@@ -100,3 +100,13 @@ The CEO selected Firebase Blaze in principle, with a small budget to agree befor
 - Exact duplicate events do nothing; conflicting duplicates, late new events, unknown handlers, invalid JSON, unsupported schema versions and unsafe timestamps fail closed. Never send the checkpoint’s seed or private data to a client.
 
 **Scope limits:** fixture tests demonstrate deterministic ordering/chunking with 600 explicit one-second events. They do not certify actual production, live/offline economic equivalence, zero-client scheduling or month closing. The kernel does not generate production ticks automatically. Event application is budgeted, but checkpoint validation still scans the pending queue/journal; this representation is not a certified large-world storage layout. Do not store a month’s full queue/journal in one Firestore document. A durable paginated queue, atomic checkpoint/effect commit and measured retention/performance limits remain to implement.
+
+## Production calibration study
+
+Run `npm run calibrate:production` from `backend/` to regenerate the committed [Markdown study](../docs/development/calibration/Production-Calibration.md) and [JSON evidence](../docs/development/calibration/Production-Calibration.json). CI checks that regeneration matches the committed reports.
+
+`src/production.js` exports `shaftRatePerMinute`, `liftRatePerMinute`, `createProductionState`, `tickProductionSecond`, `advanceProductionSeconds` and `ProductionError`. Inputs are explicit study configurations; there is no universal default profile. The one-second fixture order is dig → lift by ascending shaft number → synthetic drain by ore ID. That order is a reproducible study convention, not a finalized gameplay scheduling/allocation policy. Catch-up returns all remaining seconds beyond its step budget.
+
+The CEO authorized provisional C-01 tuning. Candidate **C01-LIFT-02** uses lift throughput `2 × 1.0316^L` for the next pipeline benchmark, with existing cap/cost unchanged. It passes the stated neutral, seeded and analytical-envelope rate comparisons; growth 1.0311 passes only the neutral one. The study envelope is not a weather/world limit. See rulebook section 10 for the named inputs and limitations.
+
+This flow model cannot dispatch shipments, create money or change a player’s live colony. Habitat pools, automatic worker assignment, depletion, hazards, loading/fleet behavior, buyer budgets, prices, upgrade purchases and economic balance are still separate work. Floating ore quantities are checked with a documented numerical tolerance; coin accounting remains exact. The month-length rows execute only 60 preview ticks and retain the remaining duration; they are not completed month simulations.
