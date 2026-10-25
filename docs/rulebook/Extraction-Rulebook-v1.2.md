@@ -6,7 +6,9 @@
 
 **Reading guide:** sections 00–23 form one specification. Bold rules and the decision register identify approved behavior. Tables collect economic calibration. Values labeled C-xx remain simulation-tuning work, not certified balance. This revision is a replacement document, not an addendum to contradictory older text.
 
-**Delivery note:** this file does not change the Google Doc or application code. It is prepared for import/review. Full gameplay balance has not been simulated.
+**Delivery note:** the Markdown file is the maintained specification. The accompanying v1.2 Word export is a historical snapshot and does not include the development preparation notes below. No Google Doc or gameplay code was changed by this preparation pass. Full gameplay balance has not been simulated.
+
+**Development status · 25 October 2026:** the repository contains a legacy browser prototype, not an accepted Release A. See [Buildout Plan](../development/Buildout-Plan.md) and [Questions for the Boss](../development/Questions-for-the-Boss.md). Approved gameplay rules remain unchanged; implementation proposals are explicitly marked pending.
 
 ## Contents
 
@@ -1417,7 +1419,7 @@ Acceptance of a feature
 
 ### Purpose and scope
 - Defines release dependencies, build order, feature flags, compatibility, migrations, deprecations and the procedure for changing a rule safely.
-- Nothing is built until the owner approves this specification (R-06).
+- The owner has authorized repository assessment, release planning and game buildout. Approved R-numbered decisions govern implementation; unresolved design or spending decisions are tracked in [Questions for the Boss](../development/Questions-for-the-Boss.md). R-06 governs combat adoption, not general approval.
 ### Design principles
 - Build the fun core first, then the market, then the world.
 - Every release must be playable on its own.
@@ -1439,7 +1441,7 @@ Compatibility and migrations
 Deprecations
 - A rule or field is deprecated for one month before removal, except for exploit fixes.
 Changing a rule
-1. Raise the change in the document with a P-xx tag and the reason.
+1. Raise the change in the owning section with a reason. Use the next R-number for an approved rule or C-number for unresolved design/calibration in the single section 00 register; do not create a second register.
 2. List every other document it touches and update them in the same change.
 3. Update tests and the balance targets.
 4. Choose when it applies: immediately, or at the next month.
@@ -1465,6 +1467,15 @@ Changing a rule
 - Removed superseded ecology/boss generation and automatic translation rules. Resolved documents 12/23 by explicitly adopting branch-wide equipment and functional combat.
 - Added explicit defaults needed to make requested rules executable: incremental SP high-water awards, current-run re-eligibility, in-kind post-nuke starter mine, and old-month obligation closure before reset. These defaults are disclosed in 16/17 and remain subject to owner revision.
 - Arithmetic calibration has been checked; full seeded month simulations, backend implementation and Google Doc publication are not performed by this document revision.
+
+### Development preparation · 25 October 2026
+- **Assessment complete; Release A not accepted.** Existing code implements a browser prototype called Mineshaft Capital. It has no trusted scheduler, authoritative command service, immutable accounting ledger or private simulation/read-model split.
+- **Critical gaps:** return-time shipping payments, a 48-hour approximate offline cap, browser-controlled time/state, client-writable world records, 10-shaft limit, legacy upgrade/combat systems and incomplete monthly reset differ from this specification. These are implementation defects, not amendments to approved rules.
+- Added a release-by-release [Buildout Plan](../development/Buildout-Plan.md), an evidence-based baseline, acceptance gates and a budget-conscious agent workflow. A0 is preparation; A1–A4 are internal milestones, not independently certified public releases. Releases A/B/C retain their scope above.
+- Added [Questions for the Boss](../development/Questions-for-the-Boss.md) as the development decision tab. Recommendations remain pending unless authorized in the conversation; answers must be copied into the owning rule section/register before dependent behavior changes.
+- **CEO direction recorded:** conserve Pro weekly usage; delegate platform choice with free operation preferred and a setup README required; use fresh authoritative saves while preserving the prototype. Paid infrastructure is not authorized. These are delivery decisions, not changes to R-01–R-10 gameplay.
+- Corrected the retired change-tag procedure and the incorrect R-06 approval cross-reference. No economic coefficients or gameplay decisions changed.
+- **Validation:** JavaScript syntax checks pass for all three existing script files. Runtime, multiplayer, security, determinism and month simulations are not certified. The legacy DOCX and arithmetic JSON remain historical v1.2 artifacts.
 
 ## 23 — Advanced Combat and AI Military Command
 
