@@ -1,12 +1,16 @@
 # Extraction Tycoon backend foundation
 
-**Internal A1 milestone; not a deployed game server.** This package develops authoritative accounting independently from the preserved browser prototype. It has no third-party runtime dependencies and does not require Firebase credentials, an AI key or paid services for local tests.
+**Internal A1 milestone; not a deployed game server.** This package develops authoritative accounting independently from the preserved browser prototype. It uses the Firebase Admin SDK and does not require production Firebase credentials, an AI key or paid services for local emulator tests. Production deployment is separate.
 
 ## Local setup
 
-1. Install Node.js 24.19.0 (the repository runtime pin).
-2. From the repository root, run `cd backend` then `npm test`.
-3. Tests use Node’s built-in test runner. There is no dependency install or database setup in this milestone.
+1. Install Node.js 24.19.0 (the repository runtime pin) and Java 21 for the Firestore emulator.
+2. From the repository root, run `cd backend` and `npm ci` to install locked dependencies.
+3. Run `npm test` for fast accounting/HTTP tests.
+4. Run `npm run test:integration` for the real local Auth/Firestore emulator suite.
+5. Run `npm run demo` for a complete local authenticated grant → escrow → retry demonstration. It prints HTTP statuses and wallet totals, never the token. The 100-coin grant is a test fixture, not an approved gameplay default.
+
+The emulator commands use the isolated `backend/firebase.json`, project `demo-extraction`, Auth on port 9099 and Firestore on 8080. They stop their emulators afterward. They require loopback endpoints and a demo project and do not read/write a production database. Initial emulator downloads need internet access. A metadata lookup warning can appear in this sandbox while all local tests still pass.
 
 The browser prototype still runs separately: from the repository root, run `python3 -m http.server 8000` and visit http://localhost:8000. The browser does not call this new library and its existing saves remain unchanged.
 
@@ -16,7 +20,7 @@ The browser prototype still runs separately: from the repository root, run `pyth
 
 - Construct the service with a repository and trusted `{ starterGrantAmount }`. No production default is supplied.
 - `grantStarter(command, context)`, `fundEscrow(command, context)` and `releaseEscrow(command, context)` accept `{ monthId, requestId, expectedVersion }`; escrow commands also require a positive integer `amount`.
-- Trusted context is `{ auth: { uid }, activeMonthId, now }`. Use one repository per isolated world. Membership, open-month status and verified receipt time must come from the eventual server transport/world service.
+- Trusted context is `{ auth: { uid }, activeMonthId, now }`. The memory repository is isolated per world; the Firestore adapter uses the trusted world context to select its namespace. The transport assigns verified receipt time; the Firestore transaction validates current membership/month/status.
 - `wallet(ownerId, monthId, context)` returns only `ownerId`, `monthId`, `spendable`, `escrow`, `totalOwned` and `version`; cross-owner reads reject.
 - Retrying the same request ID/action/amount returns the original wallet result. Expected version and receipt time are excluded from the retry fingerprint, so later state changes do not turn a successful retry into another operation. Use a fresh ID for a different action or amount.
 - `snapshot()` and `reconcile()` are server/test diagnostics. `replayLedger(entries)` rebuilds balances and ignores identical duplicate entries while rejecting conflicting duplicate contents, malformed postings and unsupported reasons. It does not restore command receipts or versions into a running repository.
@@ -27,16 +31,59 @@ Escrow here is an owner wallet subaccount only; it has no contract or shipment r
 
 ## Trust boundary
 
-The command service is a server-side library. A future authenticated transport must verify identity and construct trusted context; a caller-provided user ID is not authentication. Never mount arbitrary JSON context or ledger posting methods as a public API. Grant amounts come from trusted configuration, not player requests. Test amounts are fixtures, not approved starting balances.
+The HTTP transport verifies Firebase ID tokens through the Admin SDK with revocation/disabled-user checking, then constructs trusted UID, world and clock context. A caller-provided user ID is never authentication. Never mount arbitrary JSON context or ledger posting methods as a public API. Grant amounts come from trusted configuration, not player requests. Test amounts are fixtures, not approved starting balances.
 
-The current repository implementation is in memory. It provides serialized transactions and rollback for local invariant tests; **it is not durable, multi-process or crash-safe production storage**. Starting a fresh repository loses its records. Firebase transactions, rules and emulator integration remain separate work. No existing Firestore rules or deployed resources are changed here.
+`MemoryLedgerRepository` remains process-local for fast tests. `FirestoreLedgerRepository` persists bounded owner/month account, version, receipt, grant-marker and ledger documents atomically in Firestore transactions. It never loads the complete world ledger for each command. Fresh service instances read the same records and recover idempotent receipts. Tests prove service recreation and transaction contention, not disaster recovery or arbitrary corruption repair.
+
+World status, current UTC month and membership are reread inside every transaction attempt. Closed worlds, stale months and revoked memberships reject, including retries. Historical command receipt lookup after month close is not implemented. Stored malformed balances/receipts fail closed. The raw Firestore paths under `worlds/` are server-only; `backend/firestore.rules` denies all direct client reads/writes, including authenticated clients. Do not replace the legacy prototype’s rules with this isolated development rules file.
 
 ## Required before deployment
 
-- Verified Firebase Auth identity, room/world membership and host roles, strict transport validation and abuse limits.
-- Durable transaction adapter with immutable ledger/command IDs, version checks, atomic cross-owner inventory and funds/capacity reservations.
+- Production project/credentials and HTTPS hosting, enrollment/host administration and abuse limits. Verified identity, membership guards and bounded JSON transport are implemented and emulator-tested; production configuration is not deployed.
+- Cross-owner commercial transactions, inventory/capacity reservations and committed escrow checks. The current durable adapter supports only owner-wallet transactions.
 - Server scheduler, deterministic engine/checkpoints and resumable UTC closing.
-- Client-read rules and intelligence-filtered projections tested against unauthorized direct access.
+- Broader intelligence-filtered gameplay projections. Current wallet fields and direct database denial are emulator-tested; no market/threat/translation API exists yet.
 - Measured hosting/read/write/scheduler costs and a complete provider deployment guide. Production is not promised to fit a free tier.
 
 See the [buildout plan](../docs/development/Buildout-Plan.md), [rulebook](../docs/rulebook/Extraction-Rulebook-v1.2.md) and [Questions for the Boss](../docs/development/Questions-for-the-Boss.md).
+
+## Run the local API manually
+
+From `backend/`, start the isolated emulators in terminal 1:
+
+```sh
+npx firebase emulators:start --project demo-extraction --only auth,firestore
+```
+
+In terminal 2, set these values for this local development session:
+
+```sh
+export FIREBASE_PROJECT_ID=demo-extraction
+export FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099
+export FIRESTORE_EMULATOR_HOST=127.0.0.1:8080
+export STARTER_GRANT_AMOUNT=100
+npm start
+```
+
+The API listens on `127.0.0.1:8787` by default. `STARTER_GRANT_AMOUNT=100` is only an explicit local fixture; there is no production default. Use `PORT` to change the API port. All commands require `Authorization: Bearer <Firebase ID token>` and JSON content type. Production requires TLS termination and configured Application Default Credentials; do not expose the plain local listener publicly.
+
+| Route | Body / behavior |
+|---|---|
+| `GET /v1/worlds/<world>/wallet` | Current authenticated member’s wallet; no owner parameter. |
+| `POST /v1/worlds/<world>/grant` | `requestId`, `expectedVersion`, optional `monthId`; server-configured grant only. |
+| `POST /v1/worlds/<world>/fund` | Same fields plus positive whole-coin `amount`. |
+| `POST /v1/worlds/<world>/release` | Same fields plus positive whole-coin `amount`. |
+
+The server derives the current UTC month when omitted and validates any supplied month. Extra authoritative fields reject. Request bodies are limited to 8192 bytes. Invalid identity returns 401; nonmembership 403; command conflicts 409; unexpected internal failures return a generic response. No browser CORS access is enabled; frontend integration is future work.
+
+A user must exist in the Auth emulator and have server-provisioned world membership. To create the first local world for a known emulator UID, run in a terminal with the emulator environment above:
+
+```sh
+npm run bootstrap:world -- friends-world <emulator-uid> <current-UTC-YYYY-MM>
+```
+
+Bootstrap is Admin-only and emulator-only; it refuses to overwrite an existing world. This milestone has no public enrollment or admin endpoint. The runnable demo automates local user/world creation when a manual token flow is unnecessary.
+
+## Production hosting decision
+
+The CEO selected Firebase Blaze in principle, with a small budget to agree before deployment. **No numeric spending ceiling, production project, billing activation or deployment is authorized yet.** Firebase Functions deployment requires Blaze; local emulation does not. See [official setup](https://firebase.google.com/docs/functions/get-started) and [scheduled-function pricing](https://firebase.google.com/docs/functions/schedule-functions). Free allowances are not a zero-cost guarantee. This branch contains a local API, not a Functions deployment package.

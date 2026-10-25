@@ -19,7 +19,9 @@ function commandScope(command, context, withAmount = false) {
   if (typeof command.requestId !== 'string' || !command.requestId || command.requestId.length > 160) fail('INVALID_COMMAND', 'requestId is required');
   if (!Number.isSafeInteger(command.expectedVersion) || command.expectedVersion < 0) fail('INVALID_VERSION');
   if (!Number.isSafeInteger(context.now) || context.now < 0) fail('INVALID_CLOCK');
-  return { actorId, monthId: command.monthId, requestId: command.requestId, expectedVersion: command.expectedVersion, timestamp: context.now };
+  const worldId = context.worldId ?? 'default';
+  if (typeof worldId !== 'string' || !worldId || worldId.length > 160) fail('INVALID_WORLD');
+  return { actorId, worldId, monthId: command.monthId, requestId: command.requestId, expectedVersion: command.expectedVersion, timestamp: context.now };
 }
 
 function fingerprint(action, scope, amount) {
@@ -38,16 +40,17 @@ export class LedgerCommandService {
   async grantStarter(command, context) {
     const scope = commandScope(command, context);
     const payloadHash = fingerprint('starter-grant', scope);
-    return this.repository.transact((tx) => {
-      const prior = tx.getCommand(scope.actorId, scope.monthId, scope.requestId);
+    return this.repository.transact(async (tx) => {
+      await tx.validateWorld?.(scope.actorId, scope.monthId);
+      const prior = await tx.getCommand(scope.actorId, scope.monthId, scope.requestId);
       if (prior) {
         if (prior.payloadHash !== payloadHash) fail('IDEMPOTENCY_CONFLICT');
         return prior.result;
       }
-      if (tx.version(scope.actorId, scope.monthId) !== scope.expectedVersion) fail('STALE_VERSION');
-      if (tx.hasStarterGrant(scope.actorId, scope.monthId)) fail('START_GRANT_ALREADY_CLAIMED');
+      if (await tx.version(scope.actorId, scope.monthId) !== scope.expectedVersion) fail('STALE_VERSION');
+      if (await tx.hasStarterGrant(scope.actorId, scope.monthId)) fail('START_GRANT_ALREADY_CLAIMED');
       const transactionId = ledgerTransactionId('START_GRANT', scope.actorId, scope.monthId, scope.requestId);
-      tx.append({
+      await tx.append({
         id: transactionId, ownerId: scope.actorId, monthId: scope.monthId,
         timestamp: scope.timestamp, type: 'START_GRANT', reference: scope.requestId,
         postings: [
@@ -55,12 +58,12 @@ export class LedgerCommandService {
           { account: `source:START_GRANT:${encode(transactionId)}`, delta: -this.starterGrantAmount },
         ],
       });
-      tx.markStarterGrant(scope.actorId, scope.monthId);
-      const version = tx.bumpVersion(scope.actorId, scope.monthId);
-      const result = this.#projection(tx, scope.actorId, scope.monthId, version);
-      tx.saveCommand(scope.actorId, scope.monthId, scope.requestId, payloadHash, result);
+      await tx.markStarterGrant(scope.actorId, scope.monthId);
+      const version = await tx.bumpVersion(scope.actorId, scope.monthId);
+      const result = await this.#projection(tx, scope.actorId, scope.monthId, version);
+      await tx.saveCommand(scope.actorId, scope.monthId, scope.requestId, payloadHash, result);
       return result;
-    });
+    }, { worldId: scope.worldId, ownerId: scope.actorId, monthId: scope.monthId, requestId: scope.requestId });
   }
 
   async fundEscrow(command, context) { return this.#escrowCommand('fund', command, context); }
@@ -71,39 +74,43 @@ export class LedgerCommandService {
     if (!Number.isSafeInteger(command.amount) || command.amount <= 0) fail('INVALID_AMOUNT');
     const amount = command.amount;
     const payloadHash = fingerprint(`escrow-${action}`, scope, amount);
-    return this.repository.transact((tx) => {
-      const prior = tx.getCommand(scope.actorId, scope.monthId, scope.requestId);
+    return this.repository.transact(async (tx) => {
+      await tx.validateWorld?.(scope.actorId, scope.monthId);
+      const prior = await tx.getCommand(scope.actorId, scope.monthId, scope.requestId);
       if (prior) {
         if (prior.payloadHash !== payloadHash) fail('IDEMPOTENCY_CONFLICT');
         return prior.result;
       }
-      if (tx.version(scope.actorId, scope.monthId) !== scope.expectedVersion) fail('STALE_VERSION');
+      if (await tx.version(scope.actorId, scope.monthId) !== scope.expectedVersion) fail('STALE_VERSION');
       const spendable = ownerAccount(scope.actorId, scope.monthId, 'spendable');
       const escrow = ownerAccount(scope.actorId, scope.monthId, 'escrow');
       const transactionId = ledgerTransactionId(action === 'fund' ? 'ESCROW_FUND' : 'ESCROW_RELEASE', scope.actorId, scope.monthId, scope.requestId);
-      tx.append({
+      await tx.append({
         id: transactionId, ownerId: scope.actorId, monthId: scope.monthId,
         timestamp: scope.timestamp, type: action === 'fund' ? 'ESCROW_FUND' : 'ESCROW_RELEASE', reference: scope.requestId,
         postings: action === 'fund'
           ? [{ account: spendable, delta: -amount }, { account: escrow, delta: amount }]
           : [{ account: escrow, delta: -amount }, { account: spendable, delta: amount }],
       });
-      const version = tx.bumpVersion(scope.actorId, scope.monthId);
-      const result = this.#projection(tx, scope.actorId, scope.monthId, version);
-      tx.saveCommand(scope.actorId, scope.monthId, scope.requestId, payloadHash, result);
+      const version = await tx.bumpVersion(scope.actorId, scope.monthId);
+      const result = await this.#projection(tx, scope.actorId, scope.monthId, version);
+      await tx.saveCommand(scope.actorId, scope.monthId, scope.requestId, payloadHash, result);
       return result;
-    });
+    }, { worldId: scope.worldId, ownerId: scope.actorId, monthId: scope.monthId, requestId: scope.requestId });
   }
 
   async wallet(ownerId, monthId, context) {
     if (typeof ownerId !== 'string' || ownerId !== context?.auth?.uid) fail('FORBIDDEN');
     if (monthId !== context.activeMonthId) fail('STALE_MONTH');
-    return this.repository.transact((tx) => this.#projection(tx, ownerId, monthId, tx.version(ownerId, monthId)));
+    return this.repository.transact(async (tx) => {
+      await tx.validateWorld?.(ownerId, monthId);
+      return this.#projection(tx, ownerId, monthId, await tx.version(ownerId, monthId));
+    }, { worldId: context.worldId ?? 'default', ownerId, monthId, readOnly: true });
   }
 
-  #projection(tx, ownerId, monthId, version) {
-    const spendable = tx.balance(ownerId, monthId, 'spendable');
-    const escrow = tx.balance(ownerId, monthId, 'escrow');
+  async #projection(tx, ownerId, monthId, version) {
+    const spendable = await tx.balance(ownerId, monthId, 'spendable');
+    const escrow = await tx.balance(ownerId, monthId, 'escrow');
     const total = spendable + escrow;
     if (!Number.isSafeInteger(total)) fail('OVERFLOW', 'Wallet total exceeds safe integer range');
     return Object.freeze({ ownerId, monthId, spendable, escrow, totalOwned: total, version });

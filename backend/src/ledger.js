@@ -115,6 +115,13 @@ function applyTransaction(state, transaction) {
   }));
 }
 
+// Shared validation and balance application for repositories that stage one
+// command locally inside a database transaction. Callers must supply the
+// relevant wallet balances and ensure duplicate IDs are checked durably.
+export function applyLedgerTransaction(state, transaction) {
+  applyTransaction(state, transaction);
+}
+
 export function replayLedger(entries) {
   if (!Array.isArray(entries)) fail('INVALID_LEDGER', 'Ledger must be an array');
   const state = { ledger: [], accounts: new Map(), commands: new Map(), starterGrants: new Set(), versions: new Map() };
