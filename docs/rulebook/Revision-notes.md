@@ -7,3 +7,7 @@ All 17 requested decisions are incorporated across sections 00–23. Section 10 
 Additional explicit implementation defaults: trusted server scheduling; private tier-filtered read models and server-only translation meanings; post-nuke starter mine in kind; current-run 20M re-eligibility and incremental SP high-water awards against month-total earnings; committed old-month delivery finalization without extra production or payment; contract liability and foreclosure accounting. These are written out for review, not hidden implementation assumptions.
 
 Validation: 24 numbered sections present; retired P references removed; contradictory shipment/upgrade phrases checked; all six main 1000-level curves monotonically increase and their individual and total rounded prices fit 2^53−1. Arithmetic details are in calibration-checks.json. This is not a full seeded month simulation and does not certify gameplay balance. No application source files were changed.
+
+## Development preparation · 25 October 2026
+
+The maintained Markdown now includes repository assessment and buildout links in section 22. The accompanying Word file and arithmetic JSON remain historical v1.2 snapshots. See [Buildout Plan](../development/Buildout-Plan.md) and [Questions for the Boss](../development/Questions-for-the-Boss.md). No gameplay source was changed or balance certified.

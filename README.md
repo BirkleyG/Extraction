@@ -1,5 +1,7 @@
 # Mineshaft Capital
 
+> **Extraction Tycoon development:** this guide describes the legacy browser prototype. It does not deploy the v1.2 trusted simulation or satisfy competitive multiplayer acceptance. See the [current rulebook](docs/rulebook/Extraction-Rulebook-v1.2.md), [Buildout Plan](docs/development/Buildout-Plan.md), and [Questions for the Boss](docs/development/Questions-for-the-Boss.md).
+
 A darkly funny, pixel-art mining empire you play with your friends. Everyone colonises the same procedurally generated planet,
 digs shafts, hires crews, ships ore, trades, fights monsters, talks to alien tribes, and races for the most coin before the
 month ends. The month's winner dreams up next month's planet.

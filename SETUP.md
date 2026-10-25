@@ -1,5 +1,7 @@
 # Putting Mineshaft Capital online for you and your friends
 
+> **Extraction Tycoon development:** this guide describes the legacy browser prototype. It does not deploy the v1.2 trusted simulation or satisfy competitive multiplayer acceptance. See the [current rulebook](docs/rulebook/Extraction-Rulebook-v1.2.md), [Buildout Plan](docs/development/Buildout-Plan.md), and [Questions for the Boss](docs/development/Questions-for-the-Boss.md).
+
 The game is a static website (just HTML/CSS/JS, no build step), so it needs two free things:
 
 1. **A place to host the files**: GitHub Pages (comes with this repo).
