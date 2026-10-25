@@ -1,5 +1,7 @@
 # Putting Mineshaft Capital online for you and your friends
 
+> **Extraction Tycoon development:** this guide describes the legacy browser prototype. It does not deploy the v1.2 trusted simulation or satisfy competitive multiplayer acceptance. See the [current rulebook](docs/rulebook/Extraction-Rulebook-v1.2.md), [Buildout Plan](docs/development/Buildout-Plan.md), and [Questions for the Boss](docs/development/Questions-for-the-Boss.md).
+
 The game is a static website (just HTML/CSS/JS, no build step), so it needs two free things:
 
 1. **A place to host the files**: GitHub Pages (comes with this repo).
@@ -103,3 +105,7 @@ firebase emulators:start --only auth,firestore --project demo-msc   # uses fireb
 
 and temporarily add `emulator: { host: '127.0.0.1', auth: 9099, firestore: 8080 }` next to `firebase` in `js/config.js`
 (with dummy `apiKey`/`projectId`/`appId` values).
+
+## Current playable development build
+
+The new [browser sandbox](https://birkleyg.github.io/Extraction/play/) needs no Firebase setup. This guide applies to the [preserved original prototype](https://birkleyg.github.io/Extraction/prototype/) only. The new backend is not connected to Pages yet; see [backend/README.md](backend/README.md). Pages publishes `main`, so development branch merges do not publish automatically.

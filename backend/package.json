@@ -1,0 +1,22 @@
+{
+  "name": "extraction-authoritative-ledger",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "node --test test/ledger.test.js test/http.test.js test/events.test.js test/production.test.js",
+    "start": "node src/server.js",
+    "bootstrap:world": "node src/bootstrap-world.js",
+    "test:integration": "FIREBASE_PROJECT_ID=demo-extraction firebase emulators:exec --project demo-extraction --only auth,firestore \"node --test test/firestore.integration.test.js\"",
+    "demo": "FIREBASE_PROJECT_ID=demo-extraction firebase emulators:exec --project demo-extraction --only auth,firestore \"node scripts/demo.mjs\"",
+    "calibrate:production": "node scripts/calibrate-production.mjs --out ../docs/development/calibration"
+  },
+  "dependencies": {
+    "firebase-admin": "14.5.0"
+  },
+  "devDependencies": {
+    "firebase-tools": "15.34.1"
+  }
+}

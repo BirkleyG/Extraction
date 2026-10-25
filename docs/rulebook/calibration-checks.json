@@ -1,0 +1,65 @@
+{
+  "scope": "Arithmetic and editorial checks only; no gameplay simulation or backend execution",
+  "families": [
+    {
+      "family": "Mine dig",
+      "base": 15,
+      "growth": "1.021",
+      "cap": 1000,
+      "last_level_price": 15588617609,
+      "total_exact_rounded_cost": 757903741131,
+      "passes_safe_integer_limit": true
+    },
+    {
+      "family": "Lift",
+      "base": 25,
+      "growth": "1.0205",
+      "cap": 1000,
+      "last_level_price": 15927075974,
+      "total_exact_rounded_cost": 792857610091,
+      "passes_safe_integer_limit": true
+    },
+    {
+      "family": "Fleet",
+      "base": 30,
+      "growth": "1.02",
+      "cap": 1000,
+      "last_level_price": 11713666225,
+      "total_exact_rounded_cost": 597396975986,
+      "passes_safe_integer_limit": true
+    },
+    {
+      "family": "Storage",
+      "base": 50,
+      "growth": "1.0195",
+      "cap": 1000,
+      "last_level_price": 11962250382,
+      "total_exact_rounded_cost": 625410985340,
+      "passes_safe_integer_limit": true
+    },
+    {
+      "family": "Processing",
+      "base": 100,
+      "growth": "1.019",
+      "cap": 1000,
+      "last_level_price": 14655809876,
+      "total_exact_rounded_cost": 786014219123,
+      "passes_safe_integer_limit": true
+    },
+    {
+      "family": "Military/HQ",
+      "base": 250,
+      "growth": "1.018",
+      "cap": 1000,
+      "last_level_price": 13739477949,
+      "total_exact_rounded_cost": 777043794589,
+      "passes_safe_integer_limit": true
+    }
+  ],
+  "section_count": 24,
+  "checks": "passed",
+  "first_refinery": 250000000,
+  "first_station": 10000000000,
+  "first_outpost": 2000000000,
+  "shaft30_cost": 12744043807688
+}
