@@ -163,6 +163,22 @@ function pickOreColors(R, wanted) {
   return out;
 }
 
+
+/* Region seeds on the 1000x1000 planet map (a Voronoi diagram, like the original game's world map). */
+export const MAPW = 1000;
+export function placeSeeds(R, count) {
+  const pts = []; let guard = 0;
+  while (pts.length < count && guard++ < 4000) { const x = 110 + R() * 780; const y = 110 + R() * 780; if (pts.every((q) => Math.hypot(q.x - x, q.y - y) > 255 - count * 8)) pts.push({ x, y }); }
+  while (pts.length < count) pts.push({ x: 110 + R() * 780, y: 110 + R() * 780 });
+  return pts;
+}
+export function ensurePositions(planet) {
+  if (planet.regions.every((r) => Number.isFinite(r.x) && Number.isFinite(r.y))) return planet;
+  const pts = placeSeeds(rng(hash(`${planet.id}map`)), planet.regions.length);
+  planet.regions.forEach((r, i) => { r.x = pts[i].x; r.y = pts[i].y; });
+  return planet;
+}
+
 function cleanTheme(raw, fallback) {
   const t = raw && typeof raw === 'object' ? raw : {};
   const f = fallback || {};
@@ -216,6 +232,7 @@ export function buildPlanet(raw, seed, theme) {
   const preferred = theme ? shuffle(R, theme.terrains) : [];
   const order = preferred.concat(shuffle(R, TERRAIN_IDS.filter((t) => !preferred.includes(t)))); const used = new Set();
   const count = clamp(rawRegions.length || (theme ? 6 : 5), 5, 7);
+  const seeds = placeSeeds(R, count);
   const regions = Array.from({ length: count }, (_, i) => {
     const r = rawRegions[i] || {};
     let terrain = TERRAINS[r.terrain] ? r.terrain : inferTerrain(r.name, r.blurb, hex(r.color));
@@ -227,7 +244,7 @@ export function buildPlanet(raw, seed, theme) {
       id: `r${i}`,
       name: str(r.name, `${pick(R, adj)} ${pick(R, T.nouns)}`, 32),
       blurb: str(r.blurb, pick(R, T.blurb), 90),
-      terrain, biome, fx: T.fx,
+      terrain, biome, fx: T.fx, x: seeds[i].x, y: seeds[i].y,
     };
   });
   const name = str(raw.name, theme ? pick(R, theme.names) : procName(R), 40);
@@ -339,7 +356,7 @@ export async function generatePlanet(req) {
 export function loadPlanet() {
   try {
     const w = JSON.parse(localStorage.getItem(PLANET_KEY) || 'null');
-    if (w && w.planet && w.planet.v === 1 && Array.isArray(w.planet.regions) && w.planet.regions.length) return { planet: w.planet, regionId: w.planet.regions.some((r) => r.id === w.regionId) ? w.regionId : w.planet.regions[0].id };
+    if (w && w.planet && w.planet.v === 1 && Array.isArray(w.planet.regions) && w.planet.regions.length) return { planet: ensurePositions(w.planet), regionId: w.planet.regions.some((r) => r.id === w.regionId) ? w.regionId : w.planet.regions[0].id };
   } catch { /* fall back */ }
   const planet = defaultPlanet();
   return { planet, regionId: planet.regions[0].id };

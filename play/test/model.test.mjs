@@ -4,6 +4,7 @@ import { createProductionState } from '../../backend/src/production.js';
 import {
   advanceGame, createGameState, dispatchNow, selectDestination, setAutoLaunch, stepGame,
   validateGameState, purchaseUpgrade, buyNextShaft, currentLiftRate, grantDevCoins,
+  makeSite, generateVeins, veinStatus, faceDistance, toolHardness, COMMON_ORES, RARE_ORES,
 } from '../model.js';
 
 const code = (name) => (error) => error?.code === name;
@@ -168,4 +169,65 @@ test('start is zero coin with no grant, and lift readout uses shared production 
   assert.equal(state.sourceGrants, 0);
   assert.equal(state.ledger.length, 0);
   assert.equal(currentLiftRate(state), 2 * 1.0316);
+});
+
+function veinState({ digLevel, size = 5, at = 0 }) {
+  const state = createGameState();
+  state.autoLaunch = false;
+  state.production.shafts[0].digLevel = digLevel;
+  state.veins = [{ id: 'v-test', shaftNumber: 1, oreId: 'lithium', at, sizeUnits: size, remainingUnits: size, seen: false, warned: false }];
+  state.shaftMined = { 1: 1000 };
+  return validateGameState(state);
+}
+const minedOf = (state, oreId) => state.production.cumulativeMinedByOre.find((row) => row.oreId === oreId)?.units ?? 0;
+
+test('T04-03: a rare vein is mined until empty and never past its size', () => {
+  let state = veinState({ digLevel: 40, size: 5 });
+  assert.equal(veinStatus(state, state.veins[0]), 'mining');
+  for (let second = 0; second < 600; second += 1) state = stepGame(state);
+  assert.ok(Math.abs(minedOf(state, 'lithium') - 5) < 1e-6, `mined ${minedOf(state, 'lithium')} lithium from a 5 unit vein`);
+  assert.equal(state.veins[0].remainingUnits, 0);
+});
+
+test('T04-02: an empty vein hands the shaft back to the common ore and never goes negative', () => {
+  let state = veinState({ digLevel: 40, size: 2 });
+  for (let second = 0; second < 900; second += 1) {
+    state = stepGame(state);
+    assert.ok(state.veins[0].remainingUnits >= 0);
+    assert.ok(state.production.shafts.every((shaft) => shaft.bufferUnits >= 0));
+  }
+  assert.equal(state.production.shafts[0].oreId, state.site.commonOreId);
+  assert.ok(minedOf(state, state.site.commonOreId) > 1, 'the shaft continues on the common ore');
+});
+
+test('a pick that is too weak leaves the vein alone and the shaft keeps digging common ore', () => {
+  let state = veinState({ digLevel: 1, size: 5 });
+  assert.equal(veinStatus(state, state.veins[0]), 'blocked');
+  for (let second = 0; second < 300; second += 1) state = stepGame(state);
+  assert.equal(minedOf(state, 'lithium'), 0);
+  assert.equal(state.veins[0].remainingUnits, 5);
+  assert.ok(minedOf(state, 'ferrite') > 0);
+});
+
+test('a vein stays ahead of the tunnel face until enough has been dug', () => {
+  const state = veinState({ digLevel: 40, size: 5, at: 300 });
+  state.shaftMined = { 1: 0 };
+  assert.equal(veinStatus(state, state.veins[0]), 'ahead');
+  assert.ok(faceDistance(0) === 0 && faceDistance(1e9) <= 360);
+  assert.ok(toolHardness(1) < 5 && toolHardness(40) >= 6 && toolHardness(350) >= 9);
+});
+
+test('each site has exactly one common ore and deterministic veins', () => {
+  for (const regionId of ['r0', 'r1', 'r2', 'r3', 'r4', 'r5']) {
+    const site = makeSite({ planetId: 'p-test', regionId, tough: regionId === 'r2' });
+    assert.ok(COMMON_ORES.includes(site.commonOreId));
+    assert.ok(site.rareOreIds.length >= 2 && site.rareOreIds.every((id) => RARE_ORES.includes(id)));
+    for (let shaft = 1; shaft <= 30; shaft += 1) {
+      const a = generateVeins(site, shaft); const b = generateVeins(site, shaft);
+      assert.deepEqual(a, b);
+      assert.ok(a.every((vein) => vein.sizeUnits > 0 && vein.remainingUnits === vein.sizeUnits));
+    }
+    assert.ok(generateVeins(site, 3).length >= 1, 'shaft 3 always holds a rare vein');
+    assert.equal(createGameState({ planetId: 'p-test', regionId, tough: false }).production.shafts[0].oreId, site.commonOreId === undefined ? 'x' : makeSite({ planetId: 'p-test', regionId, tough: false }).commonOreId);
+  }
 });

@@ -27,6 +27,10 @@ Sources checked: [Functions getting started](https://firebase.google.com/docs/fu
 
 **Evidence:** sections 03/10 give shaft base output a factor of 2.2 per deeper shaft, so shaft 30 has about 8.52 billion times shaft 1’s base. A capped linear lift line multiplies its starting rate by only `1 + 0.04 × 1000 = 41`. For a balanced maximum mine with the same workers/modifiers per shaft, lift base throughput would need to be very large compared with early mine output. This conflicts with the intended useful early lift progression and late balanced-lift target. A fixed base value alone cannot resolve the progression shape. Actual balanced-max calculations and seeded affordability tests are still required. Every experimental profile and adopted coefficient must be named and documented; the CEO approval does not make untested coefficients certified balance.
 
+## Sandbox veins checkpoint · 25 October 2026
+
+**Q-09 — Vein tuning (open):** The `/play/` sandbox now follows section 04 with provisional C-03 values: rare vein size 900 (mythic 3000) times richness 0.6-1.5 and a depth factor, a guaranteed rare vein at shaft 3, pick hardness by tier, and no proportional taper below 5 percent yet. **Recommendation:** treat all of these as fixtures until the economy calibration run (document 10), then tune against the 4-hour to 2-day rare-vein lifetime target. **Answer:** Pending.
+
 ## Answer history
 
 - 25 October 2026: CEO answered Q-01–Q-03 in chat. No numeric Pro allowance is known; platform selection delegated with setup documentation required; fresh saves approved and prototype preserved.
