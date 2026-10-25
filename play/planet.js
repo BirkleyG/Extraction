@@ -275,6 +275,11 @@ export function defaultPlanet() {
   }, 'rustglass');
 }
 
+/** The same planet for the same seed: used online so every player sees one shared world. */
+export function planetFromSeed(seed) {
+  return buildPlanet({}, seed, pickTheme(rng(hash(seed))));
+}
+
 export function newPlanetFromSeed() {
   const seed = `seed-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6)}`;
   return buildPlanet({}, seed, pickTheme(rng(hash(seed))));

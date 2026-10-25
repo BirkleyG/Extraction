@@ -49,7 +49,10 @@ export class WorldAdmin {
     const world = await ref.get();
     if (!world.exists) return { skipped: true, reason: 'world not created yet' };
     const seed = sha(`${this.seedSecret}|${worldId}|${monthId}`);
-    await this.game.storePlanet({ worldId, monthId, planet: generateWorld({ seed, monthId, players: this.players }) });
+    // The cosmetic seed drives only names, colours and scenery in the browser. It is derived separately so it can be public
+    // without revealing the secret world seed (ore deposits, veins).
+    const planet = { ...generateWorld({ seed, monthId, players: this.players }), cosmeticSeed: sha(`cosmetic|${worldId}|${monthId}`).slice(0, 24) };
+    await this.game.storePlanet({ worldId, monthId, planet });
     if (world.data().activeMonthId < monthId) await ref.update({ activeMonthId: monthId });
     const closed = [];
     // Close the previous month if it had any players and is not finished yet.

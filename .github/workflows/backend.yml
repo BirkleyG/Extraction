@@ -60,4 +60,4 @@ jobs:
           node --check js/backend.js
           node --check js/config.js
       - name: Check online client syntax
-        run: node --check online/app.js
+        run: node --check play/online.js

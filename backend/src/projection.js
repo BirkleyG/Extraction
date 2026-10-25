@@ -8,7 +8,7 @@ import { monthEndMs } from './game-service.js';
 
 const safePrice = (fn) => { try { return fn(); } catch (error) { if (error instanceof LedgerError || error?.code) return null; throw error; } };
 
-export function projectOwner({ doc, spendable, escrow, version, offers, nowMs, autoTakeoffs = 0, catchingUp = false }) {
+export function projectOwner({ doc, spendable, escrow, version, offers, nowMs, autoTakeoffs = 0, catchingUp = false, cosmeticSeed = '' }) {
   const nowSec = Math.floor(nowMs / 1000);
   const shafts = doc.production.shafts.map((s) => ({
     shaftNumber: s.shaftNumber,
@@ -58,5 +58,11 @@ export function projectOwner({ doc, spendable, escrow, version, offers, nowMs, a
     })),
     shipments: doc.shipments.slice(-20).map((s) => ({ id: s.id, units: s.units, payment: s.payment, destinationId: s.destinationId, departureSecond: s.departureSecond, arrivalSecond: s.arrivalSecond, status: s.arrivalSecond <= nowSec ? 'DELIVERED' : 'IN_TRANSIT' })),
     purchasable: PURCHASABLE_LINES,
+    // Everything the pixel scene needs to draw this owner's mine. It is the owner's own state; there is no hidden world data in it.
+    scene: {
+      cosmeticSeed, slot: doc.slot ?? 0, commonOreId: doc.production.shafts[0].oreId, simSecond: doc.simSecond, nowSec,
+      production: doc.production, levels: doc.levels, workersHired: doc.workersHired, shipments: doc.shipments.slice(-20), policy,
+      shipReadyAtSecond: doc.ship.readyAtSecond, totalExternalEarnings: doc.totalExternalEarnings,
+    },
   };
 }

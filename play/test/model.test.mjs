@@ -93,7 +93,7 @@ test('a stranded partial load (ore can no longer arrive) is sent by auto mode in
 
 test('computer-run buyers never run out: selling is limited only by ore and the ship; pick a buyer before launch', () => {
   let state = yardState({ units: 800, auto: false });
-  state = selectDestination(state, 'cinder-buyer');
+  state = selectDestination(state, 'cinder-bay-buyer');
   let total = 0;
   for (let trip = 0; trip < 5; trip += 1) {
     state = advanceGame(state, state.ship.readyAtSecond > state.simSeconds ? state.ship.readyAtSecond - state.simSeconds : 1, 5000).state;
@@ -101,7 +101,7 @@ test('computer-run buyers never run out: selling is limited only by ore and the 
     total += state.shipments.at(-1).payment;
   }
   assert.equal(state.shipments.length, 5);
-  assert(state.shipments.every((x) => x.destinationId === 'cinder-buyer' && x.unitPrice === 64));
+  assert(state.shipments.every((x) => x.destinationId === 'cinder-bay-buyer' && x.unitPrice === 64));
   assert.equal(state.coins, total);
   assert(total >= 5 * 150 * 64 - 64 * 5);
 });
