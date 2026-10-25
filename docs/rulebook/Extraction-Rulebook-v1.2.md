@@ -1633,6 +1633,11 @@ Changing a rule
 - Preserved the legacy pixel UI; added machine effect previews, bulk controls, onboarding, reduced motion, explicit old-save migration backups and corruption recovery. Section 20 owns these presentation/save requirements.
 - Existing prototype saves and online accounts are preserved. Browser and invariant verification is tracked in [Playability progress](../development/Overnight-Progress.md); incomplete Release A systems remain incomplete.
 
+### Published playability checkpoint · 26 October 2026
+
+- PRs #12–#14 are merged; Pages successfully published the new sandbox from `73ee0bd`. Public browser checks verified the ten-unit starter shipment, upgrades, fast-forward, mobile layout, preserved prototype and online sign-in. The rulebook remains the maintained source; this does not certify Release A or full-month balance.
+- Acceptance evidence for this batch: 27 sandbox tests, 86 backend tests and 10 real Auth/Firestore emulator tests passed. An authenticated browser loop on local emulators verified server-backed sale, single/bulk purchase and reload persistence. Complete results and remaining runtime/deployment limits: [Playability progress](../development/Overnight-Progress.md).
+
 ## 23 — Advanced Combat and AI Military Command
 
 **Status: consolidated revision 1.2.** Approved rules use the register in 00; C-numbered coefficients remain calibration work.

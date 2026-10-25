@@ -11,8 +11,8 @@ The CEO supplied two files in chat: a pure sandbox economy module and a fluid pa
 | Batch | Scope | Status |
 |---|---|---|
 | 1 | Record the supplied economy profile and integration boundaries | Saved and merged in PR #12 |
-| 2 | Shared sandbox arithmetic, three global upgrade ladders, short shipping cadence, pacing evidence and safe saves | Implemented; model and browser verification passed |
-| 3 | Legacy UI polish, visible machine progression, first-session guidance, desktop/mobile browser tests | Implemented; model and browser verification passed |
+| 2 | Shared sandbox arithmetic, three global upgrade ladders, short shipping cadence, pacing evidence and safe saves | Published and verified on Pages in PR #14 |
+| 3 | Legacy UI polish, visible machine progression, first-session guidance, desktop/mobile browser tests | Published and verified on Pages in PR #14 |
 | 4 | Bounded background settlement for the existing trusted scheduler, retry/invariant tests | Implemented; unit/regression and 10 real emulator tests passed; runtime not deployed |
 
 The supplied study is a fluid approximation. Its milestone table cannot certify the discrete game, offline equality, full-month balance or multiplayer security. Compare it with the actual model and report limitations before adopting coefficients elsewhere.
@@ -37,3 +37,15 @@ Create small reviewable PRs and GitHub checkpoints as meaningful batches become 
 **Remaining:** production deployment of the worker source requires Cloud Run credentials (not attached here). Full Release A defense/hazards, general durable event queue, complete month simulation/balance certification and production cost measurement remain open. Online economics are intentionally unchanged during this local tuning experiment.
 
 - [PR #14](https://github.com/BirkleyG/Extraction/pull/14): playable sandbox economy, legacy presentation, pacing evidence and recovery fixes. Final mixed-ore checks prevent high-value fractional dust from blocking whole-crate cargo; launch previews match actual ore selection and rounded unit prices.
+
+## Published result · 26 October 2026
+
+[Play the updated sandbox](https://birkleyg.github.io/Extraction/play/?mode=offline). PRs [#12](https://github.com/BirkleyG/Extraction/pull/12), [#13](https://github.com/BirkleyG/Extraction/pull/13) and [#14](https://github.com/BirkleyG/Extraction/pull/14) are merged. The playable merge is `73ee0bd4e4343a9d1ea7042b1c51323235a21290`; GitHub Pages reported it built successfully.
+
+Final PR CI passed **27 sandbox tests, 86 backend tests and 10 real Firebase emulator tests**, including regenerated exact/fluid evidence. Separate browser testing against local Auth/Firestore emulators passed sign-up → invite → enrollment → starter sale (200 online coin) → single purchase (185 remaining) or ×10 purchase (32 remaining) → persisted reload. This verifies the shared renderer retains the original trusted online economics.
+
+Public Pages browser checks passed with the deployed coefficients (680/900/780, growth 1.8): a fresh mine has ten starter units, its ten Cobalt units sell for 120 coin, a minute of progress and a Pick purchase work, and 390px layout has no overflow. The prototype returned HTTP 200 and signed-out online authentication rendered. No JavaScript errors were observed. Public tests created no accounts and used no AI.
+
+The earlier overlapping UI experiment is preserved on `archive/codex-original-ui-pre-claude`, not merged into the active game. The working integration baseline is the current `main`.
+
+**Backend deployment remains separate:** the source worker checkpoint is merged and emulator-tested, but this session did not deploy Cloud Run or change billed infrastructure. The deployed online game retains its existing runtime until that source is deployed.
