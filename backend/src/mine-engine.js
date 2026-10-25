@@ -288,9 +288,15 @@ export function departureFor(state, shipId, refineryId, lines, atSec, market, { 
 function firstSecondWithStock(state, fromSec, toSec, target, maxTicks) {
   const stockAt = (t) => yardStock(advanceOwner(state, t, maxTicks).state);
   if (stockAt(fromSec) >= target) return fromSec;
-  if (stockAt(toSec) < target) return null;
-  let lo = fromSec; let hi = toSec; // stock(lo) < target <= stock(hi)
-  while (hi - lo > 1) { const mid = lo + Math.floor((hi - lo) / 2); if (stockAt(mid) >= target) hi = mid; else lo = mid; }
+  // Gallop outward (10 min, 20 min, ...) so the cost follows the real gap to the next takeoff, not the length of the whole catch-up.
+  let lo = fromSec; let hi = fromSec; let step = 600;
+  for (;;) {
+    hi = Math.min(toSec, lo + step);
+    if (stockAt(hi) >= target) break;
+    if (hi >= toSec) return null;
+    lo = hi; step *= 2;
+  }
+  while (hi - lo > 1) { const mid = lo + Math.floor((hi - lo) / 2); if (stockAt(mid) >= target) hi = mid; else lo = mid; } // stock(lo) < target <= stock(hi)
   return hi;
 }
 

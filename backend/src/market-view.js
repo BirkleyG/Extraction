@@ -38,7 +38,11 @@ export class MarketView {
   state(id) { return this.#states.get(id); }
   get dirtyIds() { return [...this.#dirty]; }
   /** Pure offer for cargo lines `[{oreId, tier, units}]` at `atSec`. */
-  quote(id, lines, atSec) { return quoteCargo(this.get(id), this.#states.get(id), lines, atSec); }
+  quote(id, lines, atSec) {
+    const state = this.#states.get(id);
+    const q = quoteCargo(this.get(id), state, lines, atSec);
+    return { ...q, nextState: { ...q.nextState, dockBusy: busyIntervals(state) } }; // dock reservations ride along with the funds/storage state
+  }
   /** Dock wait for a ship arriving at `arrivalSec` that will unload for `unloadSeconds` (the estimate and the reservation use this one rule). */
   dockWait(id) { const s = this.#states.get(id); const r = this.get(id); return (arrivalSec, unloadSeconds = 0) => dockWaitFor(r, s, arrivalSec, unloadSeconds); }
   /** Consume the quoted premium and reserve the dock for the planned unloading. */
