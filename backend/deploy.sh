@@ -58,9 +58,13 @@ TOKEN="$(gcloud secrets versions access latest --secret=extraction-internal-toke
 
 # Hourly tick: prepares each new month and closes finished ones (idempotent). One job stays within the free scheduler allowance.
 JOB=extraction-tick
-ARGS=(--location "$REGION" --schedule "5 * * * *" --time-zone "Etc/UTC" --uri "${URL}/internal/tick" --http-method POST
-      --headers "Content-Type=application/json,x-internal-token=${TOKEN}" --message-body "{\"worldId\":\"${WORLD_ID}\"}")
-gcloud scheduler jobs describe "$JOB" --location "$REGION" >/dev/null 2>&1 && gcloud scheduler jobs update http "$JOB" "${ARGS[@]}" || gcloud scheduler jobs create http "$JOB" "${ARGS[@]}"
+COMMON=(--location "$REGION" --schedule "5 * * * *" --time-zone "Etc/UTC" --uri "${URL}/internal/tick" --http-method POST --message-body "{\"worldId\":\"${WORLD_ID}\"}")
+if gcloud scheduler jobs describe "$JOB" --location "$REGION" >/dev/null 2>&1; then
+  gcloud scheduler jobs update http "$JOB" "${COMMON[@]}" --update-headers "Content-Type=application/json,x-internal-token=${TOKEN}" >/dev/null
+else
+  gcloud scheduler jobs create http "$JOB" "${COMMON[@]}" --headers "Content-Type=application/json,x-internal-token=${TOKEN}" >/dev/null
+fi
+echo "scheduler job $JOB is set (hourly)"
 
 step "6/6 Health check"
 CODE="$(curl -s -o /dev/null -w '%{http_code}' "${URL}/v1/worlds/${WORLD_ID}/state" || true)"
