@@ -64,8 +64,8 @@ Rules: 03, 04, 05, 10, 02 (commercial departure). Tests: T03, T04, T05, T10, T18
 - [ ] ⬜ Weather grounding (wait, no loss); dock reservation/queue
 
 ### A3 — Month lifecycle, defense, browser UI
-- [ ] ⬜ **Resumable month-close state machine** (T17-05/06/07, T18-12): reject departures ≥ B → process events < B → snapshot coin+escrow once → finalize pre-B shipments without extra pay → archive/burn/reset → create next world. Crash-safe at every phase.
-- [ ] ⬜ Leaderboard (coin/min), tie-break (first to reach amount), all-time stats, Hall of Fame (T01-03/04)
+- [x] ✅ **Resumable month-close state machine** (`month-close.js`; Memory + Firestore emulator tests) (T17-05/06/07, T18-12): reject departures ≥ B → process events < B → snapshot coin+escrow once → finalize pre-B shipments without extra pay → archive/burn/reset → create next world. Crash-safe at every phase.
+- [x] 🟡 Snapshot ranking, tie-break (first to reach peak), all-time stats, Hall of Fame record (T01-03/04). Live leaderboard + coin/min UI still to do
 - [ ] ⬜ Mid-month join + catch-up grant (T01 edge cases)
 - [ ] ⬜ Winner writes next planet prompt (24h timeout → fallback)
 - [ ] ⬜ Offline "while you were away" summary (unlimited offline, T17-03)
@@ -150,3 +150,4 @@ Rules: 03, 04, 05, 10, 02 (commercial departure). Tests: T03, T04, T05, T10, T18
 - 25 Oct: `mine-engine.js` + `game-service.js`: enroll, buyUpgrade (1/10/100/max), hire, buyShaft, atomic paid dispatch with NPC token-bucket budget/capacity, idempotent receipts, ledger types SYSTEM_PURCHASE / NPC_RAW_PURCHASE (T02-01/03, T05-02/03/05, T18-10/11 covered on the in-memory repository). 66 fast tests. **Next:** Firestore repository `getDoc/putDoc`, durable scheduler/offline advance, month-close state machine.
 - 25 Oct: `firestore-game-repository.js` — GameService now runs on real Firestore transactions (emulator-tested: idempotent retry across instances, restart recovery, two owners racing one NPC buyer budget). 5 integration tests pass. **Next:** scheduler/offline advance, month-close state machine, HTTP routes for game commands, then rewire the browser.
 - 25 Oct: `/play/` sandbox now runs the C01-EARLY profile (0 coin start, 40/unit bid, 5-unit starter cargo, habitat line, graduated hire cost). Browser-verified: first sale (200 coin) at ~5 s, no JS errors. Sandbox save key bumped to `extraction_playtest_v2` (old v1 saves ignored, not deleted).
+- 25 Oct: steady-state extrapolating catch-up (`advanceProductionFast`; 31 days in ~25 ms, equals 1-second loop within tolerance) and `month-close.js` (drain → single snapshot → burn once per owner → stats/hall; crash at every phase resumes identically; commands ≥ B rejected as `MONTH_CLOSED`). 71 fast tests + 6 emulator tests pass. **Next:** HTTP routes for game commands + per-owner read model, NPC buyer refresh/daily budgets, minimal defense, browser client wired to the server.

@@ -62,3 +62,28 @@ test('Firestore: two owners racing for one NPC buyer budget never overspend it',
   const losers = out.filter((o) => o.status === 'rejected');
   for (const l of losers) assert(['BUYER_OUT_OF_FUNDS'].includes(l.reason.code), l.reason.code);
 });
+
+test('Firestore: month close resumes after a crash with one snapshot and one burn per owner', async () => {
+  const { MonthCloser } = await import('../src/month-close.js');
+  const { monthEndMs } = await import('../src/game-service.js');
+  const worldId = await world(['u1', 'u2']);
+  const t0 = Date.now();
+  let clock = t0;
+  const mk = () => new FirestoreGameRepository(db, { clock: () => clock });
+  const game = new GameService(mk(), { npcBuyers: [{ ...buyers[0], fundsCap: 1e9 }] });
+  await game.seedNpcBuyers({ worldId, monthId, nowSec: Math.floor(t0 / 1000) });
+  const e1 = await game.enroll(cmd(0), ctx(worldId, 'u1', t0));
+  const e2 = await game.enroll(cmd(0), ctx(worldId, 'u2', t0));
+  await game.dispatch(cmd(e1.version, { destinationId: 'near' }), ctx(worldId, 'u1', t0 + 1000));
+  const B = monthEndMs(monthId);
+  clock = B + 60_000; // the wall clock is now past the boundary
+  let crashed = false;
+  const crashing = new MonthCloser(mk(), { hooks: { afterPhase: (n) => { if (n === 'snapshot' && !crashed) { crashed = true; throw new Error('outage'); } } } });
+  await assert.rejects(crashing.close({ worldId, monthId, nowMs: B + 60_000 }), /outage/);
+  const archive = await new MonthCloser(mk()).close({ worldId, monthId, nowMs: B + 120_000 });
+  assert.equal(archive.ranking.length, 2);
+  assert.equal(archive.winnerId, 'u1');
+  const again = await new MonthCloser(mk()).close({ worldId, monthId, nowMs: B + 180_000 });
+  assert.deepEqual(again, archive);
+  void e2;
+});

@@ -20,8 +20,10 @@ const PAYLOAD_KEYS = {
   dispatch: ['destinationId', 'units'],
 };
 const BASE_KEYS = ['monthId', 'requestId', 'expectedVersion'];
+export const monthEndMs = (monthId) => { const [y, m] = monthId.split('-').map(Number); return Date.UTC(y, m, 1); };
+export const rosterPath = (worldId, monthId) => `world/${encode(worldId)}/roster/${monthId}`;
 
-const ownerPath = (worldId, ownerId, monthId) => `world/${encode(worldId)}/owner/${encode(ownerId)}/${monthId}`;
+export const ownerPath = (worldId, ownerId, monthId) => `world/${encode(worldId)}/owner/${encode(ownerId)}/${monthId}`;
 const npcPath = (worldId, monthId, id) => `world/${encode(worldId)}/npc/${monthId}/${encode(id)}`;
 
 function scopeOf(kind, command, context) {
@@ -35,6 +37,8 @@ function scopeOf(kind, command, context) {
   if (typeof command.requestId !== 'string' || !command.requestId || command.requestId.length > 160) fail('INVALID_COMMAND', 'requestId is required');
   if (!Number.isSafeInteger(command.expectedVersion) || command.expectedVersion < 0) fail('INVALID_VERSION');
   if (!Number.isSafeInteger(context.now) || context.now < 0) fail('INVALID_CLOCK');
+  // A command stamped at or after the closing boundary B belongs to the new month and can never use old-month state (T17-06).
+  if (context.now >= monthEndMs(command.monthId)) fail('MONTH_CLOSED');
   const worldId = context.worldId ?? 'default';
   const payload = Object.fromEntries(PAYLOAD_KEYS[kind].filter((k) => command[k] !== undefined).map((k) => [k, command[k]]));
   return { kind, actorId, worldId, monthId: command.monthId, requestId: command.requestId, expectedVersion: command.expectedVersion, nowMs: context.now, nowSec: Math.floor(context.now / 1000), payload };
@@ -118,6 +122,13 @@ export class GameService {
     return advanced.state;
   }
 
+  /** Track the highest coin-on-hand total and when it was first reached (tie-break: who reached an amount first). */
+  async #withPeak(tx, scope, owner) {
+    const total = (await tx.balance(scope.actorId, scope.monthId, 'spendable')) + (await tx.balance(scope.actorId, scope.monthId, 'escrow'));
+    if (!owner.peak || total > owner.peak.amount) return { ...owner, peak: { amount: total, firstReachedMs: scope.nowMs } };
+    return owner;
+  }
+
   async #spend(tx, scope, amount, reference) {
     if (!Number.isSafeInteger(amount) || amount < 1) fail('INVALID_AMOUNT');
     const balance = await tx.balance(scope.actorId, scope.monthId, 'spendable');
@@ -136,6 +147,9 @@ export class GameService {
       if (await tx.getDoc(ownerPath(scope.worldId, scope.actorId, scope.monthId))) fail('ALREADY_ENROLLED');
       const doc = createOwnerState({ ownerId: scope.actorId, monthId: scope.monthId, siteId: site.siteId, commonOreId: site.commonOreId, nowSec: scope.nowSec });
       await tx.putDoc(ownerPath(scope.worldId, scope.actorId, scope.monthId), doc);
+      const roster = (await tx.getDoc(rosterPath(scope.worldId, scope.monthId))) ?? { owners: [] };
+      if (!roster.owners.includes(scope.actorId)) roster.owners.push(scope.actorId);
+      await tx.putDoc(rosterPath(scope.worldId, scope.monthId), roster);
       return { ok: true, kind: 'enroll' };
     }
     let owner = await this.#loadOwner(tx, scope);
@@ -163,7 +177,7 @@ export class GameService {
       return this.#dispatch(tx, scope, owner, path);
     }
     await this.#spend(tx, scope, spent, scope.requestId);
-    await tx.putDoc(path, owner);
+    await tx.putDoc(path, await this.#withPeak(tx, scope, owner));
     return { ok: true, kind: scope.kind, spent, ...extra };
   }
 
@@ -211,7 +225,7 @@ export class GameService {
     buyer.funds -= payment;
     buyer.freeCapacityUnits -= units;
     await tx.putDoc(buyerPath, buyer);
-    await tx.putDoc(path, next);
+    await tx.putDoc(path, await this.#withPeak(tx, scope, next));
     return { ok: true, kind: 'dispatch', shipment, plan };
   }
 }

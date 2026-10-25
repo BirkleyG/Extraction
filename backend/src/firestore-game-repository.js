@@ -21,7 +21,7 @@ export class FirestoreGameRepository {
   }
 
   async transact(work, scope = {}) {
-    const { worldId, ownerId, monthId, requestId, readOnly = false } = scope;
+    const { worldId, ownerId, monthId, requestId, readOnly = false, closing = false } = scope;
     if (![worldId, ownerId, monthId].every((v) => typeof v === 'string' && v.length > 0)) fail('INVALID_SCOPE');
     const system = ownerId === 'system';
     const worldRef = this.firestore.collection('worlds').doc(digest(worldId));
@@ -42,7 +42,8 @@ export class FirestoreGameRepository {
       if (world.activeMonthId !== monthId) fail('STALE_MONTH');
       if (!system && (!memberSnap.exists || memberSnap.data().uid !== ownerId || memberSnap.data().status !== 'active')) fail('FORBIDDEN');
       const now = this.clock();
-      if (!Number.isSafeInteger(now) || now < 0 || monthOf(now) !== monthId) fail('STALE_MONTH');
+      // Closing a finished month runs after its boundary, so only the closer may bypass the wall-clock month check.
+      if (!Number.isSafeInteger(now) || now < 0 || (!closing && monthOf(now) !== monthId)) fail('STALE_MONTH');
 
       const spendable = balanceOf(spendSnap);
       const escrow = balanceOf(escrowSnap);
