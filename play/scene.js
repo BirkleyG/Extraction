@@ -249,7 +249,7 @@ export function addFx(wx, wy, text, col) {
   POPS.push({ wx, wy, text, col: col || '#ffd23f', born, bits: Array.from({ length: 14 }, () => ({ a: R0() * 6.283, v: 20 + R0() * 40, c: R0() < 0.5 ? col || '#ffd23f' : '#ffffff' })) });
 }
 export const veinSpot = (shaftNumber, vein) => [SX + 15 + vein.at, lvY(shaftNumber - 1) - TH * 0.6];
-export const FX_SPOTS = { lift: [SX, -70], dig: [SX + 150, LV0 - 14], yard: [YARD_X0 + 100, -30], shipSpeed: [PAD_X, -50], shipCapacity: [PAD_X, -50], loading: [PAD_X - 40, -60], habitat: [HAB_X, -44], bunkhouse: [SX + 40, LV0 - 20], cart: [SX + 60, LV0 - 20], shaft: [SX, 20] };
+export const FX_SPOTS = { lift: [SX, -70], pick: [SX + 150, LV0 - 14], yard: [YARD_X0 + 100, -30], hauler: [PAD_X, -50], shaft: [SX, 20] };
 
 export function clampCam(cam, state) {
   cam.z = clamp(cam.z, 0.4, 8);
@@ -344,10 +344,10 @@ export function renderScene(canvas, ctx, data) {
   // tunnels, dug out as the crew mines; deposits in the rock ahead; veins to reach
   let shownCount = 0;
   const commonOre = oreAt(state.site.commonOreId);
-  const toolCap = (sf) => toolHardness(sf.digLevel);
+  const toolCap = () => toolHardness(state.upgrades.pick);
   for (let i = 0; i < shafts.length; i += 1) {
     const y = lvY(i); if (y - TH > vy1 || y < vy0) continue; shownCount += 1;
-    const sf = shafts[i]; const n = sf.shaftNumber; const digTier = tierOf('dig', sf.digLevel).i;
+    const sf = shafts[i]; const n = sf.shaftNumber; const digTier = tierOf('pick', state.upgrades.pick).i;
     const faceD = faceDistance(state.shaftMined[n] || 0);
     const lenR = shaftW + 26 + faceD; const lenL = shaftW + 18 + faceD * 0.4;
     const xl = SX - lenL; const xr = SX + lenR;
@@ -430,7 +430,7 @@ export function renderScene(canvas, ctx, data) {
   for (let dy = 0; dy < 38; dy += 2) { const hw = Math.sqrt(38 * 38 - dy * dy); pR(HAB_X - hw, -dy - 2, hw * 2, 2, dy > 34 ? '#cfe7ff' : 'rgba(170,215,255,0.32)'); }
   for (let i = 0; i < 5; i += 1) pR(HAB_X - 28 + i * 12, -16, 6, 6, Math.sin(t * 0.7 + i * 2) > -0.3 ? '#ffe08a' : '#4a3d5a');
   pR(HAB_X - 8, -12, 10, 12, '#2a2238');
-  if (s >= 0.3) labels.push({ x: bx(HAB_X), y: by(12), text: `HAB · ${state.workersHired} CREW`, col: '#b3a5d3' });
+  if (s >= 0.3) labels.push({ x: bx(HAB_X), y: by(12), text: `HAB · ${shafts.length * 10} CREW`, col: '#b3a5d3' });
   labels.push({ x: bx(SX), y: by(top - 28), text: `${tierOf('lift', state.production.lift.level).name.toUpperCase()} · LV ${state.production.lift.level}`, col: '#ffd23f' });
 
   // ore yard
@@ -443,15 +443,15 @@ export function renderScene(canvas, ctx, data) {
     const x = YARD_X0 + 18 + idx * 33; const h = drawPile(x, units * 4, o.color, 40);
     if (s >= 0.5) labels.push({ x: bx(x), y: by(-h - 8), text: `${o.name} ${Math.floor(units)}`, col: o.color });
   });
-  if (s >= 0.3) labels.push({ x: bx(YARD_X0 + yardW / 2), y: by(12), text: `${tierOf('yard', state.upgrades.yard).name.toUpperCase()} ${Math.floor(total)}/${state.production.surface.capacityUnits}`, col: total > state.production.surface.capacityUnits * 0.9 ? '#ff5a6e' : '#f4edff' });
+  if (s >= 0.3) labels.push({ x: bx(YARD_X0 + yardW / 2), y: by(12), text: `ORE YARD ${Math.floor(total)}/${Math.floor(state.production.surface.capacityUnits)}`, col: total > state.production.surface.capacityUnits * 0.9 ? '#ff5a6e' : '#f4edff' });
 
   // launch pad, crane and hauler
   pR(PAD_X - 52, -4, 104, 4, '#2b2238'); pR(PAD_X - 52, -4, 104, 1, '#4b4258');
   const blink = Math.floor(t * 3) % 2; pR(PAD_X - 52, -6, 3, 2, blink ? '#ff5a6e' : '#5a1a2a'); pR(PAD_X + 49, -6, 3, 2, blink ? '#5ee6a8' : '#1a4a2a');
-  const craneT = tierOf('loading', state.upgrades.loading).i; const craneCol = ['#c8a020', '#9aa7b8', '#ff8a3d', '#7ad1ff'][craneT];
+  const craneT = tierOf('hauler', state.upgrades.hauler).i; const craneCol = ['#c8a020', '#9aa7b8', '#ff8a3d', '#7ad1ff', '#7ad1ff', '#ff5ec4'][craneT];
   pR(PAD_X - 40, -58, 4, 58, craneCol); for (let q = 0; q < 58; q += 6) pR(PAD_X - 40, -q - 3, 4, 1, sh(craneCol, -0.3));
   const sw = Math.sin(t * 0.8) * 0.5; const ex = PAD_X - 38 + Math.cos(sw) * 30; pL(PAD_X - 38, -58, ex, -58 + Math.sin(sw) * 4, craneCol, Math.max(1, s * 2));
-  const model = Math.min(4, tierOf('shipSpeed', state.upgrades.shipSpeed).i + tierOf('shipCapacity', state.upgrades.shipCapacity).i);
+  const model = Math.min(4, tierOf('hauler', state.upgrades.hauler).i);
   const last = state.shipments[state.shipments.length - 1]; const away = state.ship.readyAtSecond > state.simSeconds && last;
   let shipX = PAD_X; let shipY = -4; let flame = false; let visible = true;
   if (away) {

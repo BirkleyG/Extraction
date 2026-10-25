@@ -1,9 +1,9 @@
 import { createProductionState, liftRatePerMinute, shaftRatePerMinute, tickProductionSecond, withdrawSurfaceUnits } from '../backend/src/production.js';
-import { tierOf } from './upgrades.js';
+import * as E from './economy.js';
 
-export const SAVE_KEY = 'extraction_playtest_v3';
-export const SAVE_VERSION = 1;
-export const BASE_LIFT_GROWTH = 1.0316;
+export const SAVE_KEY = 'extraction_playtest_v4';
+export const SAVE_VERSION = 2;
+export const { DESTINATIONS, LEVEL_CAP, MAX_SHAFTS } = E;
 export const ORES = Object.freeze([
   { id: 'ferrite', name: 'Ferrite', color: '#cf8152', value: 1 },
   { id: 'cobalt', name: 'Cobalt', color: '#55a8d8', value: 1.15 },
@@ -13,11 +13,11 @@ export const ORES = Object.freeze([
   { id: 'iridium', name: 'Iridium', color: '#90c5ce', value: 2.3 },
   { id: 'mythic', name: 'Mythic', color: '#ee9d58', value: 4 },
 ]);
-export const DESTINATIONS = Object.freeze([
-  Object.freeze({ id: 'frontier-refinery', name: 'Frontier Refinery', detail: 'Near · steady bid', distance: 1, basePrice: 40, unloadUnitsPerMinute: 1500, accent: '#e7a15a' }),
-  Object.freeze({ id: 'cinder-buyer', name: 'Cinder Bay Buyer', detail: 'Far · premium bid', distance: 3, basePrice: 64, unloadUnitsPerMinute: 900, accent: '#66bfd0' }),
-]);
-
+/** the three upgrade lines a player can buy */
+export const UPGRADE_LINES = E.LINE_IDS;
+/** a sandbox keeps only the most recent trips and ledger lines in the save; running totals keep the whole story */
+const KEEP_SHIPMENTS = 24;
+const KEEP_LEDGER = 60;
 
 /* ---------- sites, common ore and rare veins (rulebook 04, provisional C-03 sizes) ----------
  * A site has exactly one common ore (infinite) and a few rare veins hidden in its shafts. A shaft digs the common ore
@@ -29,10 +29,10 @@ export const COMMON_ORES = Object.freeze(['ferrite', 'cobalt']);
 export const RARE_ORES = Object.freeze(['lithium', 'sulfur', 'crystal', 'iridium']);
 export const MYTHIC_ORE = 'mythic';
 export const HARDNESS = Object.freeze({ ferrite: 1, cobalt: 2, lithium: 5, sulfur: 5, crystal: 6, iridium: 6, mythic: 9 });
-export const VEIN_SIZE = Object.freeze({ rare: 900, mythic: 3000 });
 export const TOUGH_TERRAINS = Object.freeze(['mesa', 'volcanic', 'canyon', 'glacier', 'alpine', 'badlands', 'arches', 'monoliths', 'rifts', 'crystal', 'scrapyard']);
-const TOOL_HARDNESS = [2, 4, 6, 8, 10];
-export const toolHardness = (digLevel) => TOOL_HARDNESS[tierOf('dig', digLevel).i];
+const TOOL_HARDNESS = [2, 4, 5, 6, 8, 10];
+/** how hard a rock the pick can break, from the pick level */
+export const toolHardness = (pickLevel) => TOOL_HARDNESS[E.tierIndex('pick', pickLevel)];
 /** how far a shaft's tunnel face has been dug, in scene units, from the units it has mined */
 export const faceDistance = (minedUnits) => Math.min(360, 40 * Math.log2(1 + Math.max(0, minedUnits) / 4));
 const DEFAULT_SITE = Object.freeze({ seed: 'sandbox|home', regionId: 'home', commonOreId: 'ferrite', rareOreIds: RARE_ORES, mythic: true });
@@ -56,11 +56,11 @@ export function generateVeins(site, shaftNumber) {
   for (let k = 0; k < maxVeins; k += 1) {
     const forced = shaftNumber === 3 && k === 0 && site.rareOreIds.length > 0;
     if (!forced && R() >= chance * (k === 0 ? 1 : 0.5)) continue;
-    const mythic = site.mythic && shaftNumber >= 24 && R() < 0.5;
+    const mythic = site.mythic && shaftNumber >= 14 && R() < 0.5;
     const oreId = mythic ? MYTHIC_ORE : site.rareOreIds[Math.floor(R() * site.rareOreIds.length)];
     if (!oreId) continue;
     const richness = 0.6 + R() * 0.9;
-    const sizeUnits = Math.round(richness * (mythic ? VEIN_SIZE.mythic : VEIN_SIZE.rare) * (1 + 0.15 * (shaftNumber - 1)));
+    const sizeUnits = E.veinSize(shaftNumber, richness, mythic);
     veins.push({ id: `v${shaftNumber}-${k}`, shaftNumber, oreId, at: Math.round(150 + R() * 170 + k * 25), sizeUnits, remainingUnits: sizeUnits, seen: false, warned: false });
   }
   return veins.sort((a, b) => a.at - b.at);
@@ -71,7 +71,7 @@ export function veinStatus(state, vein) {
   if (vein.remainingUnits <= 1e-9) return 'empty';
   if (faceDistance(state.shaftMined?.[vein.shaftNumber] ?? 0) < vein.at) return 'ahead';
   const shaft = shaftByNumber(state, vein.shaftNumber);
-  return !shaft || HARDNESS[vein.oreId] > toolHardness(shaft.digLevel) ? 'blocked' : 'mining';
+  return !shaft || HARDNESS[vein.oreId] > toolHardness(state.upgrades.pick) ? 'blocked' : 'mining';
 }
 function miningVein(state, shaftNumber) { return (state.veins || []).find((vein) => vein.shaftNumber === shaftNumber && veinStatus(state, vein) === 'mining'); }
 
@@ -126,52 +126,55 @@ const number = (value, label, min = 0) => { if (typeof value !== 'number' || !Nu
 const roundHalfUp = (value) => Math.floor(value + 0.5);
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const addSafe = (a, b, label) => safeInt(a + b, label);
-const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
-function costAt(base, growth, level) {
-  const cost = roundHalfUp(base * growth ** level);
-  return safeInt(Math.max(1, cost), 'purchase cost');
+/* ---------- the three lines, derived from one place so the screen, the engine and the pacing study agree ---------- */
+const levelOf = (state, type) => state.upgrades[type];
+export function upgradeCost(state, type) {
+  if (!E.LINES[type]) fail('UNKNOWN_UPGRADE');
+  const level = levelOf(state, type);
+  return level >= E.LEVEL_CAP ? null : E.lineCost(type, level);
 }
-
-function costSchedule(type, state, shaftNumber = 1) {
-  switch (type) {
-    case 'dig': return { level: findShaft(state, shaftNumber).digLevel, cap: 1000, base: 15, growth: 1.021 };
-    case 'lift': return { level: state.production.lift.level, cap: 1000, base: 25, growth: 1.0205 };
-    case 'bunkhouse': return { level: findShaft(state, shaftNumber).bunkhouseLevel, cap: 10, base: 100, growth: 1.8 };
-    case 'cart': return { level: findShaft(state, shaftNumber).cartLevel, cap: 10, base: 400, growth: 1.8 };
-    case 'yard': return { level: state.upgrades.yard, cap: 1000, base: 50, growth: 1.0195 };
-    case 'habitat': return { level: state.upgrades.habitat, cap: 1000, base: 50, growth: 1.0195 };
-    case 'shipCapacity': return { level: state.upgrades.shipCapacity, cap: 1000, base: 30, growth: 1.02 };
-    case 'shipSpeed': return { level: state.upgrades.shipSpeed, cap: 1000, base: 30, growth: 1.02 };
-    case 'loading': return { level: state.upgrades.loading, cap: 1000, base: 30, growth: 1.02 };
-    default: fail('UNKNOWN_UPGRADE');
+/** exact price of buying `count` (a number, or 'max' for as many as the coin allows) levels, plus how many that is */
+export function bulkQuote(state, type, count = 1) {
+  if (!E.LINES[type]) fail('UNKNOWN_UPGRADE');
+  const start = levelOf(state, type);
+  const wanted = count === 'max' ? E.LEVEL_CAP - start : Math.min(safeInt(count, 'purchase count'), E.LEVEL_CAP - start);
+  let levels = 0; let cost = 0;
+  while (levels < wanted) {
+    const price = E.lineCost(type, start + levels);
+    if (cost + price > state.coins || cost + price > MAX_COIN) break;
+    cost += price; levels += 1;
   }
+  return { levels, cost, nextPrice: start < E.LEVEL_CAP ? E.lineCost(type, start + levels) : null };
+}
+export const shaftPrice = (state) => (state.production.shafts.length >= E.MAX_SHAFTS ? null : E.shaftCost(state.production.shafts.length + 1));
+
+/** push the three line levels into the shared production state (rates, buffers, yard) and the hauler */
+function applyLevels(state) {
+  const { pick, lift, hauler } = state.upgrades;
+  const perMiner = E.pickRatePerMiner(pick);
+  const buffer = E.shaftBuffer(lift);
+  for (const shaft of state.production.shafts) { shaft.baseRatePerWorkerPerMinute = perMiner; shaft.bufferCapacityUnits = Math.max(shaft.bufferCapacityUnits, buffer); }
+  state.production.lift.level = lift;
+  state.production.surface.capacityUnits = Math.max(state.production.surface.capacityUnits, E.yardCapacity(lift, hauler));
+  state.ship.capacityUnits = E.haulerCapacity(hauler);
+  state.ship.speedPerMinute = E.haulerSpeed(hauler);
 }
 
-function newProductionState(shafts, lift, surface, elapsedSeconds = 0) {
-  return createProductionState({
-    shafts,
-    lift,
-    surface,
-    syntheticDownstreamDrain: { unitsPerSecond: 0 },
-    elapsedSeconds,
-  });
-}
-
-function shaftBlueprint(number, upgrades = {}, workersAssigned = 0) {
+function shaftBlueprint(number, state) {
   return {
     shaftNumber: number,
-    oreId: upgrades.oreId ?? ORES[0].id,
-    digLevel: upgrades.digLevel ?? 1,
-    bunkhouseLevel: upgrades.bunkhouseLevel ?? 0,
-    workersAssigned,
-    cartLevel: upgrades.cartLevel ?? 0,
-    depthGrowth: 2.2,
-    baseRatePerWorkerPerMinute: 1,
+    oreId: state.site.commonOreId,
+    digLevel: 0, // the pick is a mine-wide line (upgrades.pick); the shared formula's own linear dig level stays at zero
+    bunkhouseLevel: 0,
+    workersAssigned: E.MINERS_PER_SHAFT,
+    cartLevel: 10, // fixed rails: full utilization
+    depthGrowth: E.TUNE.depth,
+    baseRatePerWorkerPerMinute: E.pickRatePerMiner(state.upgrades.pick),
     soilModifier: 1,
     weatherModifier: 1,
     buffsMultiplier: 1,
-    bufferCapacityUnits: 25 * (1 + 0.04 * (upgrades.liftLevel ?? 1)),
+    bufferCapacityUnits: E.shaftBuffer(state.upgrades.lift),
     bufferUnits: 0,
   };
 }
@@ -180,22 +183,18 @@ function addLedger(state, type, amount, description, externalAccount) {
   safeInt(amount, 'ledger amount');
   const id = `local-${String(state.nextRecordId).padStart(8, '0')}`;
   state.nextRecordId += 1;
-  const entry = Object.freeze({
-    id,
-    atSecond: state.simSeconds,
-    type,
-    amount,
-    ownerDelta: type === 'NPC_RAW_PURCHASE' ? amount : type === 'START_GRANT' || type === 'DEV_TEST_GRANT' ? amount : -amount,
-    externalDelta: type === 'NPC_RAW_PURCHASE' ? -amount : type === 'START_GRANT' || type === 'DEV_TEST_GRANT' ? -amount : amount,
-    externalAccount,
-    description,
-  });
-  state.ledger.push(entry);
+  const earnsOwner = type === 'NPC_RAW_PURCHASE' || type === 'START_GRANT' || type === 'DEV_TEST_GRANT';
+  state.ledger.push(Object.freeze({
+    id, atSecond: state.simSeconds, type, amount,
+    ownerDelta: earnsOwner ? amount : -amount,
+    externalDelta: earnsOwner ? -amount : amount,
+    externalAccount, description,
+  }));
+  if (state.ledger.length > KEEP_LEDGER) state.ledger.splice(0, state.ledger.length - KEEP_LEDGER);
 }
 
 function changeCoin(state, delta, type, description, externalAccount) {
   const next = safeInt(state.coins + delta, 'wallet');
-  if (delta < 0 && next > state.coins) fail('OVERFLOW');
   state.coins = next;
   addLedger(state, type, Math.abs(delta), description, externalAccount);
 }
@@ -208,10 +207,10 @@ export function createGameState(siteOptions) {
     coins: 0,
     sourceGrants: 0,
     totalExternalEarnings: 0,
-    workersHired: 5,
-    upgrades: { habitat: 0, yard: 0, shipCapacity: 0, shipSpeed: 0, loading: 0 },
-    production: newProductionState([shaftBlueprint(1, { oreId: site.commonOreId }, 5)], { level: 1, baseRatePerMinute: 2, curve: 'exponential', growth: BASE_LIFT_GROWTH }, { capacityUnits: 100, unitsByOre: [{ oreId: site.commonOreId, units: 5 }] }),
-    ship: { capacityUnits: 150, speedPerMinute: 0.5, loadingUnitsPerMinute: 60, readyAtSecond: 0, loading: false, cargoOreId: null, cargoUnits: 0 },
+    trips: 0,
+    upgrades: { pick: 0, lift: 0, hauler: 0 },
+    production: null,
+    ship: { capacityUnits: E.haulerCapacity(0), speedPerMinute: E.haulerSpeed(0), readyAtSecond: 0, loading: false, cargoOreId: null, cargoUnits: 0 },
     site,
     veins: generateVeins(site, 1),
     shaftMined: {},
@@ -222,8 +221,15 @@ export function createGameState(siteOptions) {
     ledger: [],
     nextRecordId: 1,
     log: [],
-    notice: 'The mine is live with zero coin. Press Launch now to sell your starter ore, then spend it on digging.',
+    notice: 'Your first crate of ore is already in the yard. The hauler leaves when its hold is full.',
   };
+  state.production = createProductionState({
+    shafts: [shaftBlueprint(1, state)],
+    lift: { level: 0, baseRatePerMinute: E.TUNE.lift, curve: 'exponential', growth: E.TUNE.growth },
+    surface: { capacityUnits: E.yardCapacity(0, 0), unitsByOre: [{ oreId: site.commonOreId, units: E.START_YARD_UNITS }] },
+    syntheticDownstreamDrain: { unitsPerSecond: 0 },
+    elapsedSeconds: 0,
+  });
   return state;
 }
 
@@ -238,98 +244,85 @@ function destinationFor(id) {
   if (!destination) fail('UNKNOWN_DESTINATION');
   return destination;
 }
-function priceFor(destination, oreId) {
+export function priceFor(destination, oreId) {
   const item = ore(oreId);
   if (!item) fail('UNKNOWN_ORE');
   return roundHalfUp(destination.basePrice * item.value);
 }
-function rebalanceWorkers(state) {
-  for (const shaft of state.production.shafts) shaft.workersAssigned = 0;
-  const destination = destinationFor(state.selectedDestinationId);
-  for (let worker = 0; worker < state.workersHired; worker += 1) {
-    const candidates = state.production.shafts.filter((shaft) => shaft.workersAssigned < 10 + 5 * shaft.bunkhouseLevel).map((shaft) => ({
-      shaft,
-      score: shaftRatePerMinute({ ...shaft, workersAssigned: 1 }) * priceFor(destination, shaft.oreId),
-    })).sort((a, b) => b.score - a.score || a.shaft.shaftNumber - b.shaft.shaftNumber);
-    if (!candidates.length) fail('NO_WORKER_CAPACITY');
-    candidates[0].shaft.workersAssigned += 1;
-  }
-}
 function appendLog(state, message, type = 'event') {
   state.log.push(Object.freeze({ atSecond: state.simSeconds, message, type }));
-  if (state.log.length > 80) state.log.splice(0, state.log.length - 80);
+  if (state.log.length > 40) state.log.splice(0, state.log.length - 40);
 }
 
 function availableSurface(state, oreId) {
   return state.production.surface.unitsByOre.find((row) => row.oreId === oreId)?.units ?? 0;
 }
 function preferredCargoOre(state, destinationId) {
+  const destination = destinationFor(destinationId);
   return state.production.surface.unitsByOre.filter((row) => row.units > 0).sort((a, b) => {
-    const valueOrder = priceFor(destinationFor(destinationId), b.oreId) - priceFor(destinationFor(destinationId), a.oreId);
+    const valueOrder = priceFor(destination, b.oreId) - priceFor(destination, a.oreId);
     return valueOrder || (a.oreId < b.oreId ? -1 : a.oreId > b.oreId ? 1 : 0);
   })[0]?.oreId ?? null;
 }
 
-/** Pay the cargo aboard at takeoff. NPC buyers never run out of coin or room, so the only limits are the ship and the ore. */
-function computeDispatch(state, destinationId, extraLoadSeconds = 0) {
+/** seconds for one round trip to a buyer at the hauler's current speed */
+export const tripSecondsTo = (state, destinationId) => E.tripSeconds(destinationFor(destinationId), state.ship.speedPerMinute);
+
+/** Pay the cargo aboard at takeoff. Computer-run buyers never run out of coin or room, so the only limits are the ship and the ore. */
+function computeDispatch(state, destinationId) {
   const destination = destinationFor(destinationId);
   if (state.ship.readyAtSecond > state.simSeconds) return { state, result: null, reason: 'ship-busy' };
   const cargoOreId = state.ship.cargoOreId;
   const units = state.ship.cargoUnits;
   if (!cargoOreId || units < 1e-9) return { state, result: null, reason: 'no-cargo' };
   const price = priceFor(destination, cargoOreId);
-  const payment = roundHalfUp(units * price);
+  let payment = roundHalfUp(units * price);
   if (!Number.isSafeInteger(payment) || payment < 1) return { state, result: null, reason: 'no-cargo' };
   const next = clone(state);
-  changeCoin(next, payment, 'NPC_RAW_PURCHASE', `${destination.name} paid at departure`, `source:NPC:${destinationId}`);
-  next.totalExternalEarnings = addSafe(next.totalExternalEarnings, payment, 'external earnings');
+  // the ledger is exact whole coin: the vault tops out at the largest safe integer rather than losing the sale
+  const room = MAX_COIN - next.coins;
+  const vaultFull = payment > room;
+  if (vaultFull) payment = room;
+  if (payment > 0) {
+    changeCoin(next, payment, 'NPC_RAW_PURCHASE', `${destination.name} paid at departure`, `source:NPC:${destinationId}`);
+    next.totalExternalEarnings = Math.min(MAX_COIN, next.totalExternalEarnings + payment);
+  }
   const now = next.simSeconds;
-  const travelOneWaySeconds = destination.distance / next.ship.speedPerMinute * 60;
-  const unloadSeconds = units / destination.unloadUnitsPerMinute * 60;
-  const arrivalAtSecond = now + Math.ceil(travelOneWaySeconds + unloadSeconds);
-  const tripSeconds = Math.ceil(2 * travelOneWaySeconds + unloadSeconds);
-  next.ship.readyAtSecond = now + tripSeconds + extraLoadSeconds;
+  const tripSeconds = E.tripSeconds(destination, next.ship.speedPerMinute);
+  const arrivalAtSecond = now + Math.ceil(tripSeconds / 2);
+  next.ship.readyAtSecond = now + tripSeconds;
   next.ship.cargoUnits = 0;
   next.ship.cargoOreId = null;
   next.ship.loading = false;
+  next.trips += 1;
   const shipmentId = `shipment-${String(next.nextRecordId).padStart(8, '0')}`;
+  next.nextRecordId += 1;
   const shipment = Object.freeze({
     id: shipmentId, oreId: cargoOreId, units, unitPrice: price, payment, destinationId,
     departureAtSecond: now, arrivalAtSecond, shipReadyAtSecond: next.ship.readyAtSecond, tripSeconds, state: 'PAID_AT_DEPARTURE',
   });
   next.shipments.push(shipment);
   next.shipmentStatusById[shipmentId] = 'IN_TRANSIT';
-  appendLog(next, `${units.toFixed(1)} units of ${ore(cargoOreId).name} took off for ${destination.name}; ${payment} coin paid at takeoff.`, 'sale');
+  while (next.shipments.length > KEEP_SHIPMENTS) delete next.shipmentStatusById[next.shipments.shift().id];
+  if (vaultFull) appendLog(next, 'The vault is full: coin cannot go any higher in this sandbox.', 'sale');
+  else if (units >= 1 && (next.trips <= 3 || next.trips % 25 === 0 || units * price >= 1000)) appendLog(next, `${fmtUnits(units)} ${ore(cargoOreId).name} took off for ${destination.name}; ${payment} coin paid at takeoff.`, 'sale');
   return { state: next, result: shipment, reason: 'launched' };
 }
+function fmtUnits(value) { return value >= 1e6 ? value.toExponential(2) : value >= 100 ? String(Math.round(value)) : value.toFixed(1); }
 
-/** Normal loading: the pad moves ore from the yard into the hold at the pad's loading rate. */
-function loadOneSecond(state) {
+/** The pad loads at once: whatever the yard has of the cargo ore goes into the hold, up to the hold's size. */
+function loadHold(state) {
   if (state.ship.readyAtSecond > state.simSeconds) return state;
   const next = clone(state);
   const cargoOreId = next.ship.cargoOreId ?? preferredCargoOre(next, next.selectedDestinationId);
   const room = Math.max(0, next.ship.capacityUnits - next.ship.cargoUnits);
-  const available = cargoOreId ? availableSurface(next, cargoOreId) : 0;
-  const amount = Math.min(available, room, next.ship.loadingUnitsPerMinute / 60);
+  const amount = cargoOreId ? Math.min(availableSurface(next, cargoOreId), room) : 0;
   next.ship.loading = amount > 1e-9;
   if (amount <= 1e-9) return next;
   next.production = withdrawSurfaceUnits(next.production, cargoOreId, amount);
   next.ship.cargoOreId = cargoOreId;
   next.ship.cargoUnits += amount;
   return next;
-}
-
-/** Instant top-up used by "Launch now": the hold is filled from the yard at once; the time it would have taken to load is added before the next trip. */
-function rushLoad(state) {
-  const next = clone(state);
-  const cargoOreId = next.ship.cargoOreId ?? preferredCargoOre(next, next.selectedDestinationId);
-  if (!cargoOreId) return { state: next, loaded: 0 };
-  const amount = Math.min(availableSurface(next, cargoOreId), Math.max(0, next.ship.capacityUnits - next.ship.cargoUnits));
-  if (amount <= 1e-9) return { state: next, loaded: 0 };
-  next.production = withdrawSurfaceUnits(next.production, cargoOreId, amount);
-  next.ship.cargoOreId = cargoOreId;
-  next.ship.cargoUnits += amount;
-  return { state: next, loaded: amount };
 }
 
 /** The cargo ore has stopped arriving (vein dry, shaft idle) so waiting for a full hold would wait forever. */
@@ -339,10 +332,10 @@ function cargoStranded(state) {
   return !state.production.shafts.some((shaft) => shaft.workersAssigned > 0 && ((miningVein(state, shaft.shaftNumber)?.oreId ?? state.site.commonOreId) === id || shaft.bufferUnits > 1e-9 && shaft.oreId === id));
 }
 
-/** Auto mode: load continuously and take off the moment the hold is full (or the ore can no longer arrive). */
+/** Auto mode: take off the moment the hold is full (or the ore can no longer arrive). */
 function launchIfReady(state) {
   if (state.ship.readyAtSecond > state.simSeconds) return state;
-  let loaded = loadOneSecond(state);
+  let loaded = loadHold(state);
   const full = loaded.ship.cargoUnits >= loaded.ship.capacityUnits - 1e-9;
   if (loaded.autoLaunch && loaded.ship.cargoUnits > 0 && (full || cargoStranded(loaded))) {
     const result = computeDispatch(loaded, loaded.selectedDestinationId);
@@ -352,11 +345,11 @@ function launchIfReady(state) {
 }
 
 function arriveShipments(state) {
+  if (!state.shipments.some((shipment) => state.shipmentStatusById[shipment.id] === 'IN_TRANSIT' && shipment.arrivalAtSecond <= state.simSeconds)) return state;
   const next = clone(state);
   for (const shipment of next.shipments) {
     if (next.shipmentStatusById[shipment.id] !== 'IN_TRANSIT' || shipment.arrivalAtSecond > next.simSeconds) continue;
     next.shipmentStatusById[shipment.id] = 'DELIVERED';
-    appendLog(next, `${shipment.units.toFixed(1)} units of ${ore(shipment.oreId).name} delivered. No second payment was made.`, 'arrival');
   }
   return next;
 }
@@ -381,89 +374,33 @@ export function advanceGame(inputState, seconds, maxSteps = 300) {
   return { state, processedSeconds, remainingSeconds: seconds - processedSeconds };
 }
 
-function costForCount(schedule, count) {
-  let total = 0;
-  for (let offset = 0; offset < count; offset += 1) total = addSafe(total, costAt(schedule.base, schedule.growth, schedule.level + offset), 'purchase total');
-  return total;
-}
-
-export function purchaseUpgrade(inputState, type, { shaftNumber = 1, count = 1 } = {}) {
+/** Buy `count` levels (1, 10 or 'max') of pick, lift or hauler. Takes as many as the coin allows; none affordable fails with no change. */
+export function purchaseUpgrade(inputState, type, { count = 1 } = {}) {
   const state = validateGameState(inputState);
-  const schedule = costSchedule(type, state, shaftNumber);
-  const requested = count === 'max' ? schedule.cap - schedule.level : safeInt(count, 'purchase count');
-  if (requested < 1 || schedule.level >= schedule.cap) fail('AT_CAP');
-  const levels = Math.min(requested, schedule.cap - schedule.level);
-  let affordableCount = 0;
-  let spend = 0;
-  for (let index = 0; index < levels; index += 1) {
-    const cost = costAt(schedule.base, schedule.growth, schedule.level + index);
-    if (spend + cost > state.coins) break;
-    spend += cost;
-    affordableCount += 1;
-  }
-  if (affordableCount === 0) fail('INSUFFICIENT_FUNDS');
+  if (!E.LINES[type]) fail('UNKNOWN_UPGRADE');
+  if (levelOf(state, type) >= E.LEVEL_CAP) fail('AT_CAP');
+  const quote = bulkQuote(state, type, count);
+  if (quote.levels === 0) fail('INSUFFICIENT_FUNDS');
   const next = clone(state);
-  changeCoin(next, -spend, 'SYSTEM_PURCHASE', `Purchased ${type} ×${affordableCount}`, 'sink:SYSTEM_PURCHASE');
-  const finalLevel = schedule.level + affordableCount;
-  switch (type) {
-    case 'dig': findShaft(next, shaftNumber).digLevel = finalLevel; break;
-    case 'bunkhouse': findShaft(next, shaftNumber).bunkhouseLevel = finalLevel; break;
-    case 'cart': findShaft(next, shaftNumber).cartLevel = finalLevel; break;
-    case 'lift':
-      next.production.lift.level = finalLevel;
-      next.production.shafts.forEach((shaft) => { shaft.bufferCapacityUnits = 25 * (1 + 0.04 * finalLevel); });
-      break;
-    case 'yard': next.upgrades.yard = finalLevel; next.production.surface.capacityUnits = 100 * (1 + 0.04 * finalLevel); break;
-    case 'habitat': next.upgrades.habitat = finalLevel; break;
-    case 'shipCapacity': next.upgrades.shipCapacity = finalLevel; next.ship.capacityUnits = 150 * (1 + 0.04 * finalLevel); break;
-    case 'shipSpeed': next.upgrades.shipSpeed = finalLevel; next.ship.speedPerMinute = 0.5 * (1 + 0.04 * finalLevel); break;
-    case 'loading': next.upgrades.loading = finalLevel; next.ship.loadingUnitsPerMinute = 60 * (1 + 0.04 * finalLevel); break;
-  }
-  if (type === 'dig' || type === 'cart' || type === 'bunkhouse' || type === 'lift') rebalanceWorkers(next);
-  appendLog(next, `System purchase: ${type} ×${affordableCount} for ${spend} coin.`, 'purchase');
+  changeCoin(next, -quote.cost, 'SYSTEM_PURCHASE', `${E.LINES[type].label} +${quote.levels}`, 'sink:SYSTEM_PURCHASE');
+  next.upgrades[type] += quote.levels;
+  applyLevels(next);
+  appendLog(next, `${E.LINES[type].label} is now level ${next.upgrades[type]} (${quote.cost} coin).`, 'purchase');
   return validateGameState(next);
 }
 
 export function buyNextShaft(inputState) {
   const state = validateGameState(inputState);
   const number = state.production.shafts.length + 1;
-  if (number > 30) fail('AT_CAP');
-  const cost = roundHalfUp(120 * 2.4 ** (number - 1));
+  if (number > E.MAX_SHAFTS) fail('AT_CAP');
+  const cost = E.shaftCost(number);
   safeInt(cost, 'shaft cost');
   if (state.coins < cost) fail('INSUFFICIENT_FUNDS');
   const next = clone(state);
   changeCoin(next, -cost, 'SYSTEM_PURCHASE', `Unlocked shaft ${number}`, 'sink:SYSTEM_PURCHASE');
-  next.production.shafts.push(shaftBlueprint(number, { liftLevel: next.production.lift.level, oreId: next.site.commonOreId }, 0));
+  next.production.shafts.push(shaftBlueprint(number, next));
   next.veins.push(...generateVeins(next.site, number));
-  rebalanceWorkers(next);
-  appendLog(next, `Shaft ${number} opened. Assign workers through the hire panel.`, 'purchase');
-  return validateGameState(next);
-}
-
-export const hireCost = (alreadyHired) => roundHalfUp(20 * 1.004 ** (alreadyHired - 5));
-export const habitatCapacity = (level) => 10 + 2 * level;
-
-export function hireWorkers(inputState, count = 1) {
-  const state = validateGameState(inputState);
-  const requested = count === 'max' ? MAX_COIN : safeInt(count, 'worker count');
-  const workerCapacity = habitatCapacity(state.upgrades.habitat);
-  const poolSpace = workerCapacity - state.workersHired;
-  const shaftSpace = state.production.shafts.reduce((sum, shaft) => sum + 10 + 5 * shaft.bunkhouseLevel - shaft.workersAssigned, 0);
-  const room = Math.min(requested, poolSpace, shaftSpace);
-  let hireCount = 0;
-  let spend = 0;
-  while (hireCount < room) {
-    const price = hireCost(state.workersHired + hireCount);
-    if (spend + price > state.coins) break;
-    spend += price;
-    hireCount += 1;
-  }
-  if (hireCount < 1) fail(room < 1 ? 'NO_WORKER_CAPACITY' : 'INSUFFICIENT_FUNDS');
-  const next = clone(state);
-  changeCoin(next, -spend, 'SYSTEM_PURCHASE', `Hired ${hireCount} miner${hireCount === 1 ? '' : 's'}`, 'sink:SYSTEM_PURCHASE');
-  next.workersHired += hireCount;
-  rebalanceWorkers(next);
-  appendLog(next, `${hireCount} miner${hireCount === 1 ? '' : 's'} hired and assigned by visible expected ore value.`, 'purchase');
+  appendLog(next, `Shaft ${number} opened with a crew of ${E.MINERS_PER_SHAFT}.`, 'purchase');
   return validateGameState(next);
 }
 
@@ -472,7 +409,6 @@ export function selectDestination(inputState, destinationId) {
   destinationFor(destinationId);
   const next = clone(state);
   next.selectedDestinationId = destinationId;
-  rebalanceWorkers(next);
   return next;
 }
 
@@ -487,10 +423,9 @@ export function setAutoLaunch(inputState, value) {
 export function dispatchNow(inputState) {
   const state = validateGameState(inputState);
   if (state.ship.readyAtSecond > state.simSeconds) fail('SHIP_BUSY');
-  const rushed = rushLoad(state);
-  if (rushed.state.ship.cargoUnits < 1e-9) fail('NOT_ENOUGH_STOCK');
-  const extra = Math.ceil(rushed.loaded / rushed.state.ship.loadingUnitsPerMinute * 60);
-  const result = computeDispatch(rushed.state, rushed.state.selectedDestinationId, extra);
+  const loaded = loadHold(state);
+  if (loaded.ship.cargoUnits < 1e-9) fail('NOT_ENOUGH_STOCK');
+  const result = computeDispatch(loaded, loaded.selectedDestinationId);
   if (!result.result) fail('NOT_ENOUGH_STOCK');
   return validateGameState(result.state);
 }
@@ -502,12 +437,6 @@ export function grantDevCoins(inputState, amount = 10000) {
   changeCoin(next, amount, 'DEV_TEST_GRANT', 'Local developer test grant', 'source:DEV_TEST_GRANT');
   appendLog(next, `${amount} local test coins added by developer tools.`, 'grant');
   return validateGameState(next);
-}
-
-/** a shaft's output with a chosen crew size (default: the crew it has now) */
-export function shaftRateFor(state, shaftNumber, workers) {
-  const shaft = findShaft(state, shaftNumber);
-  return shaftRatePerMinute({ ...shaft, workersAssigned: workers ?? shaft.workersAssigned });
 }
 
 export function currentRates(state) {
@@ -524,9 +453,21 @@ export function currentLiftRate(state) {
   return liftRatePerMinute({ ...state.production.lift, liftLevel: state.production.lift.level });
 }
 
-export function upgradeCost(state, type, shaftNumber = 1) {
-  const schedule = costSchedule(type, state, shaftNumber);
-  return schedule.level >= schedule.cap ? null : costAt(schedule.base, schedule.growth, schedule.level);
+/** the whole chain in one object: what each stage can move per minute, and what each buyer would pay per minute for this setup */
+export function flowSummary(state) {
+  const digPerMinute = currentRates(state).reduce((sum, row) => sum + row.ratePerMinute, 0);
+  const liftPerMinute = currentLiftRate(state);
+  const supply = Math.min(digPerMinute, liftPerMinute);
+  const ore0 = ore(state.site.commonOreId);
+  const buyers = DESTINATIONS.map((destination) => {
+    const trip = E.tripSeconds(destination, state.ship.speedPerMinute);
+    const haulPerMinute = state.ship.capacityUnits / trip * 60;
+    const unitsPerMinute = Math.min(supply, haulPerMinute);
+    return { destination, tripSeconds: trip, haulPerMinute, unitsPerMinute, coinPerMinute: unitsPerMinute * priceFor(destination, ore0.id) };
+  });
+  const best = buyers.reduce((top, row) => (row.coinPerMinute > top.coinPerMinute ? row : top), buyers[0]);
+  const chosen = buyers.find((row) => row.destination.id === state.selectedDestinationId);
+  return { digPerMinute, liftPerMinute, haulPerMinute: chosen.haulPerMinute, supplyPerMinute: supply, buyers, bestId: best.destination.id, coinPerMinute: chosen.coinPerMinute };
 }
 
 export function expectedUnitValue(state, oreId) {
@@ -543,20 +484,20 @@ export function validateGameState(input) {
   safeInt(input.coins, 'wallet');
   safeInt(input.sourceGrants, 'source grants');
   safeInt(input.totalExternalEarnings, 'earnings');
-  safeInt(input.workersHired, 'workersHired');
+  safeInt(input.trips, 'trips');
   if (!Array.isArray(input.shipments) || !Array.isArray(input.ledger) || !Array.isArray(input.log) || !Array.isArray(input.production?.shafts)) fail('INVALID_SAVE');
   if (!input.upgrades || typeof input.upgrades !== 'object' || !input.shipmentStatusById || typeof input.shipmentStatusById !== 'object') fail('INVALID_SAVE');
-  for (const key of ['habitat', 'yard', 'shipCapacity', 'shipSpeed', 'loading']) safeInt(input.upgrades[key], `upgrade ${key}`);
-  if (Object.keys(input.upgrades).length !== 5 || input.upgrades.habitat > 1000 || Object.values(input.upgrades).some((value) => value > 1000) || typeof input.autoLaunch !== 'boolean') fail('INVALID_SAVE');
+  if (Object.keys(input.upgrades).length !== E.LINE_IDS.length || typeof input.autoLaunch !== 'boolean') fail('INVALID_SAVE');
+  for (const key of E.LINE_IDS) { safeInt(input.upgrades[key], `upgrade ${key}`); if (input.upgrades[key] > E.LEVEL_CAP) fail('INVALID_SAVE'); }
   destinationFor(input.selectedDestinationId);
   const production = createProductionState(input.production);
   if (production.shafts.some((shaft, index) => shaft.shaftNumber !== index + 1 || !ore(shaft.oreId))) fail('INVALID_SAVE', 'Shaft order or ore is invalid');
-  if (production.shafts.reduce((sum, shaft) => sum + shaft.workersAssigned, 0) !== input.workersHired || input.workersHired > habitatCapacity(input.upgrades.habitat)) fail('INVALID_SAVE', 'Worker assignments do not match the crew pool');
+  if (production.shafts.some((shaft) => shaft.workersAssigned !== E.MINERS_PER_SHAFT)) fail('INVALID_SAVE', 'Every shaft carries a full crew');
   if (production.syntheticDownstreamDrain.unitsPerSecond !== 0 || production.syntheticDownstreamDrain.drainedByOre.length !== 0) fail('INVALID_SAVE', 'Synthetic drain must remain disabled in the playtest');
-  if (!input.ship || number(input.ship.capacityUnits, 'ship capacity', Number.MIN_VALUE) <= 0 || number(input.ship.speedPerMinute, 'ship speed', Number.MIN_VALUE) <= 0 || number(input.ship.loadingUnitsPerMinute, 'loading rate', Number.MIN_VALUE) <= 0) fail('INVALID_SAVE');
+  if (!input.ship || number(input.ship.capacityUnits, 'ship capacity', Number.MIN_VALUE) <= 0 || number(input.ship.speedPerMinute, 'ship speed', Number.MIN_VALUE) <= 0) fail('INVALID_SAVE');
   safeInt(input.ship.readyAtSecond, 'ship ready time');
   number(input.ship.cargoUnits, 'ship cargo');
-  if (typeof input.ship.loading !== 'boolean' || input.ship.cargoUnits > input.ship.capacityUnits || (input.ship.cargoUnits > 0 && !ore(input.ship.cargoOreId)) || (input.ship.cargoUnits === 0 && input.ship.cargoOreId !== null)) fail('INVALID_SAVE');
+  if (typeof input.ship.loading !== 'boolean' || input.ship.cargoUnits > input.ship.capacityUnits + 1e-9 || (input.ship.cargoUnits > 0 && !ore(input.ship.cargoOreId)) || (input.ship.cargoUnits === 0 && input.ship.cargoOreId !== null)) fail('INVALID_SAVE');
   if (!Number.isSafeInteger(input.nextRecordId) || input.nextRecordId < 1) fail('INVALID_SAVE');
   const shipmentIds = new Set();
   for (const shipment of input.shipments) {
@@ -564,7 +505,7 @@ export function validateGameState(input) {
     shipmentIds.add(shipment.id);
     safeInt(shipment.payment, 'shipment payment');
     number(shipment.units, 'shipment units', Number.MIN_VALUE);
-    if (!input.shipmentStatusById || !['IN_TRANSIT', 'DELIVERED'].includes(input.shipmentStatusById[shipment.id])) fail('INVALID_SAVE');
+    if (!['IN_TRANSIT', 'DELIVERED'].includes(input.shipmentStatusById[shipment.id])) fail('INVALID_SAVE');
     for (const time of [shipment.departureAtSecond, shipment.arrivalAtSecond, shipment.shipReadyAtSecond, shipment.tripSeconds]) safeInt(time, 'shipment time');
   }
   if (Object.keys(input.shipmentStatusById).length !== shipmentIds.size || Object.keys(input.shipmentStatusById).some((id) => !shipmentIds.has(id))) fail('INVALID_SAVE');
@@ -577,10 +518,4 @@ export function validateGameState(input) {
   const shaftMined = input.shaftMined ?? {};
   if (typeof shaftMined !== 'object' || Object.values(shaftMined).some((value) => !Number.isFinite(value) || value < 0)) fail('INVALID_SAVE', 'Mined totals are malformed');
   return { ...input, production, site, veins, shaftMined };
-}
-
-export function coinRatePerMinute(state) {
-  const producing = currentRates(state).reduce((sum, row) => sum + row.ratePerMinute, 0);
-  const destination = destinationFor(state.selectedDestinationId);
-  return producing * priceFor(destination, ORES[0].id);
 }

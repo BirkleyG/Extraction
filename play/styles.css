@@ -208,39 +208,47 @@ textarea{min-height:70px;resize:vertical}
 .tab{padding:10px 7px}
 .tab{padding:10px 5px;font-size:10px;letter-spacing:.02em}
 
-/* roomier layout */
-.layout{grid-template-columns:minmax(0,1fr) 450px}
-.tabbody{padding:18px 20px 56px}
-.rows{gap:14px}
-.row{padding:14px 16px;gap:14px}
-h3{margin:28px 0 12px}
-.lede{margin:8px 0 12px}
-.shaft{padding:14px 16px;gap:12px}
-.note{padding:12px 14px}
-.hud{gap:18px}
+/* calm layout: tighter panel, one idea per card */
+.layout{grid-template-columns:minmax(0,1fr) 400px}
+.tabbody{padding:12px 14px 40px}
+.rows{gap:8px}
+.row{padding:10px 12px;gap:10px}
+h3{margin:18px 0 8px}
+.lede{margin:2px 0 10px}
+.shaft{padding:10px 12px;gap:8px}
 #cv{touch-action:none}
-/* upgrade cards */
-.up2{display:grid;grid-template-columns:44px minmax(0,1fr) 112px;gap:12px;align-items:center;background:var(--panel2);border:2px solid var(--line);box-shadow:inset 0 -2px 0 rgba(0,0,0,.3);padding:14px 14px}
-.up2-ico{width:44px;height:44px;display:grid;place-items:center;background:var(--ink);border:2px solid var(--accent);font-family:var(--f-mono);font-size:26px;color:var(--accent);box-shadow:var(--bev)}
-.up2-title{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px}
-.up2-title b{font-family:var(--f-display);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
-.up2-title span{font-weight:700;font-size:17px;color:var(--text)}
-.up2-title em{font-style:normal;font-family:var(--f-mono);font-size:19px;color:var(--coin);margin-left:auto}
-.up2-effect{font-family:var(--f-mono);font-size:17px;color:var(--ok);margin:4px 0 8px;line-height:1.15}
-.meter.tier{height:8px}
+.tab{padding:10px 14px;font-size:11px}
+.linkbtn{background:none;border:0;color:var(--sp);font-family:var(--f-mono);font-size:16px;padding:2px 0;text-decoration:underline;text-underline-offset:3px}
+.linkbtn.wide{display:block;margin:12px 0 8px;color:var(--muted)}
+/* flow strip: dig > lift > haul > coin */
+.flow{display:flex;align-items:stretch;gap:2px;margin:0 0 12px;background:var(--ink);border:2px solid var(--line);padding:8px 8px 6px}
+.flow .stage{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px;align-items:flex-start}
+.flow .si{font-size:13px;color:var(--accent);line-height:1}
+.flow .stage b{font-family:var(--f-mono);font-size:21px;font-weight:400;line-height:1;color:var(--text);max-width:100%;overflow:hidden;text-overflow:ellipsis}
+.flow small{font-family:var(--f-display);font-size:8px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.flow .bar{height:5px;width:100%;background:var(--panel);margin-top:4px}
+.flow .bar i{display:block;height:100%;background:var(--ok)}
+.flow .arrow{align-self:center;color:var(--line);font-size:20px;padding:0 1px}
+.flow .coinstage b{color:var(--coin)}
+/* upgrade cards (the legacy row look: name, effect, one price button) */
+.up{display:grid;grid-template-columns:34px minmax(0,1fr) auto;gap:10px;align-items:center;background:var(--panel2);border:2px solid var(--line);padding:10px 12px}
+.up-ico{width:34px;height:34px;display:grid;place-items:center;background:var(--ink);border:2px solid var(--accent);font-family:var(--f-mono);font-size:20px;color:var(--accent)}
+.up-title{display:flex;align-items:baseline;gap:8px}
+.up-title b{font-size:16px;font-weight:700;color:var(--text)}
+.up-title em{font-style:normal;font-family:var(--f-mono);font-size:17px;color:var(--coin);margin-left:auto}
+.up-effect{font-family:var(--f-mono);font-size:16px;color:var(--ok);margin:2px 0 5px;line-height:1.1}
+.meter.tier{height:6px;border-width:1px}
 .meter.tier i{background:linear-gradient(90deg,var(--accent),var(--coin))}
-.up2-next{font-size:12px;color:var(--muted);margin-top:6px}
-.up2-next b{color:var(--sp)}
-.up2-buy{min-width:0;width:100%;min-height:62px;font-size:16px}
-.up2-buy b{font-weight:400;color:#1a0f05;font-size:19px}
-.up2-buy.ready{animation:readyPulse 1.6s ease-in-out infinite}
-.up2-buy:active:not(:disabled){transform:translate(2px,2px) scale(.97)}
+.up-next{font-size:12px;color:var(--muted);margin-top:4px}
+.up-next b{color:var(--sp);font-weight:600}
+.up-buy{display:flex;flex-direction:column;align-items:stretch;gap:4px;min-width:96px;text-align:center}
+.up-buy .buy{min-width:0;min-height:44px;font-size:19px}
+.up-buy .buy.ready{animation:readyPulse 1.6s ease-in-out infinite}
+.up-buy .linkbtn{font-size:13px;line-height:1.1}
+.up.flash{animation:flashRow .9s ease-out}
 @keyframes readyPulse{0%,100%{box-shadow:var(--bev)}50%{box-shadow:var(--bev),0 0 0 3px rgba(255,210,63,.55)}}
-.up2.flash{animation:flashRow .9s ease-out}
-@keyframes flashRow{0%{background:#5a4a1a;border-color:var(--coin);transform:scale(1.015)}100%{background:var(--panel2);border-color:var(--line);transform:none}}
-.up2 .bulk{margin-top:10px}
-@media (max-width:520px){.up2{grid-template-columns:44px minmax(0,1fr)}.up2-buy{grid-column:1/-1}}
-@media (max-width:860px){.layout{grid-template-columns:1fr}.tabbody{padding:16px 16px 48px}.mapbtn{width:76px;height:60px}.stage-tag{display:none}}
+@keyframes flashRow{0%{background:#5a4a1a;border-color:var(--coin)}100%{background:var(--panel2);border-color:var(--line)}}
+@media (max-width:520px){.up{grid-template-columns:34px minmax(0,1fr)}.up-buy{grid-column:1/-1;flex-direction:row;align-items:center}.up-buy .buy{flex:1}}
 .vein{background:var(--ink);border:2px solid var(--line);padding:8px 10px;display:flex;flex-direction:column;gap:6px;margin:6px 0}
 .vein.blocked{border-color:var(--bad)}.vein.mining{border-color:var(--ok)}.vein.empty{opacity:.6}
 
@@ -248,3 +256,4 @@ h3{margin:28px 0 12px}
 #gtip{position:fixed;z-index:50;max-width:300px;padding:9px 11px;background:#0d0818;color:#f1e8d5;border:2px solid var(--accent,#ff9d4d);font-size:14px;line-height:1.4;pointer-events:none;box-shadow:0 6px 18px #000a}
 [data-tip]{cursor:help}
 [data-tip] button,[data-tip] input{cursor:pointer}
+@media (max-width:860px){.layout{grid-template-columns:1fr}.tabbody{padding:12px 14px 48px}.mapbtn{width:76px;height:60px}.stage-tag{display:none}}

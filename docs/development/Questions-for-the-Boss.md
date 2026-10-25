@@ -29,7 +29,11 @@ Sources checked: [Functions getting started](https://firebase.google.com/docs/fu
 
 ## Sandbox veins checkpoint · 25 October 2026
 
-**Q-09 — Vein tuning (open):** The `/play/` sandbox now follows section 04 with provisional C-03 values: rare vein size 900 (mythic 3000) times richness 0.6-1.5 and a depth factor, a guaranteed rare vein at shaft 3, pick hardness by tier, and no proportional taper below 5 percent yet. **Recommendation:** treat all of these as fixtures until the economy calibration run (document 10), then tune against the 4-hour to 2-day rare-vein lifetime target. **Answer:** Pending.
+**Q-09 — Vein tuning (open):** The `/play/` sandbox now follows section 04 with provisional C-03 values: rare vein size 900 (mythic 3000) times richness 0.6-1.5 and a depth factor, a guaranteed rare vein at shaft 3, pick hardness by tier, and no proportional taper below 5 percent yet. **Recommendation:** treat all of these as fixtures until the economy calibration run (document 10), then tune against the 4-hour to 2-day rare-vein lifetime target. **Answer:** Superseded in part by Q-11: the sandbox now scales vein size with depth (900 × 3^(shaft−1) × richness, mythic ×3.3) so deep veins last hours. Still provisional until the economy calibration run; authoritative values remain pending.
+
+## Sandbox economy checkpoint · 25 October 2026
+
+**Q-11 — Sandbox pacing and simplification (answered, CEO):** The upgrade prices made no sense, there were far too many options, the parts felt disconnected, ship loading took too long, and the legacy upgrade UI felt nicer. **CEO direction:** make it fun; ships take far less time and hold far less; fix exponential growth so the start is fun and by the end of the month it feels like a different game; Qa-scale numbers (or higher) are welcome because they make the player feel powerful. **Implemented in `/play/` only:** three lines (Pick, Lift, Hauler) plus shafts, named tiers, one price button each, a flow strip of per-minute rates, fast trips (starter round trip 12 s, hold 10), and tuned exponential curves; see rulebook section 22 and the [pacing study](calibration/Sandbox-Pacing.md). **Open follow-ups for the CEO:** (1) coin above 2^53−1 (≈9 Qa) needs an exact big-number ledger for the authoritative game; the sandbox stops at the ceiling. (2) Should the authoritative Release A economy adopt this simplified three-line shape, or keep section 10's families? (3) Multiple haulers/pads (section 05) are not in the sandbox yet.
 
 ## Answer history
 
@@ -47,3 +51,5 @@ Sources checked: [Functions getting started](https://firebase.google.com/docs/fu
 - 25 October 2026: CEO answered Phase 0 (see Build-Checklist): starting coin 0; catch-up grant 20% of median cumulative earnings; ore in whole units; hosting budget $2/month on Firebase Blaze (US East); engineering may tune missing coefficients; Pages branch is main; AI budget Q-05 deferred. Event priority table delegated to engineering (recorded in checklist; to be copied into section 17 when implemented).
 
 - 25 October 2026 — **Q-10 (answered, CEO):** computer-run raw-ore buyers have **no coin budget and no receiving limit**; they spend without limit at their fixed bid. Hauler behavior: it **takes off automatically when the hold is full**, and a **"Launch now" button forces takeoff**. Units must be explained in plain language with hover tips. Online play stays opt-in at `/online/`; `/play/` remains the default.
+
+- 25 October 2026 — **Q-11 (answered, CEO):** simplify and speed up the sandbox economy; exponential growth should make the end of the month feel like a different game; Qa-scale and beyond is welcome. See rulebook section 22.

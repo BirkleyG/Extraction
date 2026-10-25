@@ -1,8 +1,8 @@
 import {
-  HARDNESS, ORES, DESTINATIONS, SAVE_KEY, TOUGH_TERRAINS, toolHardness, veinStatus, advanceGame, buyNextShaft, createGameState, currentLiftRate, currentRates, shaftRateFor, habitatCapacity, hireCost,
-  dispatchNow, grantDevCoins, hireWorkers, purchaseUpgrade, selectDestination,
-  setAutoLaunch, stepGame, upgradeCost, validateGameState,
+  HARDNESS, ORES, DESTINATIONS, SAVE_KEY, TOUGH_TERRAINS, toolHardness, veinStatus, advanceGame, buyNextShaft, bulkQuote, createGameState, currentRates, flowSummary, shaftPrice,
+  dispatchNow, grantDevCoins, purchaseUpgrade, selectDestination, setAutoLaunch, stepGame, upgradeCost, validateGameState, tripSecondsTo,
 } from './model.js';
+import * as Eco from './economy.js';
 import { FX_SPOTS, MAPVIEW, veinSpot, VIEW, addFx, clampCam, clampMapCam, mapScale, mapTerrain, regionAtMap, renderMap, renderScene, sideScale } from './scene.js';
 import { TIERS, tierOf } from './upgrades.js';
 import { TERRAINS, aiReady, aiSettings, generatePlanet, loadHistory, loadPlanet, recordPlanet, saveAiSettings, savePlanet, askJSON } from './planet.js';
@@ -11,33 +11,22 @@ const $ = (selector) => document.querySelector(selector);
 
 /* ---- plain-language glossary shown as hover tips ---- */
 const GLOSSARY = {
-  unit: 'UNIT — one standard crate of ore. Everything is counted in units: how fast you mine (units/min), what sits in the yard, what the hauler carries (150 to start) and what buyers pay (coin per unit). Example: 150 units of Ferrite at 40 ◉ each pays 6,000 ◉.',
-  coin: 'COIN (◉) — your money. You spend it on upgrades; the player with the most coin at the end of the month wins. Buildings and ore in the yard do not count.',
-  yard: 'ORE YARD — surface storage where mined ore waits for the hauler. The number is units now / units it can hold. If the yard fills up, the lift stops.',
-  rate: 'ORE PER MINUTE — how many units your crews dig per minute right now, limited by the lift. More miners, a deeper dig level and carts all raise it.',
-  sold: 'SOLD SO FAR — all the coin buyers have paid you this run. Payment arrives the moment the hauler takes off, not when it lands.',
-  time: 'SIM TIME — how long this mine has been running. It keeps running while you are away.',
-  hold: 'HOLD — how many units the hauler can carry in one trip (150 at the start). Bigger holds mean fewer trips for the same ore.',
-  launch: 'LAUNCH NOW — send the hauler off immediately with whatever ore is aboard plus what is waiting in the yard, even if the hold is not full. You are paid at takeoff.',
-  auto: 'AUTO TAKE-OFF — the hauler loads ore as it is mined and leaves on its own the moment the hold is full. Turn it off to launch only by hand.',
-  au: 'AU — the distance unit on the map. Trip time = 2 × distance ÷ hauler speed, plus unloading. Farther buyers cost more time but may pay more per unit.',
-  bid: 'PRICE PER UNIT — what this buyer pays for each unit of ore. Total pay = units × price. Rarer ore is worth more than Ferrite.',
-  endless: 'These computer-run buyers never run out of coin or room, so you can always sell. Their prices are fixed test values for now.',
-  takeoff: 'You are paid when the hauler takes off. Nothing more is paid on arrival, and the cargo can no longer be changed or lost.',
-  crew: 'CREW — miners you have hired. Each shaft holds up to 10 miners (+5 per bunkhouse level), and the habitat limits your total crew.',
-  loadrate: 'LOADING RATE — units per minute the launch pad moves from the yard into the hold. It only matters when you press Launch now (it adds loading time to the next trip).',
+  unit: 'UNIT — one crate of ore. Everything is counted in units: how fast you dig (units/min), what the hauler carries per trip and what buyers pay (coin per unit).',
+  coin: 'COIN (◉) — your money. You spend it on upgrades; the player with the most coin at the end of the month wins. Ore in the yard does not count.',
+  rate: 'ORE PER MINUTE — how many units your miners dig per minute right now, limited by the lift.',
+  hold: 'HOLD — how many units the hauler carries per trip. With auto take-off it leaves the moment the hold is full, so a small hold means quick, frequent trips.',
+  launch: 'LAUNCH NOW — send the hauler off immediately with whatever is in the yard, even if the hold is not full. You are paid at takeoff.',
+  auto: 'AUTO TAKE-OFF — the hauler leaves on its own the moment its hold is full. Turn it off to launch only by hand.',
+  au: 'AU — distance on the map. A trip takes 2 × distance ÷ hauler speed, plus a short unload. Farther buyers pay more per unit but need a faster, bigger hauler.',
+  bid: 'PRICE PER UNIT — what this buyer pays for each unit of ore. Total pay = units × price.',
+  takeoff: 'You are paid when the hauler takes off. Nothing more is paid on arrival.',
 };
 const tip = (text) => ` data-tip="${text.replaceAll('&', '&amp;').replaceAll('"', '&quot;')}"`;
 const UPGRADE_TIPS = {
-  dig: 'DIG RATE — how many units each miner digs per minute in this shaft. Each level adds a little; tiers are cosmetic names for milestones.',
-  lift: 'LIFT — hauls ore from the shafts to the surface (units per minute). If it is slower than your mining, ore backs up in the shafts and output is wasted.',
-  yard: 'SURFACE YARD — how many units of ore can wait for the hauler. Bigger yard = the lift never stalls while the hauler is away.',
-  shipSpeed: 'HAULER SPEED — faster round trips, so you are paid more often.',
-  shipCapacity: 'CARGO CAPACITY — units per trip. With auto take-off the hauler leaves when this fills.',
-  loading: 'PAD LOADING — units per minute moved from the yard onto the hauler.',
-  habitat: 'HABITAT — beds for your whole crew. You cannot hire past it.',
-  bunkhouse: 'BUNKHOUSE — +5 miner slots in this shaft.',
-  cart: 'CARTS — raise how much of the dig reaches the lift (utilization) in this shaft.',
+  pick: 'PICK — how much ore each miner digs per minute. Every shaft uses it, and better picks break harder rock to reach rare veins.',
+  lift: 'LIFT — carries ore from every shaft up to the yard (units per minute). If it is slower than your digging, ore waits in the shafts.',
+  hauler: 'HAULER — a bigger, faster ship. A bigger hold carries more per trip and faster engines shorten each trip, so you are paid more often.',
+  shaft: 'SHAFT — another tunnel with a full crew of 10 miners. Each deeper shaft digs about twice as much as the one above it.',
 };
 
 /* ---- hover tips: any element with data-tip explains itself (tap on touch screens) ---- */
@@ -68,7 +57,7 @@ document.addEventListener('focusout', hideTip);
 document.addEventListener('scroll', hideTip, true);
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideTip(); });
 document.addEventListener('click', (e) => { const t = e.target.closest?.('[data-tip]'); if (t && matchMedia('(pointer: coarse)').matches) { showTip(t); clearTimeout(tipTimer); tipTimer = setTimeout(hideTip, 5000); } });
-for (const [selector, key] of [['.stat.coin', 'coin'], ['#hSurface', 'yard'], ['#hEarned', 'sold'], ['#hTime', 'time'], ['#hRate', 'rate']]) {
+for (const [selector, key] of [['.stat.coin', 'coin'], ['#hRate', 'rate']]) {
   const el = document.querySelector(selector); const host = el?.closest('.stat') ?? el; host?.setAttribute('data-tip', GLOSSARY[key]);
 }
 
@@ -82,7 +71,7 @@ let catchupRemaining = 0;
 let catchingUp = false;
 let catchupKind = 'offline';
 let savedAtMs = Date.now();
-let tab = 'sell';
+let tab = 'mine';
 let resetPromptOpen = false;
 let grantValue = '10000';
 let toastTimer;
@@ -105,13 +94,17 @@ function formatClock(seconds) {
   const secs = seconds % 60;
   return hours ? `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}` : `${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
 }
-function fmt(value) { return formatter.format(value); }
-function fmtUnits(value) { return new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 }).format(value); }
+const SUFFIXES = [[1e18, 'Qi'], [1e15, 'Qa'], [1e12, 'T'], [1e9, 'B'], [1e6, 'M']];
+/** whole numbers in full up to a million, then 3 significant figures with a suffix (1.23M, 4.56B, 7.89Qa) */
+function fmt(value) {
+  for (const [at, suffix] of SUFFIXES) if (value >= at) { const v = value / at; return `${v.toFixed(v < 10 ? 2 : v < 100 ? 1 : 0)}${suffix}`; }
+  return formatter.format(Math.round(value));
+}
+function fmtUnits(value) { return value >= 1e6 ? fmt(value) : new Intl.NumberFormat('en-US', { maximumFractionDigits: value < 10 ? 1 : 0 }).format(value); }
 function fillFraction(value, max) { return Math.round(Math.min(1, max > 0 ? value / max : 0) * 100); }
 function oreById(id) { return ORES.find((ore) => ore.id === id); }
 function destinationById(id) { return DESTINATIONS.find((item) => item.id === id); }
 function surfaceTotal() { return state.production.surface.unitsByOre.reduce((sum, row) => sum + row.units, 0); }
-function liftRate() { return currentLiftRate(state); }
 function totalRate() { return currentRates(state).reduce((sum, row) => sum + row.ratePerMinute, 0); }
 function safeText(value) { return String(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]); }
 
@@ -158,9 +151,8 @@ function toast(message, tone = '') {
 function messageFor(error) {
   const messages = {
     INSUFFICIENT_FUNDS: 'Not enough coin for that purchase.',
-    NO_WORKER_CAPACITY: 'Open habitat or shaft bunks before hiring more miners.',
     AT_CAP: 'This line is already at its cap.',
-    SHIP_BUSY: 'The hauler is still returning to the pad.',
+    SHIP_BUSY: 'The hauler is still on its trip.',
     NOT_ENOUGH_STOCK: 'There is no ore in the hold or the yard to launch yet.',
     INVALID_PAYMENT: 'The local transaction could not be balanced.',
   };
@@ -196,80 +188,59 @@ function blip(notes) {
     });
   } catch { /* audio unavailable */ }
 }
-const levelOf = (type, n = 1) => {
-  if (type === 'lift') return state.production.lift.level;
-  const sh = state.production.shafts.find((q) => q.shaftNumber === n);
-  if (type === 'dig') return sh.digLevel;
-  if (type === 'bunkhouse') return sh.bunkhouseLevel;
-  if (type === 'cart') return sh.cartLevel;
-  return state.upgrades[type];
-};
-let lastBought = { type: '', n: 0, at: 0 };
-function buyUpgrade(type, n, count) {
-  const before = levelOf(type, n); const tierBefore = tierOf(type, before);
-  const ok = apply((cur) => purchaseUpgrade(cur, type, { shaftNumber: n, count }), '');
+const levelOf = (type) => state.upgrades[type];
+let lastBought = { type: '', at: 0 };
+function buyUpgrade(type, count) {
+  const before = levelOf(type); const tierBefore = tierOf(type, before);
+  const ok = apply((cur) => purchaseUpgrade(cur, type, { count }), '');
   if (!ok) { blip([140]); return; }
-  const after = levelOf(type, n); const tierAfter = tierOf(type, after); const spot = FX_SPOTS[type] || [290, 0];
-  lastBought = { type, n, at: performance.now() };
+  const after = levelOf(type); const tierAfter = tierOf(type, after); const spot = FX_SPOTS[type] || [290, 0];
+  lastBought = { type, at: performance.now() };
   if (tierAfter.i > tierBefore.i) {
     addFx(spot[0], spot[1], `TIER UP! ${tierAfter.name}`, '#ffd23f'); blip([523, 659, 784, 1047]);
     toast(`★ ${TIERS[type].label} is now a ${tierAfter.name}!`, 'success');
   } else {
     addFx(spot[0], spot[1], `+${after - before} ${TIERS[type].label}`, '#5ee6a8'); blip([660, 880]);
-    toast(`${TIERS[type].label}: ${tierAfter.name} · LV ${after}`, 'success');
   }
 }
-
-/* what the next level of an upgrade will actually do */
-const effectCache = new Map();
-function effectText(type, n = 1) {
-  const level = levelOf(type, n); const key = `${type}|${n}|${level}|${state.production.shafts.length}|${state.workersHired}`;
-  if (effectCache.has(key)) return effectCache.get(key);
-  let text = '';
-  try {
-    const next = purchaseUpgrade(state, type, { shaftNumber: n, count: 1 });
-    const crew = Math.max(1, state.production.shafts.find((q) => q.shaftNumber === n).workersAssigned);
-    const rate = (st) => shaftRateFor(st, n, crew);
-    const f = {
-      lift: (st) => `${currentLiftRate(st).toFixed(2)} units/min hauled`,
-      dig: (st) => `${fmtUnits(rate(st))} ore/min from shaft ${String(n).padStart(2, '0')}${state.production.shafts.find((q) => q.shaftNumber === n).workersAssigned ? '' : ' (per miner)'}`,
-      yard: (st) => `${fmtUnits(st.production.surface.capacityUnits)} units of yard`,
-      shipSpeed: (st) => `${st.ship.speedPerMinute.toFixed(2)} AU/min`,
-      shipCapacity: (st) => `${fmtUnits(st.ship.capacityUnits)} unit hold`,
-      loading: (st) => `${fmtUnits(st.ship.loadingUnitsPerMinute)} units/min loaded`,
-      habitat: (st) => `${habitatCapacity(st.upgrades.habitat)} crew beds`,
-      bunkhouse: (st) => `${10 + 5 * st.production.shafts.find((q) => q.shaftNumber === n).bunkhouseLevel} crew in this shaft`,
-      cart: (st) => `${fmtUnits(st.production.shafts.find((q) => q.shaftNumber === n).bufferCapacityUnits)} unit shaft buffer`,
-    }[type];
-    text = `${f(state)}  →  ${f(next)}`;
-  } catch { text = ''; }
-  if (effectCache.size > 400) effectCache.clear();
-  effectCache.set(key, text); return text;
+function buyShaft() {
+  if (apply(buyNextShaft, '')) { addFx(...FX_SPOTS.shaft.slice(0, 2), 'NEW SHAFT', '#5ee6a8'); blip([392, 523, 659]); toast(`Shaft ${state.production.shafts.length} is open and digging.`, 'success'); } else blip([140]);
 }
 
-function upgradeCard(type, n = 1, opts = {}) {
-  const level = levelOf(type, n); const tier = tierOf(type, level); const cost = upgradeCost(state, type, n);
-  const flash = lastBought.type === type && lastBought.n === n && performance.now() - lastBought.at < 900 ? ` flash" style="animation-delay:-${Math.round(performance.now() - lastBought.at)}ms` : '';
-  const left = tier.next ? Math.max(0, tier.next.at - level) : 0;
-  const bulk = opts.bulk ? `<div class="bulk">${['10', 'max'].map((c) => `<button data-buy="${type}" data-count="${c}" data-shaft="${n}" type="button">${c === 'max' ? 'MAX' : `×${c}`}</button>`).join('')}</div>` : '';
+/** what one more level of a line does, as "now → next" in the units the player sees */
+function effectText(type) {
+  const L = levelOf(type);
+  if (type === 'pick') return `${fmtUnits(Eco.pickRatePerMiner(L))} → ${fmtUnits(Eco.pickRatePerMiner(L + 1))} ore/min each`;
+  if (type === 'lift') return `${fmtUnits(Eco.liftRate(L))} → ${fmtUnits(Eco.liftRate(L + 1))} ore/min lifted`;
+  const d = DESTINATIONS.find((x) => x.id === state.selectedDestinationId);
+  const t = (lv) => Eco.tripSeconds(d, Eco.haulerSpeed(lv));
+  return `${fmtUnits(Eco.haulerCapacity(L))} → ${fmtUnits(Eco.haulerCapacity(L + 1))} per trip · ${t(L)}s → ${t(L + 1)}s trips`;
+}
+
+function upgradeCard(type) {
+  const level = levelOf(type); const tier = tierOf(type, level); const cost = upgradeCost(state, type);
+  const flash = lastBought.type === type && performance.now() - lastBought.at < 900 ? ` flash" style="animation-delay:-${Math.round(performance.now() - lastBought.at)}ms` : '';
   const can = cost !== null && state.coins >= cost;
-  return `<div class="up2${flash}"${tip(UPGRADE_TIPS[type] || '')}><div class="up2-ico">${tier.icon}</div><div class="up2-main">
-      <div class="up2-title"><b>${tier.label}</b><span>${safeText(tier.name)}</span><em>LV ${level}</em></div>
-      <div class="up2-effect">${safeText(effectText(type, n))}</div>
+  const more = can ? bulkQuote(state, type, 'max') : { levels: 0 };
+  const left = tier.next ? Math.max(0, tier.next.at - level) : 0;
+  return `<div class="up${flash}"${tip(UPGRADE_TIPS[type])}><div class="up-ico">${tier.icon}</div><div class="up-main">
+      <div class="up-title"><b>${safeText(tier.name)}</b><em>LV ${level}</em></div>
+      <div class="up-effect">${safeText(effectText(type))}</div>
       <div class="meter tier"><i style="width:${Math.round(tier.progress * 100)}%"></i></div>
-      <div class="up2-next">${tier.next ? `Becomes a <b>${safeText(tier.next.name)}</b> at LV ${tier.next.at} · ${left} to go` : 'Top tier reached'}</div>${bulk}
-    </div><button class="buy up2-buy${can ? ' ready' : ''}" data-buy="${type}" data-shaft="${n}" type="button"${cost === null ? ' disabled' : ''}>${cost === null ? 'MAXED' : `UPGRADE<br><b>${fmt(cost)} ◉</b>`}</button></div>`;
+      <div class="up-next">${tier.next ? `${left} level${left === 1 ? '' : 's'} to a <b>${safeText(tier.next.name)}</b>` : 'Top tier reached'}</div>
+    </div><div class="up-buy"><button class="buy${can ? ' ready' : ''}" data-buy="${type}" data-count="1" type="button"${cost === null ? ' disabled' : ''}>${cost === null ? 'MAX' : `${fmt(cost)} ◉`}</button>${more.levels >= 2 ? `<button class="linkbtn" data-buy="${type}" data-count="max" type="button">Buy ${more.levels} (${fmt(more.cost)})</button>` : ''}</div></div>`;
 }
 
-function costButton(type, shaftNumber = 1) {
-  const cost = upgradeCost(state, type, shaftNumber);
-  return cost === null ? 'CAPPED' : `${fmt(cost)} ◉`;
+function shaftCard() {
+  const price = shaftPrice(state); const n = state.production.shafts.length + 1; const can = price !== null && state.coins >= price;
+  const mult = Eco.TUNE.depth.toFixed(2).replace(/\.?0+$/, '');
+  return `<div class="up"${tip(UPGRADE_TIPS.shaft)}><div class="up-ico">▼</div><div class="up-main"><div class="up-title"><b>${price === null ? 'Every shaft is open' : `Dig shaft ${n}`}</b><em>${state.production.shafts.length} / ${Eco.MAX_SHAFTS}</em></div>
+    <div class="up-effect">${price === null ? '' : `${Eco.MINERS_PER_SHAFT} miners · digs ${mult}× shaft ${n - 1}`}</div></div>
+    <div class="up-buy"><button class="buy${can ? ' ready' : ''}" data-act="shaft" type="button"${price === null ? ' disabled' : ''}>${price === null ? 'DONE' : `${fmt(price)} ◉`}</button></div></div>`;
 }
 
-const TABS = [['sell', 'Sell'], ['upgrades', 'Upgrades'], ['shafts', 'Shafts'], ['planet', 'Planet'], ['records', 'Records'], ['tools', 'Tools']];
-const shaftCost = () => (state.production.shafts.length >= 30 ? null : Math.floor(120 * 2.4 ** state.production.shafts.length + 0.5));
-const crewCap = () => habitatCapacity(state.upgrades.habitat);
-const buyBtn = (attrs, label, cost, cls = '') => `<button class="buy ${cls}" ${attrs} type="button"${cost === null ? ' disabled' : ''}>${label}<br>${cost === null ? 'CAPPED' : `${fmt(cost)} ◉`}</button>`;
+const TABS = [['mine', 'Mine'], ['sell', 'Sell'], ['planet', 'World'], ['more', 'More']];
+let shaftsOpen = false;
 
 /* ---- veins: announce when the crew reaches, can't break, or exhausts one ---- */
 const veinSeen = new Map(); let veinSite = '';
@@ -284,32 +255,31 @@ function watchVeins() {
     else if (st === 'empty') { addFx(spot[0], spot[1] - 12, 'VEIN DRY', '#b3a5d3'); toast(`The ${o.name} vein in shaft ${v.shaftNumber} ran dry.`); }
   }
 }
-const pickNeeded = (hardness) => { const t = TIERS.dig.tiers.find(([at]) => toolHardness(at) >= hardness); return t ? t[1] : 'a better pick'; };
+const pickNeeded = (hardness) => { const t = TIERS.pick.tiers.find(([at]) => toolHardness(at) >= hardness); return t ? t[1] : 'a better pick'; };
 const oreRank = (id) => (id === 'mythic' ? 'Mythic' : ['lithium', 'sulfur', 'crystal', 'iridium'].includes(id) ? 'Rare' : 'Common');
 
 function renderHud() {
   watchVeins();
-  const rate = totalRate();
+  const flow = flowSummary(state);
   $('#hCoin').textContent = fmt(state.coins);
-  $('#hRate').textContent = `${fmtUnits(rate)} ore / min`;
-  $('#hSurface').textContent = `${fmtUnits(surfaceTotal())} / ${fmtUnits(state.production.surface.capacityUnits)}`;
-  $('#hEarned').textContent = fmt(state.totalExternalEarnings);
+  $('#hRate').textContent = `+${fmt(flow.coinPerMinute / 60)} ◉ / sec`;
+  $('#hSurface').textContent = `${fmt(flow.supplyPerMinute)} / min`;
   $('#hTime').textContent = formatClock(state.simSeconds);
   $('#hLive').textContent = catchingUp ? 'CATCHING UP' : paused ? 'MINE PAUSED' : 'MINE RUNNING';
   $('#hLive').classList.toggle('off', paused || catchingUp);
   $('#pauseBtn').textContent = paused ? 'Resume' : 'Pause';
   $('#pauseBtn').setAttribute('aria-pressed', String(paused));
   const tag = $('#stageTag');
-  tag.innerHTML = `<b>${safeText(region().name.toUpperCase())}</b> · ${safeText(TERRAINS[region().terrain].label)} · ${state.production.shafts.length} shaft${state.production.shafts.length === 1 ? '' : 's'} · ${state.workersHired} miners · lift LV ${state.production.lift.level}`;
+  tag.innerHTML = `<b>${safeText(region().name.toUpperCase())}</b> · ${safeText(TERRAINS[region().terrain].label)} · ${state.production.shafts.length} shaft${state.production.shafts.length === 1 ? '' : 's'}`;
   const yard = state.production.surface.capacityUnits ? surfaceTotal() / state.production.surface.capacityUnits : 0;
   const buf = Math.max(0, ...state.production.shafts.map((s) => (s.bufferCapacityUnits ? s.bufferUnits / s.bufferCapacityUnits : 0)));
   const banner = $('#banner');
-  const msg = catchingUp ? `CATCHING UP · ${fmt(catchupRemaining)} s left` : recovering || (yard >= 0.9 ? '! YARD FULL — launch cargo or expand the yard' : buf >= 0.9 ? '! SHAFT BUFFER FULL — upgrade the lift' : '');
+  const msg = catchingUp ? `CATCHING UP · ${fmt(catchupRemaining)} s left` : recovering || (yard >= 0.9 ? '! YARD FULL' : buf >= 0.9 ? '! SHAFT FULL' : '');
   banner.hidden = !msg;
   banner.classList.toggle('bad', !catchingUp && !recovering && !!msg);
   banner.textContent = msg;
   const last = state.log.slice(-2).reverse();
-  $('#ticker').innerHTML = last.length ? last.map((e) => `<div>${formatClock(e.atSecond)} · ${safeText(e.message)}</div>`).join('') : '<div>The mine is quiet. Dig deeper, keep the lift moving, sell the ore.</div>';
+  $('#ticker').innerHTML = last.length ? last.map((e) => `<div>${formatClock(e.atSecond)} · ${safeText(e.message)}</div>`).join('') : `<div>${safeText(state.notice)}</div>`;
 }
 
 function renderTabs() {
@@ -317,10 +287,9 @@ function renderTabs() {
 }
 
 function shipStatus() {
-  if (state.ship.readyAtSecond > state.simSeconds) return `Hauler away · back in ${formatClock(state.ship.readyAtSecond - state.simSeconds)}`;
+  if (state.ship.readyAtSecond > state.simSeconds) return `Away · back in ${formatClock(state.ship.readyAtSecond - state.simSeconds)}`;
   if (state.ship.cargoUnits >= state.ship.capacityUnits - 1e-9) return 'Hold full';
-  if (state.ship.loading) return 'Loading ore from the yard';
-  return state.ship.cargoUnits >= 1 ? 'Waiting for more ore' : 'Ready at the pad';
+  return state.ship.cargoUnits >= 1 ? 'Filling up' : 'Waiting at the pad';
 }
 
 /** units (and their value) that "Launch now" would send this second */
@@ -333,63 +302,50 @@ function launchPreview() {
   return { units, id, pay: id ? Math.floor(units * d.basePrice * oreById(id).value + 0.5) : 0 };
 }
 
+/** one chain, four numbers: how much each stage can move per minute, drawn as bars so the player can see which one is short */
+function flowStrip() {
+  const f = flowSummary(state);
+  const stages = [['⛏', 'Dig', f.digPerMinute], ['⇧', 'Lift', f.liftPerMinute], ['▲', 'Haul', f.haulPerMinute]];
+  const top = Math.max(...stages.map((x) => x[2]), 1e-9);
+  return `<div class="flow" aria-label="Ore per minute at each stage">${stages.map(([icon, name, v]) => `<div class="stage"><span class="si">${icon}</span><b>${fmt(v)}</b><small>${name}/min</small><div class="bar"><i style="width:${Math.max(3, Math.round(v / top * 100))}%"></i></div></div>`).join('<span class="arrow">›</span>')}<span class="arrow">›</span><div class="stage coinstage"><span class="si">◉</span><b>${fmt(f.coinPerMinute)}</b><small>coin/min</small></div></div>`;
+}
+
+function tabMine() {
+  const shafts = currentRates(state);
+  const list = shaftsOpen ? `<div class="rows">${shafts.map((rate) => {
+    const sh = state.production.shafts[rate.shaftNumber - 1]; const pct = fillFraction(sh.bufferUnits, sh.bufferCapacityUnits);
+    return `<div class="shaft"><div class="shead"><b>SHAFT ${String(rate.shaftNumber).padStart(2, '0')}</b><span class="swatch2" style="--ore:${rate.ore.color}"></span><span>${safeText(rate.ore.name)}</span><span class="own" style="margin-left:auto">${fmt(rate.ratePerMinute)}/min</span></div><div class="meter ${pct >= 90 ? 'warn' : ''}"><i style="width:${pct}%"></i></div>${veinRows(rate.shaftNumber)}</div>`;
+  }).join('')}</div>` : '';
+  return `<p class="lede">Dig, lift, haul, sell. Each upgrade makes one step faster.</p>${flowStrip()}
+    <div class="rows">${['pick', 'lift', 'hauler'].map((t) => upgradeCard(t)).join('')}${shaftCard()}</div>
+    <button class="linkbtn wide" data-act="toggle-shafts" type="button">${shaftsOpen ? '▾ Hide shafts' : `▸ Show shafts and veins (${shafts.length})`}</button>${list}`;
+}
+
 function tabSell() {
   const preview = launchPreview();
   const ready = state.ship.readyAtSecond <= state.simSeconds;
   const can = ready && preview.units >= 0.5 && !catchingUp;
   const holdPct = Math.round(Math.min(1, state.ship.cargoUnits / state.ship.capacityUnits) * 100);
-  const rows = DESTINATIONS.map((d) => {
-    const sel = d.id === state.selectedDestinationId;
+  const f = flowSummary(state);
+  const rows = f.buyers.map((b) => {
+    const d = b.destination; const sel = d.id === state.selectedDestinationId; const best = d.id === f.bestId;
     const price = Math.floor(d.basePrice * oreById('ferrite').value + 0.5);
-    const trip = Math.ceil(2 * d.distance / state.ship.speedPerMinute * 60);
-    return `<div class="row ${sel ? 'sel' : ''}"><div><div class="t"><span class="pick"></span>${safeText(d.name)} <span class="own"${tip(GLOSSARY.bid)}>${fmt(price)} ◉ / unit</span></div><div class="d"><span${tip(GLOSSARY.au)}>${d.distance} AU away</span> · about ${formatClock(trip)} round trip</div><div class="e"${tip(GLOSSARY.endless)}>Buys every unit · never runs out</div></div><button class="buy ${sel ? 'ok' : 'ghost'} sm" data-destination="${d.id}" type="button">${sel ? 'Selected' : 'Sell here'}</button></div>`;
+    return `<div class="row ${sel ? 'sel' : ''}"><div><div class="t"><span class="pick"></span>${safeText(d.name)}${best ? ' <span class="pill ok">best now</span>' : ''}</div><div class="d"><span${tip(GLOSSARY.bid)}>${fmt(price)} ◉ / unit</span> · <span${tip(GLOSSARY.au)}>${d.distance} AU · ${formatClock(b.tripSeconds)} round trip</span></div><div class="e">≈ ${fmt(b.coinPerMinute)} ◉ / min</div></div><button class="buy ${sel ? 'ok' : 'ghost'} sm" data-destination="${d.id}" type="button">${sel ? 'Selected' : 'Sell here'}</button></div>`;
   }).join('');
-  return `<h2>Where to sell</h2><p class="lede">Ore is counted in <b${tip(GLOSSARY.unit)}>units</b> (one unit = one crate). Buyers pay <b>coin per unit</b> the moment the hauler takes off.</p>
-    <h3>Hauler</h3>
-    <div class="row"><div><div class="t">${safeText(shipStatus())}</div><div class="d"${tip(GLOSSARY.hold)}>Hold: ${fmtUnits(state.ship.cargoUnits)} / ${fmtUnits(state.ship.capacityUnits)} units · ${state.ship.speedPerMinute.toFixed(2)} AU/min</div><div class="meter" style="margin-top:6px"><i style="width:${holdPct}%"></i></div></div><button class="buy ready" data-act="launch" type="button"${can ? '' : ' disabled'}${tip(GLOSSARY.launch)}>LAUNCH NOW ↗<br>${preview.units >= 0.5 ? `${fmtUnits(preview.units)} u → ${fmt(preview.pay)} ◉` : 'no ore yet'}</button></div>
-    <label class="toggle" style="margin:10px 0"${tip(GLOSSARY.auto)}><input type="checkbox" data-act="auto"${state.autoLaunch ? ' checked' : ''}${catchingUp ? ' disabled' : ''}> Take off automatically when the hold is full</label>
-    <h3>Buyers</h3><div class="rows">${rows}</div>
-    <div class="note"${tip(GLOSSARY.takeoff)}>You are paid at takeoff — never again on arrival. Prices are playtest fixtures, not certified balance.</div>`;
-}
-
-function tabUpgrades() {
-  const hirePrice = hireCost(state.workersHired);
-  const hireDisabled = state.workersHired >= crewCap() || state.coins < hirePrice;
-  return `<h2>Reinvest</h2><p class="lede">Dig deeper. Keep the lift moving. Every upgrade is a local test curve, and each one changes how the mine looks.</p>
-    <h3>Mine</h3><div class="rows">
-      <div class="row"><div><div class="t">Open a new shaft</div><div class="d">${state.production.shafts.length} / 30 open · a new tunnel off the main shaft</div></div>${buyBtn('data-act="shaft"', '＋ Shaft', shaftCost())}</div>
-      <div class="row"><div><div class="t">Hire a miner</div><div class="d">${state.workersHired} / ${crewCap()} crew</div><div class="meter" style="margin-top:6px"><i style="width:${fillFraction(state.workersHired, crewCap())}%"></i></div></div><button class="buy ok" data-act="hire" type="button"${hireDisabled ? ' disabled' : ''}>＋ Miner<br>${state.workersHired >= crewCap() ? 'NEEDS BUNKS' : `${fmt(hirePrice)} ◉`}</button></div>
-    </div>
-    <h3>The lift and the pick</h3><div class="rows">${upgradeCard('lift', 1, { bulk: true })}${upgradeCard('dig', 1, { bulk: true })}</div>
-    <h3>Surface</h3><div class="rows">${upgradeCard('yard', 1, { bulk: true })}${upgradeCard('habitat')}</div>
-    <h3>The hauler</h3><div class="rows">${upgradeCard('shipSpeed', 1, { bulk: true })}${upgradeCard('shipCapacity')}${upgradeCard('loading')}</div>`;
+  return `<div class="row"><div><div class="t">Hauler · ${safeText(shipStatus())}</div><div class="d"${tip(GLOSSARY.hold)}>${fmtUnits(state.ship.cargoUnits)} / ${fmtUnits(state.ship.capacityUnits)} units aboard</div><div class="meter" style="margin-top:6px"><i style="width:${holdPct}%"></i></div></div><button class="buy ready" data-act="launch" type="button"${can ? '' : ' disabled'}${tip(GLOSSARY.launch)}>LAUNCH<br>${preview.units >= 0.5 ? `${fmt(preview.pay)} ◉` : '—'}</button></div>
+    <label class="toggle" style="margin:12px 0"${tip(GLOSSARY.auto)}><input type="checkbox" data-act="auto"${state.autoLaunch ? ' checked' : ''}${catchingUp ? ' disabled' : ''}> Take off automatically when full</label>
+    <h3>Where to sell</h3><div class="rows">${rows}</div>
+    <div class="note"${tip(GLOSSARY.takeoff)}>You are paid at takeoff. Estimates use your current dig, lift and hauler.</div>`;
 }
 
 function veinRows(n) {
   const veins = state.veins.filter((v) => v.shaftNumber === n);
-  const common = ORES.find((o) => o.id === state.site.commonOreId);
-  const head = `<div class="d">Common ore here: <b style="color:${common.color}">${safeText(common.name)}</b> · endless</div>`;
-  if (!veins.length) return `${head}<div class="d">No rare vein found in this shaft.</div>`;
-  return head + veins.map((v) => {
+  if (!veins.length) return '';
+  return veins.map((v) => {
     const o = ORES.find((q) => q.id === v.oreId); const st = veinStatus(state, v); const pct = Math.round(v.remainingUnits / v.sizeUnits * 100);
-    const note = { ahead: 'Hidden in the rock ahead. Keep digging to reach it.', blocked: `⛏ Pick too weak. Needs hardness ${HARDNESS[v.oreId]} (${pickNeeded(HARDNESS[v.oreId])}).`, mining: 'The crew is mining it now.', empty: 'Dry. The shaft is back on the common ore.' }[st];
-    return `<div class="vein ${st}"><div class="shead"><span class="swatch2" style="--ore:${o.color}"></span><b>${safeText(o.name)}</b><span class="pill ${oreRank(v.oreId) === 'Mythic' ? 'sp' : 'warn'}">${oreRank(v.oreId)}</span><span class="d" style="margin-left:auto">hardness ${HARDNESS[v.oreId]}</span></div><div class="meter ${pct < 20 ? 'warn' : ''}"><i style="width:${pct}%;background:${o.color}"></i></div><div class="d">${fmtUnits(v.remainingUnits)} / ${fmtUnits(v.sizeUnits)} units left · ${safeText(note)}</div></div>`;
+    const note = { ahead: 'Hidden in the rock ahead.', blocked: `Pick too weak: needs a ${pickNeeded(HARDNESS[v.oreId])}.`, mining: 'Being mined now.', empty: 'Dry.' }[st];
+    return `<div class="vein ${st}"><div class="shead"><span class="swatch2" style="--ore:${o.color}"></span><b>${safeText(o.name)}</b><span class="pill ${oreRank(v.oreId) === 'Mythic' ? 'sp' : 'warn'}">${oreRank(v.oreId)}</span><span class="d" style="margin-left:auto">${safeText(note)}</span></div><div class="meter ${pct < 20 ? 'warn' : ''}"><i style="width:${pct}%;background:${o.color}"></i></div></div>`;
   }).join('');
-}
-
-function tabShafts() {
-  const rates = currentRates(state);
-  const cards = state.production.shafts.map((shaft) => {
-    const rate = rates.find((r) => r.shaftNumber === shaft.shaftNumber);
-    const pct = fillFraction(shaft.bufferUnits, shaft.bufferCapacityUnits);
-    const n = shaft.shaftNumber;
-    return `<div class="shaft"><div class="shead"><b>SHAFT ${String(n).padStart(2, '0')}</b><span class="swatch2" style="--ore:${rate.ore.color}"></span><span>${safeText(rate.ore.name)}</span><span class="own" style="font-family:var(--f-mono);font-size:19px;color:var(--coin);margin-left:auto">${fmtUnits(rate.ratePerMinute)}/min</span></div>
-      <div class="d">${shaft.workersAssigned} / ${10 + shaft.bunkhouseLevel * 5} crew · buffer ${fmtUnits(shaft.bufferUnits)} / ${fmtUnits(shaft.bufferCapacityUnits)}</div>
-      <div class="meter ${pct >= 90 ? 'warn' : ''}"><i style="width:${pct}%"></i></div>
-      ${veinRows(n)}
-      <div class="rows">${upgradeCard('dig', n)}${upgradeCard('bunkhouse', n)}${upgradeCard('cart', n)}</div></div>`;
-  }).join('');
-  return `<h2>Your shafts</h2><p class="lede">Each shaft digs its own ore. Watch the buffers: a full one stalls the shaft.</p><div class="rows">${cards}</div>`;
 }
 
 function tabPlanet() {
@@ -420,15 +376,15 @@ let pendingRelocate = null;
 let pendingPlanet = false;
 
 function tabRecords() {
-  const ledger = state.ledger.slice().reverse().slice(0, 10).map((e) => `<div class="row"><div><div class="t">${safeText(e.description)}</div><div class="d">${formatClock(e.atSecond)} · ${safeText(e.type.replaceAll('_', ' '))}</div></div><div class="e" style="color:${e.ownerDelta > 0 ? 'var(--ok)' : 'var(--bad)'}">${e.ownerDelta > 0 ? '+' : '−'}${fmt(e.amount)} ◉</div></div>`).join('') || '<p class="lede">No records yet.</p>';
-  const cargo = state.shipments.slice().reverse().slice(0, 8).map((s) => `<div class="row"><div><div class="t">${fmtUnits(s.units)} ${safeText(oreById(s.oreId).name)} → ${safeText(destinationById(s.destinationId).name)}</div><div class="d">${state.shipmentStatusById[s.id] === 'DELIVERED' ? 'Delivered' : `ETA ${formatClock(Math.max(0, s.arrivalAtSecond - state.simSeconds))}`} · paid at departure</div></div><div class="e">${fmt(s.payment)} ◉</div></div>`).join('') || '<p class="lede">The launch pad is waiting for its first cargo.</p>';
-  const events = state.log.slice().reverse().slice(0, 10).map((e) => `<div>${formatClock(e.atSecond)} · ${safeText(e.message)}</div>`).join('') || '<p class="lede">No events yet.</p>';
-  return `<h2>Paper trail</h2><h3>Ledger · ${state.ledger.length} entries</h3><div class="rows">${ledger}</div><h3>Cargo</h3><div class="rows">${cargo}</div><h3>Events</h3><div class="feed">${events}</div>`;
+  const cargo = state.shipments.slice().reverse().slice(0, 6).map((x) => `<div class="row"><div><div class="t">${fmtUnits(x.units)} ${safeText(oreById(x.oreId).name)} → ${safeText(destinationById(x.destinationId).name)}</div><div class="d">${state.shipmentStatusById[x.id] === 'DELIVERED' ? 'Delivered' : `ETA ${formatClock(Math.max(0, x.arrivalAtSecond - state.simSeconds))}`} · paid at departure</div></div><div class="e">${fmt(x.payment)} ◉</div></div>`).join('') || '<p class="lede">The launch pad is waiting for its first cargo.</p>';
+  const events = state.log.slice().reverse().slice(0, 8).map((e) => `<div>${formatClock(e.atSecond)} · ${safeText(e.message)}</div>`).join('') || '<p class="lede">No events yet.</p>';
+  return `<h3>Totals</h3><div class="row"><div><div class="t">${fmt(state.totalExternalEarnings)} ◉ sold</div><div class="d">${fmt(state.trips)} trips · ${fmt(state.ledger.length)} latest ledger lines kept (older ones are summarized)</div></div></div>
+    <h3>Recent trips</h3><div class="rows">${cargo}</div><h3>Events</h3><div class="feed">${events}</div>`;
 }
 
 function tabTools() {
   const ai = aiSettings();
-  return `<h2>Dev tools</h2><p class="lede">Local sandbox only. No server, no month competition.</p>
+  return `<h3>Dev tools</h3><p class="lede">Local sandbox only. No server, no month competition.</p>
     <div class="devbox"><b>Fast-forward</b><p class="d">Runs the same one-second tick.</p><div class="btnrow"><button class="buy ghost sm" data-forward="60" type="button">1 min</button><button class="buy ghost sm" data-forward="600" type="button">10 min</button><button class="buy ghost sm" data-forward="3600" type="button">1 hour</button></div></div>
     <div class="devbox"><b>Test grant</b><p class="d">Creates an explicit local source entry.</p><div class="btnrow"><input id="grant-amount" type="number" min="1" step="1" value="${safeText(grantValue)}" aria-label="Test grant amount"><button class="buy sm" data-act="grant" type="button">Add test coins</button></div></div>
     <div class="devbox"><b>AI engine · bring your own key</b><p class="d">Used only to design planets. Your key stays in this browser and goes straight to the provider.</p>
@@ -447,7 +403,7 @@ function render() {
   const top = body.scrollTop;
   const active = document.activeElement;
   if (active && active.closest && active.closest('#tabbody') && active.matches('input[type=text],input[type=password],input[type=number],textarea,select')) { renderPending = true; return; }
-  body.innerHTML = { sell: tabSell, upgrades: tabUpgrades, shafts: tabShafts, planet: tabPlanet, records: tabRecords, tools: tabTools }[tab]();
+  body.innerHTML = { mine: tabMine, sell: tabSell, planet: tabPlanet, more: () => tabRecords() + tabTools() }[tab]();
   body.scrollTop = top;
   syncTip();
   drawScene();
@@ -456,7 +412,7 @@ let renderPending = false;
 
 function freshMine() {
   state = createGameState(siteOpts()); paused = false; catchupRemaining = 0; catchingUp = false; catchupKind = 'offline'; resetPromptOpen = false; recovering = '';
-  veinSeen.clear(); effectCache.clear(); save();
+  veinSeen.clear(); save();
 }
 let view = 'side';
 const camSide = { auto: true, x: 490, y: 0, z: 1 };
@@ -543,7 +499,7 @@ document.addEventListener('click', (event) => {
   if (button.dataset.tab) { tab = button.dataset.tab; render(); return; }
   if (button.dataset.forward) { startForward(Number(button.dataset.forward)); return; }
   if (button.dataset.destination) { apply((current) => selectDestination(current, button.dataset.destination)); return; }
-  if (button.dataset.buy) { const raw = button.dataset.count || '1'; buyUpgrade(button.dataset.buy, Number(button.dataset.shaft || 1), raw === 'max' ? 'max' : Number(raw)); return; }
+  if (button.dataset.buy) { const raw = button.dataset.count || '1'; buyUpgrade(button.dataset.buy, raw === 'max' ? 'max' : Number(raw)); return; }
   if (button.dataset.zoom) { const cm = view === 'map' ? camMap : camSide; if (button.dataset.zoom === 'fit') { cm.auto = true; cm.z = 1; } else { cm.auto = false; cm.z *= button.dataset.zoom === 'in' ? 1.4 : 1 / 1.4; } return; }
   if (button.id === 'mapBtn') { view = view === 'map' ? 'side' : 'map'; showMapCard(); return; }
   switch (button.dataset.act) {
@@ -575,8 +531,8 @@ document.addEventListener('click', (event) => {
       break;
     }
     case 'launch': apply(dispatchNow, 'Hauler launched — paid at takeoff.'); break;
-    case 'shaft': if (apply(buyNextShaft, 'Shaft opened. A new tunnel is being dug.')) { addFx(...FX_SPOTS.shaft.slice(0, 2), 'NEW SHAFT', '#5ee6a8'); blip([392, 523, 659]); } else blip([140]); break;
-    case 'hire': if (apply((current) => hireWorkers(current, 1), 'Miner hired and assigned.')) { addFx(80, -30, '+1 MINER', '#5ee6a8'); blip([587, 784]); } else blip([140]); break;
+    case 'shaft': buyShaft(); break;
+    case 'toggle-shafts': shaftsOpen = !shaftsOpen; render(); break;
     case 'grant': {
       const amount = Number($('#grant-amount').value);
       if (!Number.isSafeInteger(amount) || amount < 1) { toast('Enter a positive whole coin amount.', 'error'); break; }
