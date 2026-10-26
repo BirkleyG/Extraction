@@ -38,7 +38,7 @@ test('starting coin is zero; "Launch now" sells the starter ore at once and pays
   const v = await view(game, 'alice', 0);
   assert.equal(v.spendable, 200);
   assert(r.shipment.arrivalSecond > T0 / 1000, 'ship still outbound at the moment of payment');
-  assert.equal(v.doc.ship.readyAtSecond, T0 / 1000 + r.plan.busySeconds);
+  assert.equal(v.doc.ships[0].readyAtSecond, T0 / 1000 + r.plan.busySeconds);
   await assert.rejects(game.dispatch(cmd(r.version), ctx('alice', 1)), code('SHIP_BUSY'));
   assert(repo.reconcile());
 });

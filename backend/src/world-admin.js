@@ -3,6 +3,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { LedgerError } from './ledger.js';
 import { generateWorld } from './world.js';
+import { generateRefineries } from './npc-market.js';
 import { MonthCloser, archivePath } from './month-close.js';
 import { rosterPath } from './game-service.js';
 
@@ -81,7 +82,9 @@ export class WorldAdmin {
     const seed = sha(`${this.seedSecret}|${worldId}|${monthId}`);
     // The cosmetic seed drives only names, colours and scenery in the browser. It is derived separately so it can be public
     // without revealing the secret world seed (ore deposits, veins).
-    const planet = { ...generateWorld({ seed, monthId, players: this.players }), cosmeticSeed: sha(`cosmetic|${worldId}|${monthId}`).slice(0, 24) };
+    const planet = { ...generateWorld({ seed, monthId, players: this.players }), cosmeticSeed: sha(`cosmetic|${worldId}|${monthId}`).slice(0, 24),
+      // Server-only: computer-run refineries (>= 3 per planet) and the hidden weather/vein seed. Never projected to browsers.
+      refineries: generateRefineries({ seed, monthId, count: 3 }), weatherSeed: sha(`weather|${seed}`) };
     await this.game.storePlanet({ worldId, monthId, planet });
     if (world.data().activeMonthId < monthId) await ref.update({ activeMonthId: monthId });
     const closed = [];
