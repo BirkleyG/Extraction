@@ -13,8 +13,8 @@ export const LEVEL_CAP = 400;
 /** Every coefficient the pacing study may move. Frozen copy below is what the game uses. */
 export const TUNE = Object.freeze({
   growth: 1.4, // effect of one level of a line: x growth
-  costGrowth: 1.8, // price of one level of a line: x costGrowth
-  pickCost: 680, lift: 100, liftCost: 900, haulCost: 780, // first-level prices (pick / lift / hauler) and the lift's starting ore/min
+  costGrowth: 1.75, // price of one level of a line: x costGrowth
+  pickCost: 34, lift: 100, liftCost: 45, haulCost: 39, // first-level prices (pick / lift / hauler) and the lift's starting ore/min
   depth: 2.05, // shaft k digs depth^(k-1) times shaft 1
   shaftBase: 190, shaftGrowth: 4.1, // shaft k costs shaftBase * shaftGrowth^(k-2)
   orePerMiner: 6, // ore/min per miner at shaft 1, pick level 0

@@ -344,6 +344,12 @@ Bottlenecks
 
 Each shaft buffer holds about ten seconds of lift flow; yard capacity is the greater of twenty seconds of lift flow, two holds or twenty units. All ore movement remains conserved. These are experimental sandbox capacities, not new authoritative storage upgrade rules. The original prototype and existing browser mines remain available with their own economics.
 
+### A2 authoritative mine structure · 26 October 2026 (server only; the local sandbox is unchanged)
+- **Per-shaft improvements.** Lights and supports are per-shaft lines like carts and bunkhouse (cap 10, section 10 curves), not mine-wide lines. Their *effects* (insanity, cave-in factor `100^(−L/10)`) stay with documents 14/15; A2 only stores and prices the levels.
+- **Worker pool (Q-12 reading).** Hiring is limited by habitat capacity only. Miners above total shaft capacity are hired but not seated; the owner view reports the surplus as wasted labor and shows "!". Auto-assignment seats miners in shafts by highest per-worker rate first, shaft number breaking ties. Buying bunkhouse levels seats waiting miners.
+- **Soil and weather modifiers (C-03 provisional).** Soil modifier = soil type (loam 1.10 … obsidian 0.85) × `1 − 0.01 × (hardness − 5)`; weather is constant within a UTC hour and seeded per site (modifiers clear 1.0, dust 0.9, storm 0.7, ash 0.85, cold 0.8). Both multiply the production formula; the simulation cuts catch-up at hour boundaries so live play and offline catch-up agree.
+- Tests: A2 acceptance suite (`backend/test/a2-mine-to-buyer.test.js`), T03-05 and shaft/pad cap checks.
+
 ## 04 — Ores, Resource Generation and Depletion
 
 **Status: consolidated revision 1.2.** Approved rules use the register in 00; C-numbered coefficients remain calibration work.
@@ -394,6 +400,11 @@ Depletion
 ### Open questions
 - Should uncommon ore replenish slowly, or never? Never
 - Should veins be shareable between neighboring outposts of the same player? Nope
+
+### A2 authoritative depth bands and veins · 26 October 2026 (C-03 provisional)
+- **Depth bands:** shafts 1–4 shallow (common only), 5–12 middle, 13–20 deep (rare veins possible), 21–30 deepest (mythic possible). A shaft holds at most one vein; shafts are not guaranteed a vein. Vein shaft choice is seeded and weighted toward depth; vein size = planet vein units × `(1 + 0.05 × (shaft − 5))`.
+- **Depletion:** a shaft digs its vein ore until the vein is empty, then the common ore of its band; a shaft changes ore only when its buffer is empty. Output tapers in proportion below 5% of the vein, with a 2% floor so a vein finishes in finite time. The owner view shows the remaining share and the 20% (LOW) and 5% (CRITICAL) warnings for dug shafts only; undug veins, exact planet veins and the weather seed never leave the server.
+- Tool hardness gating and mythic-specific equipment are **not** implemented in A2 (Q-12).
 
 ## 05 — Logistics, Shipping and Cargo
 
@@ -471,6 +482,15 @@ Payment
 Fractional high-value residue cannot block loading whole crates of another available ore. A discontinued ore with only fractional residue left cannot strand a partially filled hauler indefinitely. The launch preview chooses the same cargo and rounds the same prices as the actual departure.
 
 The unupgraded nearest-buyer trip is twelve seconds (`ceil(2 × distance/speed × 60 + unloadSeconds)`). Payment is final at takeoff, never repeated on arrival. Hold capacity grows ×1.4 per Hauler level (whole crates); speed grows ×1.04. Sandbox pad loading can move a hold per second. The trusted online server keeps its existing shipping formula, independent upgrade lines and coefficients.
+
+### A2 fleet, trips, docks and NPC refineries · 26 October 2026
+- **One trip function:** `tripPlan` (backend `ships.js`) computes trip time = 2 × travel + unload + dock wait, plus the separate pad loading time; the destination table, the dispatch plan and the simulation call this one function (T05-01).
+- **Fleet:** Hauler / Cruiser / Freighter (Cruiser ×3 speed and ×0.35 hold, Freighter ×0.6 speed and ×3 hold). Additional ship price is C-02 provisional: 3,000 coin for Hauler/Cruiser and 5,400 for Freighter (≈1.8×); fleet cap 24 hulls; ship-speed/capacity/loading lines are mine-wide. A pad loads one ship at a time; ships beyond free pads wait in orbit (pad schedule). Pads 2–12 use the section 10 price.
+- **Policies per ship:** best coin per minute (default), nearest, fixed, preferred list (best of the list, else best overall). Ties break by id; coin per minute compares exactly (integer cross-multiplication).
+- **Weather grounding:** storm hours ground takeoffs, never two consecutive hours. An automatic takeoff waits for the first clear second and records `weatherDelaySeconds`; a forced launch while grounded is rejected without change. Cargo is never lost.
+- **Dock queue:** each refinery has finite berths; a departure reserves an interval for its unloading and the estimate shown is the dock wait for that reservation. Reservations are intervals, so a catch-up departure dated in the past is only delayed by berths that are really busy in its own window; only the latest 64 reservations are kept (C-02).
+- **Mixed cargo:** a hold carries one line per ore (most valuable tier first); payment is the sum of the lines at one destination.
+- **NPC refineries (≥3 per planet) and the premium (Q-10 reading, see Q-13):** the base bid is unchanged and unlimited. Rare and mythic ore additionally earn a market-driven *premium* — `base × (tierReference − 1) × demand` with tier references 1/3/8 and `demand = 1 − storageUsed / storageCapacity` — paid only while the refinery's finite premium funds (token bucket) and premium storage allow; both refill/drain with time. When exhausted the cargo still sells at the base bid, so there is no unlimited premium demand. All coin is the explicit external source `NPC_RAW_PURCHASE`; funds and storage are server truth and are never projected.
 
 ## 06 — Refineries and Industrial Processing
 
@@ -821,6 +841,10 @@ Bulk buys sum individually rounded level prices and buy the affordable quantity 
 The supplied costs 34/45/39 and growth 1.75 produced 22.6M at hour one and 4.09Qa at day thirty in the fluid study. A bounded comparison selected the higher bases/growth above: actual one-second scripted play earns **100 coin at second one; shaft two is affordable at second thirteen; 130,010 gross at hour one**, with no test grants. The fluid approximation earns 184,358 at hour one, 62.4B at day seven and 3.013T at day thirty; corresponding targets are 100K, 1.139B and 12.783T. Daily-check-in fluid earnings are about 63% of active at day thirty. **Intermediate pacing still diverges substantially; neither this experiment nor the earlier profile certifies full-month balance.**
 
 Reproducible scripts, complete tables, policy assumptions and exact-model evidence: [Sandbox economy evidence](../../play/sim/README.md). Finite storage, discrete shipments and rare ores make the exact engine different from the fluid approximation.
+
+### Ported fast sandbox profile C01-SANDBOX-02 · 26 October 2026 (provisional)
+
+The newer Claude sandbox branch uses next-level bases Pick 34, Lift 45, Hauler 39 and cost growth 1.75; the ×1.4 effects, depth/shaft curves and named tiers are unchanged. Ported this local profile while retaining industry, home safety, worker catch-up, checked accounting and existing saves. It supersedes the **local** C01-SANDBOX-01 prices; server prices/caps are unchanged. CEO pacing preference is pending, so this remains provisional. Exact scripted first-hour earnings are 728,507 versus the 100K benchmark; fluid evidence remains an approximation. No claim of full-month balance is made.
 
 ## 11 — Exploration, Scouting and Expansion
 
@@ -1681,6 +1705,19 @@ The legacy pixel interface remains the visual contract. Industry and Colony tabs
 ### Public industry playtest and automation follow-up · 26 October 2026
 
 PR #16 is merged and publicly verified: refinery/stock/sale/contract, infantry arrival, no-key Maker and mobile/save behavior all passed. Added optional automatic refinery exports after playtesting identified repeated manual selling as a chore. Minimap thumbnails refresh with paused/reduced-motion view changes. Follow-up invariant coverage includes automatic revenue, self-transfer, full-wallet waits and escrow archive reconciliation; 68 local tests pass. Exact worker catch-up/reload and approximately 30-second online polling were browser-verified. Live paid AI execution and full Release A/B acceptance are not claimed. [Detailed evidence and scope](../development/Industry-Release.md).
+
+### Release A2 mine-to-buyer loop change log · 26 October 2026
+
+- Implemented, server-side only: shafts 1–30 with per-shaft lights/supports/carts/bunkhouse, pads 2–12, ships (three classes) with per-ship policies, depth bands and finite veins with 20%/5% warnings, soil/weather modifiers, weather grounding, dock reservation queue, ≥3 seeded NPC refineries per planet with a finite premium, and `buyPad`/`buyShip` commands beside the transactional `buyUpgrade`. Owner documents are schema version 2 (fresh saves; no migration).
+- New coefficients are C-02/C-03 provisional and listed in sections 03/05 above; none is certified balance. Arithmetic and unit tests do not certify economy balance.
+- Interpretations logged as questions rather than rules: Q-11 (ship price), Q-12 (worker surplus reading and unimplemented hardness gating), Q-13 (premium vs the Q-10 "unlimited buyer" ruling), Q-14 (dock/premium order dependence).
+- Evidence: A2 acceptance suite, environment and NPC-market unit suites, and Firestore emulator parity tests (premium last-coin and last-slot races, rejected-dispatch no-mutation, duplicate settlement). Release A is still not accepted; A3/A4 items remain open.
+
+### Claude branch integration checkpoint · 26 October 2026
+
+Combined the fenced durable event queue/worker with A2 fleet, pads, routing, seeded environment, veins and refinery premium/dock state. Preserved both acceptance suites and fixed the shared production kernel's incompatibility with local rare veins. Added backward-compatible online fleet controls and nested ore/destination projection handling; retained local industry and save/runtime safety while porting the newer fast sandbox prices. Existing source branches remain traceable.
+
+Evidence: 70 local tests, 155 backend tests, 14 Auth/Firestore emulator tests and an A2 projection browser bridge pass. [Branch integration details](../development/Branch-Integration.md). The owner-v2 backend requires fresh staging/month-boundary saves; this source integration does not deploy or migrate the live runtime. Premium fairness and Q-10 interpretation remain pending; Release A is not yet accepted.
 
 ## 23 — Advanced Combat and AI Military Command
 

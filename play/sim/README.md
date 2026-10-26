@@ -1,3 +1,7 @@
+# Current fast-profile integration · 26 October 2026
+
+The currently integrated provisional profile ports Claude's newer sandbox branch: line bases 34/45/39, price growth 1.75. Current generated evidence files reflect this profile. Exact first-hour scripted earnings: 728,507. Historical comparisons below describe the earlier C01-SANDBOX-01 calibration; they are retained as evidence, not current prices. See [branch integration](../../docs/development/Branch-Integration.md).
+
 # Sandbox economy evidence · 26 October 2026
 
 These studies apply only to the local `sandbox-rebuild-v1` profile. They do not change authoritative server coefficients, caps or accounting. Old local saves retain their original profile; the interface backs them up before starting a new mine.

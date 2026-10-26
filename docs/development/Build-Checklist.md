@@ -42,8 +42,8 @@ Scope per section 22: mine, miners, raw-ore shipping to NPC refineries, independ
 - [x] ✅ Firestore transactions + verified ID tokens + deny-all client rules
 - [x] ✅ Event kernel: ordering, dedupe, seeded RNG per site/second, horizon (T17-01/02 foundation)
 - [x] ✅ Pure production model: shafts, lift (C01-LIFT-02), finite buffers, 1s catch-up (T03 partial)
-- [ ] ⬜ **Durable event queue** — indexed/paginated storage, leases, compare-and-set checkpoints (do *not* store the full queue in one doc)
-- [ ] ⬜ **Zero-client scheduler/worker** — advances all businesses with nobody online (T18-08)
+- [x] 🟡 **Durable event queue** (`backend/src/event-queue.js`) — one record per event, ordered page claims, fenced leases, CAS checkpoints, atomic state docs with commit. Memory store tested (9 tests); Firestore store + emulator test written but not yet run. Still to do: wire the kernel handlers and scheduler onto it (next item)
+- [x] 🟡 **Zero-client scheduler/worker** (`backend/src/event-worker.js`, hooked into `WorldAdmin.tick`) — claims fenced pages, applies pure handlers with the seeded per-site/second RNG to one small state doc per site, commits state + checkpoint atomically; live == catch-up proven across page sizes. Owner settlement already advanced with nobody online; **no real game event type is migrated onto the queue yet** (handler registry is empty), and the Firestore path has no emulator run
 - [ ] ⬜ Server-side world record: month ID, seed, state machine (`open → closing → closed`)
 - [ ] ⬜ Player enrollment + admin/host endpoints (server-verified roles, never `#admin`)
 - [ ] ⬜ Private read-model projections with explicit field allowlists (T18-09, T20-02)
@@ -52,18 +52,18 @@ Scope per section 22: mine, miners, raw-ore shipping to NPC refineries, independ
 ### A2 — Mine-to-buyer loop
 Rules: 03, 04, 05, 10, 02 (commercial departure). Tests: T03, T04, T05, T10, T18-03/11.
 - [x] ✅ **World generation (seeded, `backend/src/world.js`):** 7 ores (2 common / 4 rare / 1 mythic), regions, home-site generation, equal-EV starts (T04-01, T11-01)
-- [x] 🟡 **Upgrade engine** (pure pricing done: `backend/src/upgrades.js`; transactional purchase endpoint still to do) — one registered cost-curve table (section 10 families); buy 1/10/100/Max with exact summed rounded prices, cap + overflow checks inside the transaction (T10-01/03/04/08)
-- [ ] ⬜ Mine structure: shafts 1–30 (cost `120×2.4^(k−1)`, hard stop at 31 — T03-05), dig, lift, buffers, surface yard, pads (cap 12)
-- [ ] ⬜ Shaft improvements: lights, supports, carts (utilization 0.25+0.075L), bunkhouse (capacity 10+5L)
-- [ ] ❓ Worker pool + auto-assignment + habitat capacity ("!" for wasted labor)
-- [ ] ⬜ Depth→ore yield bands; rare/mythic vein depletion with 20%/5% warnings (T04-02/03)
-- [ ] ⬜ Soil + weather modifiers (feeds production formula)
-- [ ] ⬜ Ships: Hauler/Cruiser/Freighter, pad loading, trip time = 2×travel + unload + dock wait (one shared function for UI and sim — T05-01)
-- [x] ✅ **Atomic paid departure** (`game-service.js`, memory repo; Firestore adapter still to do) (the heart of the game): validate → reserve receiving capacity + quantity → debit buyer → credit seller → remove stock → shipment + arrival event, all in one transaction; failure mutates nothing (T02-03, T05-02/05, T18-03/11)
+- [x] ✅ **Upgrade engine** (pure pricing `backend/src/upgrades.js` + transactional `buyUpgrade`/`buyPad`/`buyShip`/`hire`/`buyShaft` in `game-service.js`; A2 suite: exact sums, funds/cap races, negative/overflow inputs) — one registered cost-curve table (section 10 families); buy 1/10/100/Max with exact summed rounded prices, cap + overflow checks inside the transaction (T10-01/03/04/08)
+- [x] ✅ Mine structure: shafts 1–30 (cost `120×2.4^(k−1)`, hard stop at 31 — T03-05), dig, lift, buffers, surface yard, pads (cap 12)
+- [x] ✅ Shaft improvements (per shaft; effects of lights/supports belong to docs 14/15): lights, supports, carts (utilization 0.25+0.075L), bunkhouse (capacity 10+5L)
+- [x] ✅ Worker pool + auto-assignment + habitat capacity ("!" for wasted labor) — minimal reading implemented; open question Q-12
+- [x] ✅ Depth→ore yield bands; rare/mythic vein depletion with 20%/5% warnings (T04-02/03)
+- [x] ✅ Soil + weather modifiers (feeds production formula)
+- [x] ✅ Ships: Hauler/Cruiser/Freighter, pad loading, trip time = 2×travel + unload + dock wait (one shared function for UI and sim — T05-01)
+- [x] ✅ **Atomic paid departure** (`game-service.js`; memory and Firestore-emulator parity tests incl. premium last-coin/last-slot races) (the heart of the game): validate → reserve receiving capacity + quantity → debit buyer → credit seller → remove stock → shipment + arrival event, all in one transaction; failure mutates nothing (T02-03, T05-02/05, T18-03/11)
 - [x] ✅ Arrival converts reserved capacity → stock, **never pays again** (T05-02/03)
-- [x] 🟡 NPC refineries (token-bucket funds/capacity, fixed bids; ≥3/planet + market-driven offers still to do): offer formula, buyer budgets that run dry, explicit external coin source (no unlimited premium demand)
-- [ ] ⬜ Ship policies: best coin/min, nearest, fixed, preferred list; destination table showing price, trip time, coin/min
-- [ ] ⬜ Weather grounding (wait, no loss); dock reservation/queue
+- [x] ✅ NPC refineries (≥3/planet seeded, base bids unlimited per Q-10, market-driven finite rare/mythic premium; see Q-13): offer formula, buyer budgets that run dry, explicit external coin source (no unlimited premium demand)
+- [x] ✅ Ship policies: best coin/min, nearest, fixed, preferred list; destination table showing price, trip time, coin/min
+- [x] ✅ Weather grounding (wait, no loss); dock reservation/queue
 
 ### A3 — Month lifecycle, defense, browser UI
 - [x] ✅ **Resumable month-close state machine** (`month-close.js`; Memory + Firestore emulator tests) (T17-05/06/07, T18-12): reject departures ≥ B → process events < B → snapshot coin+escrow once → finalize pre-B shipments without extra pay → archive/burn/reset → create next world. Crash-safe at every phase.
@@ -158,6 +158,7 @@ Rules: 03, 04, 05, 10, 02 (commercial departure). Tests: T03, T04, T05, T10, T18
 - 25 Oct: **Online client** (`online/`): Firebase sign-in (Google + email/password), invite-code join, enroll, 20 s polling with local ore extrapolation, sell / build / records tabs, bulk-buy modes. Verified in headless Chromium against the Auth + Firestore emulators and the real game server (sign up → wrong invite → join → sell 5 units for 200 → buy Max dig). Server additions: `world-admin.js` (invite-only join, month prepare + rollover + close), `/internal/tick` (shared-secret), `Dockerfile`, `backend/deploy.sh` (Cloud Run + Secret Manager + hourly Cloud Scheduler). **Next:** you run `deploy.sh` in Cloud Shell, set `API_BASE`, merge to `main`.
 - 25 Oct (Q-10): NPC buyers unlimited; hauler auto-takeoff when full + `Launch now`/`setPolicy` on server and sandbox; plain-language unit glossary and hover tips in `/play/` and `/online/`; automatic takeoffs are ledgered at their own second and settle in committed batches (offline == live, T17-01); month close settles takeoffs before B. 79 fast + 9 emulator tests pass. `/play/` remains the default site; `/online/` is opt-in.
 - 25 Oct: **Online mode inside the pixel game** (`play/online.js`): Firebase sign-in + invite join overlay, server view adapted into the renderer's state, optimistic local actions turned into server commands (diff of state), 15 s polling plus a poll at the predicted automatic takeoff, auto-takeoff toasts. Offline sandbox remains the default. Verified in headless Chromium against the emulators.
+- 26 Oct (A2): mine-to-buyer loop implemented on the trusted server (per-shaft improvements, pads, three ship classes with policies, depth bands/finite veins, soil/weather, weather grounding, dock queue, ≥3 NPC refineries with a finite premium, paid `buyPad`/`buyShip`). Acceptance suite + Firestore parity tests added; interpretations in Q-11–Q-14. Not a release: A3/A4 and balance certification remain open; the `/play/` sandbox and `/prototype/` are untouched.
 
 ## Latest playable checkpoint · 26 October 2026
 

@@ -6,17 +6,17 @@ import { UpgradeError } from './upgrades.js';
 import { safeEqual } from './world-admin.js';
 
 const BODY_LIMIT = 8192;
-const KINDS = new Set(['enroll', 'buyUpgrade', 'hire', 'buyShaft', 'dispatch', 'setPolicy']);
+const KINDS = new Set(['enroll', 'buyUpgrade', 'hire', 'buyShaft', 'buyPad', 'buyShip', 'dispatch', 'setPolicy']);
 const monthAt = (ms) => `${new Date(ms).getUTCFullYear()}-${String(new Date(ms).getUTCMonth() + 1).padStart(2, '0')}`;
 
 function statusFor(code) {
   if (code === 'UNAUTHENTICATED') return 401;
   if (code === 'FORBIDDEN') return 403;
   if (['NOT_FOUND', 'WORLD_NOT_FOUND', 'NOT_ENROLLED'].includes(code)) return 404;
-  if (['STALE_MONTH', 'MONTH_CLOSED', 'STALE_VERSION', 'IDEMPOTENCY_CONFLICT', 'INSUFFICIENT_FUNDS', 'SHIP_BUSY', 'NO_CARGO', 'BUYER_FULL', 'BUYER_OUT_OF_FUNDS', 'INSUFFICIENT_STOCK', 'EXCEEDS_SHIP_CAPACITY', 'WORLD_CLOSED', 'AT_CAP', 'ALREADY_ENROLLED', 'NO_HABITAT_CAPACITY', 'NO_SHAFT_CAPACITY', 'CATCHING_UP', 'WORLD_FULL', 'JOIN_DISABLED'].includes(code)) return 409;
+  if (['STALE_MONTH', 'MONTH_CLOSED', 'STALE_VERSION', 'IDEMPOTENCY_CONFLICT', 'INSUFFICIENT_FUNDS', 'SHIP_BUSY', 'WEATHER_GROUNDED', 'FLEET_FULL', 'NO_CARGO', 'BUYER_FULL', 'BUYER_OUT_OF_FUNDS', 'INSUFFICIENT_STOCK', 'EXCEEDS_SHIP_CAPACITY', 'WORLD_CLOSED', 'AT_CAP', 'ALREADY_ENROLLED', 'NO_HABITAT_CAPACITY', 'NO_SHAFT_CAPACITY', 'CATCHING_UP', 'WORLD_FULL', 'JOIN_DISABLED'].includes(code)) return 409;
   if (['METHOD_NOT_ALLOWED'].includes(code)) return 405;
   if (code === 'BODY_TOO_LARGE') return 413;
-  if (['INVALID_COMMAND', 'INVALID_AMOUNT', 'INVALID_VERSION', 'INVALID_WORLD', 'INJECTED_FIELD', 'INVALID_PATH', 'UNKNOWN_UPGRADE', 'INVALID_MODE', 'INVALID_COUNT', 'INVALID_LEVEL', 'INVALID_SHAFT', 'INVALID_UNITS', 'UNKNOWN_DESTINATION', 'UNKNOWN_SHAFT', 'INVALID_FUNDS'].includes(code)) return 400;
+  if (['INVALID_COMMAND', 'INVALID_AMOUNT', 'INVALID_VERSION', 'INVALID_WORLD', 'INJECTED_FIELD', 'INVALID_PATH', 'UNKNOWN_UPGRADE', 'INVALID_MODE', 'INVALID_COUNT', 'INVALID_LEVEL', 'INVALID_SHAFT', 'INVALID_UNITS', 'UNKNOWN_DESTINATION', 'UNKNOWN_SHIP', 'UNKNOWN_SHIP_CLASS', 'INVALID_PAD', 'UNKNOWN_SHAFT', 'INVALID_FUNDS'].includes(code)) return 400;
   return 500;
 }
 

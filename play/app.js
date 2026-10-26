@@ -1,3 +1,4 @@
+import { renderFleet, fleetCommand } from './fleet-ui.js';
 import { createLocalRuntime } from './local-runtime.js';
 import { renderIndustry, actionFromIndustryButton } from './industry-ui.js';
 import { createMakerBrief, generateMakerContent } from './maker.js';
@@ -133,7 +134,7 @@ function fmtUnits(value) { return new Intl.NumberFormat('en-US', { maximumFracti
 function fillFraction(value, max) { return Math.round(Math.min(1, max > 0 ? value / max : 0) * 100); }
 function oreById(id) { return ORES.find((ore) => ore.id === id); }
 const isNewEconomy = () => state.economyProfile === 'sandbox-rebuild-v1';
-function destinationById(id) { return destinationsFor(state).find((item) => item.id === id); }
+function destinationById(id) { return state.online?.offers?.find(item => item.id === id) ?? destinationsFor(state).find(item => item.id === id) ?? { name: id }; }
 function surfaceTotal() { return state.production.surface.unitsByOre.reduce((sum, row) => sum + row.units, 0); }
 function liftRate() { return currentLiftRate(state); }
 function totalRate() { return currentRates(state).reduce((sum, row) => sum + row.ratePerMinute, 0); }
@@ -246,6 +247,14 @@ async function syncRemote(force = false) {
 }
 let justSent = false;
 const POLL_MS_LOCAL = RECONCILE_MS;
+
+async function sendFleetCommand(command) {
+  if (!state.remote || pendingRemote > 2) return;
+  remoteGeneration += 1; pendingRemote += 1; render();
+  try { await online.send([command]); toast('Fleet order accepted.', 'success'); }
+  catch (error) { toast(remoteMessage(error), 'error'); }
+  finally { pendingRemote -= 1; void syncRemote(true); }
+}
 
 function applyRemote(before, next, success) {
   remoteGeneration += 1;
@@ -454,6 +463,7 @@ function launchPreview() {
 }
 
 function tabSell() {
+  if (state.remote && state.online?.fleet) return renderFleet(state, { fmt });
   const preview = launchPreview();
   const ready = state.ship.readyAtSecond <= state.simSeconds;
   const can = ready && preview.units >= 0.5 && !catchingUp;
@@ -466,7 +476,7 @@ function tabSell() {
     const unload = isNewEconomy() ? d.unloadSeconds : units / d.unloadUnitsPerMinute * 60;
     const load = isNewEconomy() ? 0 : Math.ceil(Math.max(0, units - state.ship.cargoUnits) / state.ship.loadingUnitsPerMinute * 60);
     const trip = Math.ceil(2 * d.distance / state.ship.speedPerMinute * 60 + unload) + load;
-    return `<div class="row ${sel ? 'sel' : ''}"><div><div class="t"><span class="pick"></span>${safeText(d.name)} <span class="own"${tip(GLOSSARY.bid)}>${fmt(price)} ◉ / ${safeText(oreById(oreId).name)} unit</span></div><div class="d"><span${tip(GLOSSARY.au)}>${d.distance} AU away</span> · ${formatClock(trip)} until ready again${preview.units ? ' at this load' : ' at full hold'}</div><div class="e"${tip(GLOSSARY.endless)}>Buys every unit · never runs out</div></div><button class="buy ${sel ? 'ok' : 'ghost'} sm" data-destination="${d.id}" type="button">${sel ? 'Selected' : 'Sell here'}</button></div>`;
+    return `<div class="row ${sel ? 'sel' : ''}"><div><div class="t"><span class="pick"></span>${safeText(d.name)} <span class="own"${tip(GLOSSARY.bid)}>${fmt(price)} ◉ / ${safeText(oreById(oreId).name)} unit</span></div><div class="d"><span${tip(GLOSSARY.au)}>${d.distance} AU away</span> · ${formatClock(trip)} until ready again${preview.units ? ' at this load' : ' at full hold'} · ${fmt(Math.round(units * price * 60 / trip))} ◉/min per trip</div><div class="e"${tip(GLOSSARY.endless)}>Buys every unit · never runs out</div></div><button class="buy ${sel ? 'ok' : 'ghost'} sm" data-destination="${d.id}" type="button">${sel ? 'Selected' : 'Sell here'}</button></div>`;
   }).join('');
   return `<h2>Where to sell</h2><p class="lede">Ore is counted in <b${tip(GLOSSARY.unit)}>units</b> (one unit = one crate). Buyers pay <b>coin per unit</b> the moment the hauler takes off.</p>
     <h3>Hauler</h3>
@@ -477,7 +487,7 @@ function tabSell() {
 }
 
 function tabUpgrades() {
-  if (isNewEconomy()) return `<h2>Reinvest</h2><p class="lede">Three machines. One growing mine. Every level applies across all shafts.</p>
+  if (isNewEconomy()) return `<h2>Reinvest</h2><div class="chips"><span class="chip">Dig ${fmtUnits(totalRate())}/min</span><span class="chip">Lift ${fmtUnits(liftRate())}/min</span><span class="chip">Hold ${fmtUnits(state.ship.capacityUnits)} crates</span></div><p class="lede">Three machines. One growing mine. Every level applies across all shafts.</p>
     <div class="rows compact-upgrades">${upgradeCard('pick', 1, { bulk: true })}${upgradeCard('lift', 1, { bulk: true })}${upgradeCard('hauler', 1, { bulk: true })}</div>
     <h3>Expand the mine</h3><div class="row"><div><div class="t">Open shaft ${String(state.production.shafts.length + 1).padStart(2, '0')}</div><div class="d">${state.production.shafts.length} / 30 open · includes 10 miners</div></div>${buyBtn('data-act="shaft"', '＋ Shaft', shaftCost())}</div>
     <div class="note">Single-player sandbox · local save. These three upgrade lines use a simplified economy, separate from the online game.</div>`;
@@ -557,7 +567,7 @@ let pendingPlanet = false;
 
 function tabRecords() {
   const ledger = state.ledger.slice().reverse().slice(0, 10).map((e) => `<div class="row"><div><div class="t">${safeText(e.description)}</div><div class="d">${formatClock(e.atSecond)} · ${safeText(e.type.replaceAll('_', ' '))}</div></div><div class="e" style="color:${e.ownerDelta > 0 ? 'var(--ok)' : 'var(--bad)'}">${e.ownerDelta > 0 ? '+' : '−'}${fmt(e.amount)} ◉</div></div>`).join('') || '<p class="lede">No records yet.</p>';
-  const cargo = state.shipments.slice().reverse().slice(0, 8).map((s) => `<div class="row"><div><div class="t">${fmtUnits(s.units)} ${safeText(oreById(s.oreId).name)} → ${safeText(destinationById(s.destinationId).name)}</div><div class="d">${state.shipmentStatusById[s.id] === 'DELIVERED' ? 'Delivered' : `ETA ${formatClock(Math.max(0, s.arrivalAtSecond - state.simSeconds))}`} · paid at departure</div></div><div class="e">${fmt(s.payment)} ◉</div></div>`).join('') || '<p class="lede">The launch pad is waiting for its first cargo.</p>';
+  const cargo = state.shipments.slice().reverse().slice(0, 8).map((s) => `<div class="row"><div><div class="t">${fmtUnits(s.units)} ${s.cargo?.length > 1 ? 'mixed ore' : safeText(oreById(s.oreId).name)} → ${safeText(destinationById(s.destinationId).name)}</div><div class="d">${state.shipmentStatusById[s.id] === 'DELIVERED' ? 'Delivered' : `ETA ${formatClock(Math.max(0, s.arrivalAtSecond - state.simSeconds))}`} · paid at departure</div></div><div class="e">${fmt(s.payment)} ◉</div></div>`).join('') || '<p class="lede">The launch pad is waiting for its first cargo.</p>';
   const events = state.log.slice().reverse().slice(0, 10).map((e) => `<div>${formatClock(e.atSecond)} · ${safeText(e.message)}</div>`).join('') || '<p class="lede">No events yet.</p>';
   const archive = isNewEconomy() ? state.historyArchive : null;
   const archivedLedger = archive?.ledger;
@@ -744,6 +754,7 @@ document.addEventListener('click', (event) => {
   if (catchingUp) return;
   if (button.dataset.tab) { tab = button.dataset.tab; render(); return; }
   if (button.dataset.forward) { startForward(Number(button.dataset.forward)); return; }
+  if (button.dataset.fleet) { const command = fleetCommand(button, state); if (command) void sendFleetCommand(command); return; }
   if (button.dataset.industry) { const action = actionFromIndustryButton(button, state); if (action) apply(current => industryCommand(current, action), 'Industry order completed.'); return; }
   if (button.dataset.frontier) { apply(current => frontierCommand(current, 'recruit-infantry'), 'Supply shuttle dispatched.'); return; }
   if (button.dataset.destination) { apply((current) => selectDestination(current, button.dataset.destination)); return; }

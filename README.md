@@ -59,3 +59,7 @@ Use **Play online** in the same pixel interface (or [open online mode](https://b
 The new-economy sandbox now includes **Industry** and **Colony** tabs. Build a refinery (25K local test coin), route raw ore into it, refine and sell to NPC stations. Choose an output policy to sell automatically or fill your own station every 30 simulated seconds. Build a station (250K), stock refined goods and complete published spot orders. Hourly simulated market quotes react to supply. Home infantry arrive by supply shuttle and help resolve bounded incidents. These local fixtures preview later systems; they are not shared multiplayer industry.
 
 Use Colony to request Maker facility names, buyer personalities and factual dispatches. Claude/OpenAI use the key configured in Tools; with no key the built-in chronicler works. Requests are explicit and presentation-only. Online play animates locally and reconciles with the trusted server about every 30 seconds, immediately after commands or returning to the tab. Local offline catch-up runs in a browser worker where available. [Scope, coefficients and verification](docs/development/Industry-Release.md).
+
+## Branch integration
+
+The latest integration combines Claude's durable queue and server A2 work, and ports its faster sandbox prices while preserving current industry and save safety. [Scope, evidence and rollout limits](docs/development/Branch-Integration.md). The A2 fleet panel appears when connected to an updated backend; merging browser code does not redeploy Cloud Run or migrate existing owner records.

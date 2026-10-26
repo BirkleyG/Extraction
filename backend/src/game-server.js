@@ -8,6 +8,9 @@ import { DEFAULT_NPC_BUYERS } from './npc.js';
 import { generateWorld } from './world.js';
 import { validateRuntimeEnvironment } from './server.js';
 import { WorldAdmin } from './world-admin.js';
+import { FirestoreEventQueue } from './event-queue.js';
+import { EventWorker } from './event-worker.js';
+import { createHash } from 'node:crypto';
 
 const monthOf = (ms) => `${new Date(ms).getUTCFullYear()}-${String(new Date(ms).getUTCMonth() + 1).padStart(2, '0')}`;
 
@@ -17,7 +20,12 @@ export function buildGameServer(env = process.env) {
   const firestore = getFirestore(app);
   const repository = new FirestoreGameRepository(firestore);
   const game = new GameService(repository, { npcBuyers: DEFAULT_NPC_BUYERS });
-  const admin = env.WORLD_SEED_SECRET ? new WorldAdmin({
+  // Handlers are registered here as event types are migrated onto the durable queue (none yet; an empty queue costs reads only).
+  const eventWorker = env.WORLD_SEED_SECRET ? new EventWorker({
+    queue: new FirestoreEventQueue(firestore), handlers: {}, workerId: `tick-${process.env.K_REVISION || 'local'}`,
+    seedFor: ({ worldId, monthId }) => createHash('sha256').update(`${env.WORLD_SEED_SECRET}|events|${worldId}|${monthId}`).digest('hex'),
+  }) : null;
+  const admin = env.WORLD_SEED_SECRET ? new WorldAdmin({ eventWorker,
     firestore, game, repository, inviteCode: env.INVITE_CODE || null, seedSecret: env.WORLD_SEED_SECRET,
     maxMembers: Number(env.MAX_MEMBERS || 10), players: Number(env.WORLD_PLAYERS || 10),
   }) : null;

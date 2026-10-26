@@ -3,6 +3,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { LedgerError } from './ledger.js';
 import { generateWorld } from './world.js';
+import { generateRefineries } from './npc-market.js';
 import { MonthCloser, archivePath } from './month-close.js';
 import { rosterPath } from './game-service.js';
 
@@ -16,10 +17,10 @@ export class WorldAdmin {
   /**
    * @param {{firestore, game: import('./game-service.js').GameService, repository, inviteCode?: string, maxMembers?: number, seedSecret: string, players?: number}} options
    */
-  constructor({ firestore, game, repository, inviteCode = null, maxMembers = 10, seedSecret, players = 10 }) {
+  constructor({ firestore, game, repository, inviteCode = null, maxMembers = 10, seedSecret, players = 10, eventWorker = null }) {
     if (!firestore || !game || !repository) throw new TypeError('firestore, game and repository are required');
     if (typeof seedSecret !== 'string' || seedSecret.length < 16) throw new TypeError('A seedSecret of at least 16 characters is required');
-    Object.assign(this, { firestore, game, repository, inviteCode, maxMembers, seedSecret, players });
+    Object.assign(this, { firestore, game, repository, inviteCode, maxMembers, seedSecret, players, eventWorker });
   }
 
   #worldRef(worldId) { return this.firestore.collection('worlds').doc(sha(worldId)); }
@@ -64,7 +65,12 @@ export class WorldAdmin {
         settlements.push({ ownerId, done: false, error: error?.code ?? 'SETTLEMENT_FAILED' });
       }
     }
-    return { ...rollover, settlements, done: settlements.every((s) => s.done) };
+    // Durable event queue: drain due events for this month, bounded per tick. Never lets one stuck queue stop owner settlement.
+    let events = null;
+    if (this.eventWorker) {
+      try { events = await this.eventWorker.drain({ worldId, monthId }, { nowMs }); } catch (error) { events = { status: 'error', applied: 0, done: false, error: error?.code ?? 'EVENT_WORKER_FAILED' }; }
+    }
+    return { ...rollover, settlements, ...(events ? { events } : {}), done: settlements.every((s) => s.done) && (events?.done ?? true) };
   }
 
   /** Prepare the current month (planet, NPC budgets, active month) and close any finished months. Idempotent. */
@@ -76,7 +82,9 @@ export class WorldAdmin {
     const seed = sha(`${this.seedSecret}|${worldId}|${monthId}`);
     // The cosmetic seed drives only names, colours and scenery in the browser. It is derived separately so it can be public
     // without revealing the secret world seed (ore deposits, veins).
-    const planet = { ...generateWorld({ seed, monthId, players: this.players }), cosmeticSeed: sha(`cosmetic|${worldId}|${monthId}`).slice(0, 24) };
+    const planet = { ...generateWorld({ seed, monthId, players: this.players }), cosmeticSeed: sha(`cosmetic|${worldId}|${monthId}`).slice(0, 24),
+      // Server-only: computer-run refineries (>= 3 per planet) and the hidden weather/vein seed. Never projected to browsers.
+      refineries: generateRefineries({ seed, monthId, count: 3 }), weatherSeed: sha(`weather|${seed}`) };
     await this.game.storePlanet({ worldId, monthId, planet });
     if (world.data().activeMonthId < monthId) await ref.update({ activeMonthId: monthId });
     const closed = [];
