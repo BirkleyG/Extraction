@@ -20,6 +20,6 @@ An actual A2 owner projection was adapted and rendered in headless Chromium at 3
 
 ## Provisional decisions
 
-CEO has been asked to choose faster sandbox pacing and whether rare/mythic premiums remain unlimited. Pending answers, the newer fast sandbox branch is ported provisionally; the A2 finite-premium interpretation remains a proposal, not an approved amendment to Q-10. Ship price, surplus-worker/hardness interpretation and cross-owner fairness questions remain in Questions for the Boss.
+CEO approved the faster sandbox progression and prioritizing fun. The market answer is deterministic supply/demand using CES utility functions and bid offers. The current A2 fixed-tier premium and token bucket are temporary fixtures, not the approved market model or an approved amendment to Q-10. Ship price, surplus-worker/hardness interpretation and cross-owner fairness questions remain in Questions for the Boss.
 
 With the faster profile, the exact scripted engine earns 728,507 at hour one (old profile: 130,010). Full fluid/exact evidence is regenerated in `play/sim/`; fluid and discrete results differ substantially and are not full-month balance certification. More affordable refinery entry is intentional for this local playability experiment.
