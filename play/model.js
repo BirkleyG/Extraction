@@ -86,6 +86,8 @@ function addSurfaceUnits(production, oreId, units) {
 
 /** one second of digging with vein bookkeeping wrapped around the shared flow tick */
 function mineOneSecond(next) {
+  // Trusted snapshots already encode server-side veins. Only predict their visible production.
+  if (next.remote) { next.production = tickProductionSecond(next.production); return; }
   const production = next.production;
   let surfaceFree = production.surface.capacityUnits - production.surface.unitsByOre.reduce((sum, row) => sum + row.units, 0);
   const caps = new Map(); const plan = [];
@@ -104,6 +106,9 @@ function mineOneSecond(next) {
     const amount = shaft.workersAssigned > 0 && shaft.bufferUnits < shaft.bufferCapacityUnits ? Math.min(shaftRatePerMinute(shaft) / 60, shaft.bufferCapacityUnits - shaft.bufferUnits) : 0;
     plan.push({ shaftNumber: shaft.shaftNumber, amount, vein: activeVein ? activeVein.id : null });
   }
+  // Local veins are tracked by this wrapper, not the server's embedded-vein kernel.
+  // Pin its fallback ore to the locally chosen buffer ore before the shared tick.
+  for (const shaft of production.shafts) if (!shaft.vein) shaft.commonOreId = shaft.oreId;
   next.production = tickProductionSecond(production);
   for (const shaft of next.production.shafts) if (caps.has(shaft.shaftNumber)) shaft.bufferCapacityUnits = caps.get(shaft.shaftNumber);
   for (const item of plan) {
@@ -631,7 +636,7 @@ export function validateGameState(input) {
   destinationFor(input.selectedDestinationId);
   const production = createProductionState(input.production);
   if (production.shafts.some((shaft, index) => shaft.shaftNumber !== index + 1 || !ore(shaft.oreId))) fail('INVALID_SAVE', 'Shaft order or ore is invalid');
-  if (production.shafts.reduce((sum, shaft) => sum + shaft.workersAssigned, 0) !== input.workersHired || (!input.economyProfile && input.workersHired > habitatCapacity(input.upgrades.habitat))) fail('INVALID_SAVE', 'Worker assignments do not match the crew pool');
+  if ((input.remote ? production.shafts.reduce((sum, shaft) => sum + shaft.workersAssigned, 0) > input.workersHired : production.shafts.reduce((sum, shaft) => sum + shaft.workersAssigned, 0) !== input.workersHired) || (!input.economyProfile && input.workersHired > habitatCapacity(input.upgrades.habitat))) fail('INVALID_SAVE', 'Worker assignments do not match the crew pool');
   if (production.syntheticDownstreamDrain.unitsPerSecond !== 0 || production.syntheticDownstreamDrain.drainedByOre.length !== 0) fail('INVALID_SAVE', 'Synthetic drain must remain disabled in the playtest');
   if (!input.ship || number(input.ship.capacityUnits, 'ship capacity', Number.MIN_VALUE) <= 0 || number(input.ship.speedPerMinute, 'ship speed', Number.MIN_VALUE) <= 0 || number(input.ship.loadingUnitsPerMinute, 'loading rate', Number.MIN_VALUE) <= 0) fail('INVALID_SAVE');
   safeInt(input.ship.readyAtSecond, 'ship ready time');
@@ -647,7 +652,7 @@ export function validateGameState(input) {
   }
   const shipmentIds = new Set();
   for (const shipment of input.shipments) {
-    if (!shipment || typeof shipment.id !== 'string' || shipmentIds.has(shipment.id) || !ore(shipment.oreId) || !destinationFor(shipment.destinationId) || typeof shipment.state !== 'string') fail('INVALID_SAVE');
+    if (!shipment || typeof shipment.id !== 'string' || shipmentIds.has(shipment.id) || !ore(shipment.oreId) || !(input.remote && input.online?.offers?.some(row => row.id === shipment.destinationId) || destinationFor(shipment.destinationId)) || typeof shipment.state !== 'string') fail('INVALID_SAVE');
     shipmentIds.add(shipment.id);
     safeInt(shipment.payment, 'shipment payment');
     number(shipment.units, 'shipment units', Number.MIN_VALUE);

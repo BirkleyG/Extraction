@@ -111,7 +111,7 @@ test('HTTP game API with emulator-issued ID tokens end to end on Firestore', asy
   const worldId = await world([localId]);
   const game = new GameService(new FirestoreGameRepository(db), { npcBuyers: buyers });
   await game.storePlanet({ worldId, monthId, planet: generateWorld({ seed: `e2e-seed-${randomUUID()}`, monthId, players: 2 }) });
-  const server = createGameHttpServer({ auth: getAuth(app), game });
+  const server = createGameHttpServer({ auth: getAuth(app), game, clock: () => now.getTime() });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   try {
     const base = `http://127.0.0.1:${server.address().port}/v1/worlds/${worldId}`;

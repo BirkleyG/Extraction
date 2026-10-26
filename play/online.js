@@ -55,13 +55,17 @@ export function adapt(view) {
   const base = monthStartSec(view.monthId);
   const nowRel = Math.max(0, sc.nowSec - base);
   const prod = JSON.parse(JSON.stringify(sc.production));
-  for (const s of prod.shafts) s.oreId = mapOre(s.oreId);
+  for (const s of prod.shafts) {
+    s.oreId = mapOre(s.oreId);
+    if (s.commonOreId) s.commonOreId = mapOre(s.commonOreId);
+    if (s.vein) s.vein.oreId = mapOre(s.vein.oreId);
+  }
   for (const key of ['unitsByOre']) prod.surface[key] = mapRows(prod.surface[key]);
   prod.initialUnitsByOre = mapRows(prod.initialUnitsByOre);
   prod.cumulativeMinedByOre = mapRows(prod.cumulativeMinedByOre);
   prod.externalTransfersByOre = mapRows(prod.externalTransfersByOre);
   prod.syntheticDownstreamDrain.drainedByOre = mapRows(prod.syntheticDownstreamDrain.drainedByOre);
-  const commonOreId = mapOre(sc.commonOreId);
+  const commonOreId = mapOre(prod.shafts[0].commonOreId ?? sc.commonOreId);
   const ready = view.ship.readyInSeconds <= 0;
   const capacity = shipCapacityUnits(sc.levels.shipCapacity);
   // The hold is whatever the hauler would carry right now; show it aboard (crates on the pad) instead of in the yard.
@@ -93,7 +97,7 @@ export function adapt(view) {
     selectedDestinationId: policy.destinationId && DESTINATIONS.some((d) => d.id === policy.destinationId) ? policy.destinationId : DESTINATIONS[0].id,
     autoLaunch: policy.auto, shipments, shipmentStatusById: Object.fromEntries(shipments.map((x) => [x.id, x.arrivalAtSecond <= nowRel ? 'DELIVERED' : 'IN_TRANSIT'])),
     ledger: [], nextRecordId: 1, log: memo.log.slice(-80),
-    online: { version: view.version, monthId: view.monthId, monthEndsAtMs: view.monthEndsAtMs, serverNowMs: view.serverNowMs, receivedAtMs: Date.now(), autoInSeconds: view.ship.autoInSeconds, email: user?.email ?? user?.displayName ?? '', pinned: policy.destinationId },
+    online: { fleet: view.fleet, mine: view.mine, yard: view.yard, offers: view.offers, version: view.version, monthId: view.monthId, monthEndsAtMs: view.monthEndsAtMs, serverNowMs: view.serverNowMs, receivedAtMs: Date.now(), autoInSeconds: view.ship.autoInSeconds, email: user?.email ?? user?.displayName ?? '', pinned: policy.destinationId },
     notice: '',
   };
   return { state: validateGameState(state), planet, regionId: region.id, autoTakeoffs: view.autoTakeoffs ?? 0 };

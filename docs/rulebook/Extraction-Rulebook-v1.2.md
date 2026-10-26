@@ -842,6 +842,10 @@ The supplied costs 34/45/39 and growth 1.75 produced 22.6M at hour one and 4.09Q
 
 Reproducible scripts, complete tables, policy assumptions and exact-model evidence: [Sandbox economy evidence](../../play/sim/README.md). Finite storage, discrete shipments and rare ores make the exact engine different from the fluid approximation.
 
+### Ported fast sandbox profile C01-SANDBOX-02 · 26 October 2026 (provisional)
+
+The newer Claude sandbox branch uses next-level bases Pick 34, Lift 45, Hauler 39 and cost growth 1.75; the ×1.4 effects, depth/shaft curves and named tiers are unchanged. Ported this local profile while retaining industry, home safety, worker catch-up, checked accounting and existing saves. It supersedes the **local** C01-SANDBOX-01 prices; server prices/caps are unchanged. CEO pacing preference is pending, so this remains provisional. Exact scripted first-hour earnings are 728,507 versus the 100K benchmark; fluid evidence remains an approximation. No claim of full-month balance is made.
+
 ## 11 — Exploration, Scouting and Expansion
 
 **Status: consolidated revision 1.2.** Approved rules use the register in 00; C-numbered coefficients remain calibration work.
@@ -1708,6 +1712,12 @@ PR #16 is merged and publicly verified: refinery/stock/sale/contract, infantry a
 - New coefficients are C-02/C-03 provisional and listed in sections 03/05 above; none is certified balance. Arithmetic and unit tests do not certify economy balance.
 - Interpretations logged as questions rather than rules: Q-11 (ship price), Q-12 (worker surplus reading and unimplemented hardness gating), Q-13 (premium vs the Q-10 "unlimited buyer" ruling), Q-14 (dock/premium order dependence).
 - Evidence: A2 acceptance suite, environment and NPC-market unit suites, and Firestore emulator parity tests (premium last-coin and last-slot races, rejected-dispatch no-mutation, duplicate settlement). Release A is still not accepted; A3/A4 items remain open.
+
+### Claude branch integration checkpoint · 26 October 2026
+
+Combined the fenced durable event queue/worker with A2 fleet, pads, routing, seeded environment, veins and refinery premium/dock state. Preserved both acceptance suites and fixed the shared production kernel's incompatibility with local rare veins. Added backward-compatible online fleet controls and nested ore/destination projection handling; retained local industry and save/runtime safety while porting the newer fast sandbox prices. Existing source branches remain traceable.
+
+Evidence: 70 local tests, 155 backend tests, 14 Auth/Firestore emulator tests and an A2 projection browser bridge pass. [Branch integration details](../development/Branch-Integration.md). The owner-v2 backend requires fresh staging/month-boundary saves; this source integration does not deploy or migrate the live runtime. Premium fairness and Q-10 interpretation remain pending; Release A is not yet accepted.
 
 ## 23 — Advanced Combat and AI Military Command
 

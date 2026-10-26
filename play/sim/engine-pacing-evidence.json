@@ -2,11 +2,11 @@
   "scope": "Exact one-second sandbox, seeded default site, greedy lookahead; no grants. Fluid study is an approximation, not certification.",
   "tune": {
     "growth": 1.4,
-    "costGrowth": 1.8,
-    "pickCost": 680,
+    "costGrowth": 1.75,
+    "pickCost": 34,
     "lift": 100,
-    "liftCost": 900,
-    "haulCost": 780,
+    "liftCost": 45,
+    "haulCost": 39,
     "depth": 2.05,
     "shaftBase": 190,
     "shaftGrowth": 4.1,
@@ -21,62 +21,62 @@
     {
       "second": 1,
       "earned": 100,
-      "coins": 100,
+      "coins": 27,
       "departures": 1,
-      "pick": 0,
+      "pick": 1,
       "lift": 0,
-      "hauler": 0,
+      "hauler": 1,
       "shafts": 1
     },
     {
       "second": 10,
       "earned": 100,
-      "coins": 100,
+      "coins": 27,
       "departures": 1,
-      "pick": 0,
+      "pick": 1,
       "lift": 0,
-      "hauler": 0,
+      "hauler": 1,
       "shafts": 1
     },
     {
       "second": 60,
-      "earned": 500,
-      "coins": 310,
-      "departures": 5,
-      "pick": 0,
-      "lift": 0,
-      "hauler": 0,
-      "shafts": 2
+      "earned": 1180,
+      "coins": 103,
+      "departures": 6,
+      "pick": 4,
+      "lift": 3,
+      "hauler": 4,
+      "shafts": 1
     },
     {
       "second": 300,
-      "earned": 2820,
-      "coins": 391,
-      "departures": 25,
-      "pick": 1,
-      "lift": 0,
-      "hauler": 1,
-      "shafts": 3
+      "earned": 28810,
+      "coins": 584,
+      "departures": 29,
+      "pick": 9,
+      "lift": 9,
+      "hauler": 9,
+      "shafts": 4
     },
     {
       "second": 900,
-      "earned": 11440,
-      "coins": 1660,
-      "departures": 75,
-      "pick": 3,
-      "lift": 2,
-      "hauler": 2,
-      "shafts": 3
+      "earned": 410707,
+      "coins": 7370,
+      "departures": 95,
+      "pick": 14,
+      "lift": 13,
+      "hauler": 14,
+      "shafts": 6
     },
     {
       "second": 3600,
-      "earned": 130010,
-      "coins": 15366,
-      "departures": 324,
-      "pick": 6,
-      "lift": 6,
-      "hauler": 6,
-      "shafts": 5
+      "earned": 728507,
+      "coins": 75760,
+      "departures": 116,
+      "pick": 15,
+      "lift": 14,
+      "hauler": 15,
+      "shafts": 6
     }
   ]
 }

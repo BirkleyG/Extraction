@@ -93,7 +93,7 @@ export function projectOwner({ doc, spendable, escrow, version, market, nowMs, a
     purchasable: PURCHASABLE_LINES,
     // Everything the pixel scene needs to draw this owner's mine. It is the owner's own state; there is no hidden world data in it.
     scene: {
-      cosmeticSeed, slot: doc.slot ?? 0, commonOreId: doc.production.shafts[0].oreId, simSecond: doc.simSecond, nowSec,
+      cosmeticSeed, slot: doc.slot ?? 0, commonOreId: doc.production.shafts[0].commonOreId ?? doc.production.shafts[0].oreId, simSecond: doc.simSecond, nowSec,
       production: doc.production, levels: doc.levels, workersHired: doc.workersHired, shipments: doc.shipments.slice(-20), policy,
       shipReadyAtSecond: first.readyAtSecond, totalExternalEarnings: doc.totalExternalEarnings,
     },
