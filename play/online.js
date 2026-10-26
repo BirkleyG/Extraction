@@ -82,7 +82,7 @@ export function adapt(view) {
   prod.shafts.forEach((s, i) => { memo.mined[s.shaftNumber] = Math.max(memo.mined[s.shaftNumber] ?? 0, totalMined * weight[i] / wsum); });
   const policy = sc.policy;
   const shipments = sc.shipments.map((x) => ({
-    id: x.id, oreId: mapOre(x.oreId), units: x.units, unitPrice: x.unitPrice, payment: x.payment, destinationId: x.destinationId,
+    id: x.id, shipId: x.shipId, cargo: (x.cargo ?? []).map(row => ({ ...row, oreId: mapOre(row.oreId) })), oreId: mapOre(x.oreId), units: x.units, unitPrice: x.unitPrice, payment: x.payment, destinationId: x.destinationId,
     departureAtSecond: Math.max(0, x.departureSecond - base), arrivalAtSecond: Math.max(0, x.arrivalSecond - base), shipReadyAtSecond: Math.max(0, x.departureSecond - base) + x.tripSeconds,
     tripSeconds: x.tripSeconds, state: 'PAID_AT_DEPARTURE',
   }));
