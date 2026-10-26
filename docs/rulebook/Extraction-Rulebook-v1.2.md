@@ -696,6 +696,12 @@ The local industry's published initial refined quotes are 120/138/126/108/180/27
 
 **This is a responsive local market experiment, not the accepted nested CES solver, a shared multiplayer economy or a disclosure of hidden global demand.** The UI shows published offers only. Canonical Release B market requirements and section 21 certification remain binding.
 
+### CEO market direction confirmed · 26 October 2026
+
+**Q-13: deterministic supply and demand using CES utility functions and bid offers.** Section 08’s nested CES demand and deterministic market clearing are the required economic model. Published bids reflect buyer requirements, substitution, inventories, budgets and delivered costs; raw-ore refinery bids derive from refined output economics under section 06. Geological rarity is not an automatic fixed price multiplier.
+
+The A2 fixed-tier premium/token-bucket implementation and the local sandbox’s hourly pressure rule remain temporary fixtures, not accepted substitutes for CES or approved pricing laws. The earlier NPC liquidity guarantee must be reconciled explicitly with this model; this answer does not approve either an unlimited fixed premium or the current finite-premium formula. Preserve checked settlement and last-valid equilibrium fallback while implementing and testing the actual model.
+
 ## 09 — Multiplayer Trading and AI Businesses
 
 **Status: consolidated revision 1.2.** Approved rules use the register in 00; C-numbered coefficients remain calibration work.
@@ -844,7 +850,7 @@ Reproducible scripts, complete tables, policy assumptions and exact-model eviden
 
 ### Ported fast sandbox profile C01-SANDBOX-02 · 26 October 2026 (provisional)
 
-The newer Claude sandbox branch uses next-level bases Pick 34, Lift 45, Hauler 39 and cost growth 1.75; the ×1.4 effects, depth/shaft curves and named tiers are unchanged. Ported this local profile while retaining industry, home safety, worker catch-up, checked accounting and existing saves. It supersedes the **local** C01-SANDBOX-01 prices; server prices/caps are unchanged. CEO pacing preference is pending, so this remains provisional. Exact scripted first-hour earnings are 728,507 versus the 100K benchmark; fluid evidence remains an approximation. No claim of full-month balance is made.
+The newer Claude sandbox branch uses next-level bases Pick 34, Lift 45, Hauler 39 and cost growth 1.75; the ×1.4 effects, depth/shaft curves and named tiers are unchanged. Ported this local profile while retaining industry, home safety, worker catch-up, checked accounting and existing saves. It supersedes the **local** C01-SANDBOX-01 prices; server prices/caps are unchanged. CEO approved this faster progression and prioritizing fun on 26 October 2026. Coefficients remain tunable, not balance-certified. Exact scripted first-hour earnings are 728,507 versus the 100K benchmark; fluid evidence remains an approximation. No claim of full-month balance is made.
 
 ## 11 — Exploration, Scouting and Expansion
 
@@ -1718,6 +1724,10 @@ PR #16 is merged and publicly verified: refinery/stock/sale/contract, infantry a
 Combined the fenced durable event queue/worker with A2 fleet, pads, routing, seeded environment, veins and refinery premium/dock state. Preserved both acceptance suites and fixed the shared production kernel's incompatibility with local rare veins. Added backward-compatible online fleet controls and nested ore/destination projection handling; retained local industry and save/runtime safety while porting the newer fast sandbox prices. Existing source branches remain traceable.
 
 Evidence: 70 local tests, 155 backend tests, 14 Auth/Firestore emulator tests and an A2 projection browser bridge pass. [Branch integration details](../development/Branch-Integration.md). The owner-v2 backend requires fresh staging/month-boundary saves; this source integration does not deploy or migrate the live runtime. Premium fairness and Q-10 interpretation remain pending; Release A is not yet accepted.
+
+### CEO pacing and CES decision record · 26 October 2026
+
+Confirmed the already-published fast sandbox progression (34/45/39 base upgrade prices, growth 1.75). Recorded the CEO’s CES supply/demand and bid-offer requirement in section 08 and Q-13. Existing premium and hourly-pressure formulas remain fixtures until replaced by the required economic model. No runtime pricing, accounting or deployment changes are made by this decision-record batch.
 
 ## 23 — Advanced Combat and AI Military Command
 

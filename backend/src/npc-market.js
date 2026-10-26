@@ -1,3 +1,6 @@
+// CEO direction, 26 October 2026: replace this A2 fixture with deterministic CES supply/demand
+// and published bids (rulebook 08, Q-13). Fixed tier bonuses/token buckets are not the approved
+// economic model. Retained unchanged here for compatibility while CES is implemented and tested.
 // Computer-run refineries with a finite rare/mythic PREMIUM (sections 02/05, Q-10). The BASE bid is unlimited per Q-10:
 // payment always includes units x bidPerUnit. Only the premium on rare/mythic ore is market-driven and exhaustible, so it
 // can never become unlimited premium demand. Pure functions only: no I/O, no clock, no Math.random. Coin is whole integers.
