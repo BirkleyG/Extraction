@@ -1,0 +1,59 @@
+name: Deploy backend
+
+# Redeploys the Cloud Run game server when backend code lands on main.
+# Env vars, secrets and the scheduler job are created once by backend/deploy.sh
+# and persist across revisions, so this only ships new code.
+# One-time Google Cloud setup: backend/setup-github-deploy.sh
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/deploy-backend.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+env:
+  PROJECT: extraction-tycoon
+  REGION: us-east1
+  SERVICE: extraction-game
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.19.0'
+      - name: Install and test before shipping
+        working-directory: backend
+        run: |
+          npm ci
+          npm test
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Deploy to Cloud Run
+        working-directory: backend
+        run: |
+          gcloud run deploy "$SERVICE" --quiet \
+            --project "$PROJECT" --region "$REGION" --source .
+      - name: Health check
+        run: |
+          URL="$(gcloud run services describe "$SERVICE" --project "$PROJECT" --region "$REGION" --format='value(status.url)')"
+          CODE="$(curl -s -o /dev/null -w '%{http_code}' "$URL/v1/worlds/main/state" || true)"
+          echo "GET /state without a token returned HTTP $CODE (401 = up and refusing strangers)"
+          [ "$CODE" = "401" ]
