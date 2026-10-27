@@ -81,3 +81,7 @@ The CEO is available for developmental questions again. Asked in chat: retain th
 - **Q-13 answered:** deterministic supply and demand using CES utility functions and bid offers. Implement section 08’s nested materials/numeraire, uses and ore-substitution demand; derive published buyer offers from demand, inventories, budgets, supply and delivered costs. Refineries derive raw bids from refined output economics under section 06; raw ore is not sold directly to galactic end buyers.
 - The current A2 tier-reference multiplier and premium token bucket, and the sandbox’s bounded hourly pressure formula, are implementation fixtures. Neither is accepted as the CES economy. Resolve the prior liquidity guarantee within the economic implementation without silently treating it as approval of unlimited premium demand or the current arbitrary premium schedule.
 - These answers do not authorize a paid deployment, change settlement accounting or certify Release A/B.
+
+## One online game · 27 October 2026
+
+**CEO direction:** one version at the root, online, with the legacy feel and Play features. This supersedes prior instructions to offer separate local/online/prototype games. Preserve old records for recovery; use one shared gameplay engine and trusted online save. Root cutover is gated on successful canonical backend deployment. The deployment workflow currently lacks the two Workload Identity repository variables; setup status was requested while client testing continues.

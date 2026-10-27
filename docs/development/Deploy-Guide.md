@@ -1,17 +1,31 @@
-# Deploying the Extraction online server (Firebase project `extraction-tycoon`)
+# Deploy the one online game
 
-Prerequisites already done: project created, Blaze + $2 budget alert, Google and Email/Password sign-in enabled, Firestore (us-east1, production mode) with `backend/firestore.rules` published, web app registered, `birkleyg.github.io` authorized.
+Firebase/Cloud Run project: `extraction-tycoon`, region `us-east1`. Existing policy: private friends test, up to ten players, $2/month hosting budget alert. The root URL is **https://birkleyg.github.io/Extraction/**. Old game paths are redirects, not alternatives.
 
-1. Open https://shell.cloud.google.com with the `extraction-tycoon` project selected.
-2. `git clone https://github.com/BirkleyG/Extraction.git && cd Extraction && git checkout claude/trusting-hopper-b4kqj9 && cd backend` (use `main` once merged).
-3. `./deploy.sh` — it enables APIs, creates a least-privilege service account, creates three secrets (world seed and internal token are random; it asks you for the **invite code** to hand to friends), deploys to Cloud Run (`us-east1`, min 0 / max 2 instances), and creates an hourly Cloud Scheduler job.
-4. Copy the printed service URL into `online/config.js` (`API_BASE`) and commit; Pages serves `/online/` from `main`.
-5. Open `https://birkleyg.github.io/Extraction/online/`, sign in, enter the invite code, and play. The first join creates the world `main` and the month's planet.
-6. After a day, check cost: Billing → Reports, Firestore → Usage, Cloud Run → Metrics.
+## One-time keyless deployment setup
 
-Cost guards: min instances 0, max instances 2, 10-member cap, state polls every 20 s only while the tab is visible. Budget alerts do not stop spending; if reads climb, raise the poll interval in `online/app.js`.
+The existing service/secrets are already provisioned. GitHub Actions needs permission to redeploy it. Run in Google Cloud Shell with the intended project selected:
 
-## Playing online
-The good-graphics game at `/play/` has an **online mode**: press **Play online ↗** in the header (or open `/play/?mode=online`). The offline sandbox stays the default; the choice is remembered in the browser, and the header button switches back. `/online/` just redirects to `/play/?mode=online`.
+```sh
+curl -fsSL https://raw.githubusercontent.com/BirkleyG/Extraction/main/backend/setup-github-deploy.sh -o /tmp/extraction-deploy-setup.sh
+bash /tmp/extraction-deploy-setup.sh
+```
 
-Host UID (recorded for future admin-only actions; none exist yet): `Dx84cY8Kz5hFImL0thIhbMc544C2`.
+The script creates a deployer identity restricted to this repository's `main` branch and prints two non-key configuration values. Add them under **repository Settings → Secrets and variables → Actions → Variables**:
+
+- `GCP_WORKLOAD_IDENTITY_PROVIDER`
+- `GCP_DEPLOY_SERVICE_ACCOUNT`
+
+Never paste cloud private keys or AI keys into the repository or chat. Rerun the failed **Deploy backend** workflow after adding the variables. A backend push to `main` normally deploys automatically after unit and real emulator tests. The workflow preserves existing environment/secrets and min/max instances and sets a 120-second request timeout for bounded recovery.
+
+## Root cutover
+
+Deploy the shared-engine canonical endpoint before publishing the root client. The existing service URL remains in `online/config.js`; test `GET /v1/worlds/main/game` without a token returns 401, then verify sign-in/invite/game commands using the authenticated emulator/browser acceptance path. The canonical data namespace preserves older A2 records and device saves; those wallets are not imported. Publish root only when the backend is reachable. No local-only fallback is permitted.
+
+Google and email/password sign-in and `birkleyg.github.io` must remain authorized in Firebase. Membership/invite handling remains server-verified. Firestore denies direct client access. Month closure archives, finalizes paid deliveries, burns old coin/escrow and starts the new month using server UTC.
+
+## Existing resources and costs
+
+The original `backend/deploy.sh` remains a bootstrap/recovery tool for the already chosen project; it is not needed on every release. It can enable APIs/create secrets and should not be used casually to change an existing deployment. Budget alerts do not hard-cap spend. Preserve min instances 0/max 2, 30-second visible-tab reconciliation, one hourly scheduler job, bounded checkpoints and ledger batch writes; measure actual usage before broader launch. No paid AI is invoked automatically.
+
+For historical host/admin identity and earlier deployment decisions, use git history and Questions for the Boss; do not infer administrator rights from URL parameters.

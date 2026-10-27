@@ -52,7 +52,7 @@ export function renderIndustry(state, helpers = {}) {
   const name = (id) => escape(names.get(id) || id);
   const ind = state.industry;
   if (!ind)
-    return '<h2>Industry</h2><div class="note">Industry is available in the local sandbox. Start a local mine to build your supply chain.</div>';
+    return '<h2>Industry</h2><div class="note">Syncing your refinery and station…</div>';
   const facilityName = (id, fallback) =>
     escape(
       state.maker?.content?.facilities?.find((facility) => facility.id === id)
@@ -80,14 +80,14 @@ export function renderIndustry(state, helpers = {}) {
     return `<div class="row"><div><div class="t">${escape(label)} <span class="own">Lv ${whole(asset.levels[line])}</span></div><div class="d">${escape(effect)}</div></div>${button("upgrade", Number.isSafeInteger(cost) ? `${escape(fmt(cost))} ◉` : "At cap", { facility, line }, !Number.isSafeInteger(cost) || cost < 1 || state.coins < cost)}</div>`;
   };
   let html =
-    '<h2>Industry</h2><p class="lede">Mine → refinery → station → buyers. Build a business around the ore you already produce.</p><div class="note">Single-player · local sandbox. Construction, offers and transport are provisional playtest fixtures. Only published offers are shown.</div>';
+    '<h2>Industry</h2><p class="lede">Mine → refinery → station → buyers. Build a business around the ore you already produce.</p><div class="note">Your refinery and station are saved online. Choose where your goods go; only published offers are shown.</div>';
   html += `<h3>${facilityName("refinery", "Your refinery")}</h3>`;
   if (!r)
     html += `<div class="row"><div><div class="t">Build a refinery</div><div class="d">Convert your raw ore into refined goods. Base yield: 70%.</div></div>${button("buildRefinery", `${escape(fmt(INDUSTRY_COSTS.refinery))} ◉`, {}, state.coins < INDUSTRY_COSTS.refinery)}</div>`;
   else {
     const input = total(r.input);
     const output = total(r.output);
-    html += `<div class="devbox"><b>Refining line</b><p class="d">${escape(fmt(rs.speedPerMinute))} raw u/min per ore · ${escape(fmt(rs.yield * 100))}% yield. ${output >= rs.outputCapacity ? "Output full — sell or transfer goods." : input ? "Processing stored ore." : "Waiting for raw ore."}</p>${meter(input, rs.inputCapacity, "Raw input", fmt)}${meter(output, rs.outputCapacity, "Refined output", fmt)}<div class="btnrow">${button("setAutoRoute", ind.autoRoute ? "Auto-route: ON" : "Auto-route: OFF", { enabled: !ind.autoRoute }, false, ind.autoRoute ? "ok" : "ghost")}</div><p class="d">Auto-route sends available yard ore to your refinery. Transfers arrive immediately in this local preview and earn no coin.</p></div>`;
+    html += `<div class="devbox"><b>Refining line</b><p class="d">${escape(fmt(rs.speedPerMinute))} raw u/min per ore · ${escape(fmt(rs.yield * 100))}% yield. ${output >= rs.outputCapacity ? "Output full — sell or transfer goods." : input ? "Processing stored ore." : "Waiting for raw ore."}</p>${meter(input, rs.inputCapacity, "Raw input", fmt)}${meter(output, rs.outputCapacity, "Refined output", fmt)}<div class="btnrow">${button("setAutoRoute", ind.autoRoute ? "Auto-route: ON" : "Auto-route: OFF", { enabled: !ind.autoRoute }, false, ind.autoRoute ? "ok" : "ghost")}</div><p class="d">Auto-route sends available yard ore to your refinery. Transfers arrive immediately and earn no coin.</p></div>`;
     const outputPolicy = ind.outputPolicy ?? "hold";
     html += `<div class="devbox"><b>Refined output policy</b><div class="btnrow">${[
       ["hold", "Hold / manual"],
@@ -110,7 +110,7 @@ export function renderIndustry(state, helpers = {}) {
       '<div class="rows">' +
       INDUSTRY_ORES.map(
         ({ id }) =>
-          `<div class="devbox"><b>${name(id)}</b><div class="d">Yard: ${escape(fmt(yard(state, id)))} u · input: ${escape(fmt(whole(r.input[id])))} u · refined: ${escape(fmt(whole(r.output[id])))} u</div><div class="d">Send raw ore to refinery</div>${qtyButtons("importRaw", id, yard(state, id), rs.inputCapacity - input)}<div class="d">Sell refined to NPC station · ${escape(fmt(npcRefinedPrice(ind, id)))} ◉/u · paid immediately in this local preview</div>${qtyButtons("sellRefinedNpc", id, r.output[id])}${s ? `<div class="d">Send refined to your station</div>${qtyButtons("transferToStation", id, r.output[id], ss.siloCapacity - whole(s.stock[id]))}` : ""}</div>`,
+          `<div class="devbox"><b>${name(id)}</b><div class="d">Yard: ${escape(fmt(yard(state, id)))} u · input: ${escape(fmt(whole(r.input[id])))} u · refined: ${escape(fmt(whole(r.output[id])))} u</div><div class="d">Send raw ore to refinery</div>${qtyButtons("importRaw", id, yard(state, id), rs.inputCapacity - input)}<div class="d">Sell refined to NPC station · ${escape(fmt(npcRefinedPrice(ind, id)))} ◉/u · paid immediately</div>${qtyButtons("sellRefinedNpc", id, r.output[id])}${s ? `<div class="d">Send refined to your station</div>${qtyButtons("transferToStation", id, r.output[id], ss.siloCapacity - whole(s.stock[id]))}` : ""}</div>`,
       ).join("") +
       "</div>";
     html +=
@@ -146,7 +146,7 @@ export function renderIndustry(state, helpers = {}) {
   if (!s)
     html += `<div class="row"><div><div class="t">Build a space station</div><div class="d">Stock refined goods and accept published buyer contracts.</div></div>${button("buildStation", `${escape(fmt(INDUSTRY_COSTS.station))} ◉`, {}, state.coins < INDUSTRY_COSTS.station)}</div>`;
   else {
-    html += `<div class="devbox"><b>Station silos</b><p class="d">${escape(fmt(ss.siloCapacity))} u capacity per product · transfers arrive immediately in this local preview.</p><div class="chips">${INDUSTRY_ORES.map(({ id }) => `<span class="chip">${name(id)} ${escape(fmt(whole(s.stock[id])))} u</span>`).join("")}</div></div><div class="rows">${upgrade("station", "silo", "Silo storage", `${fmt(ss.siloCapacity)} refined units`)}</div>`;
+    html += `<div class="devbox"><b>Station silos</b><p class="d">${escape(fmt(ss.siloCapacity))} u capacity per product · transfers arrive immediately.</p><div class="chips">${INDUSTRY_ORES.map(({ id }) => `<span class="chip">${name(id)} ${escape(fmt(whole(s.stock[id])))} u</span>`).join("")}</div></div><div class="rows">${upgrade("station", "silo", "Silo storage", `${fmt(ss.siloCapacity)} refined units`)}</div>`;
   }
   const offers = (ind.market?.offers || []).filter(
     (offer) => offer.expiresAt > ind.elapsedSeconds,

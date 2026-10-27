@@ -22,8 +22,10 @@
 - Run relevant invariant/security/replay tests as those systems are added. Syntax checks alone are not release acceptance.
 - Push feature branches and open reviewable pull requests. Never label incomplete milestones as released or claim arithmetic checks certify balance.
 
-## Playable publishing
+## One online game and publishing
 
-- GitHub Pages publishes `main`, root. Development/specification branch merges alone do not update the live game.
-- Keep `/play/` runnable as the local browser test harness and preserve `/prototype/` with legacy save keys. State clearly that the sandbox is single-player/local and not the authoritative multiplayer release.
-- Validate the actual browser loop and publish reviewed playable changes when the user asks to play; do not deliver only backend PRs in response.
+- GitHub Pages publishes `main`, root. The product runs at `/`; `/play/`, `/online/` and `/prototype/` redirect there. Do not reintroduce mode/version selectors or a browser-only economy.
+- Preserve the original pixel presentation. Shared pure gameplay lives in `backend/src/gameplay/`; browser import wrappers re-export it. Trusted canonical commands persist progress; local simulation is prediction, never an uploaded wallet.
+- Preserve older save keys and server namespaces for recovery without silently migrating untrusted money. Historical prototype source is an inert archive, not another playable entry point.
+- Deploy and verify the canonical backend before publishing a root client that requires it. Never hide missing backend support behind an offline fallback. The existing private Firebase/Cloud Run budget remains binding.
+- Validate authenticated browser play, industry/colony/Maker persistence, old-link redirects, connection failure and mobile layout. Push reviewable PRs; incomplete CES/combat/ranking gates remain explicit.
