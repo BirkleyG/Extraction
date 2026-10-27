@@ -13,7 +13,7 @@ function statusFor(code) {
   if (code === 'UNAUTHENTICATED') return 401;
   if (code === 'FORBIDDEN') return 403;
   if (['NOT_FOUND', 'WORLD_NOT_FOUND', 'NOT_ENROLLED'].includes(code)) return 404;
-  if (['STALE_MONTH', 'MONTH_CLOSED', 'STALE_VERSION', 'IDEMPOTENCY_CONFLICT', 'INSUFFICIENT_FUNDS', 'SHIP_BUSY', 'WEATHER_GROUNDED', 'FLEET_FULL', 'NO_CARGO', 'BUYER_FULL', 'BUYER_OUT_OF_FUNDS', 'INSUFFICIENT_STOCK', 'EXCEEDS_SHIP_CAPACITY', 'WORLD_CLOSED', 'AT_CAP', 'ALREADY_ENROLLED', 'NO_HABITAT_CAPACITY', 'NO_SHAFT_CAPACITY', 'CATCHING_UP', 'WORLD_FULL', 'JOIN_DISABLED'].includes(code)) return 409;
+  if (['STALE_MONTH', 'MONTH_CLOSED', 'STALE_VERSION', 'IDEMPOTENCY_CONFLICT', 'INSUFFICIENT_FUNDS', 'SHIP_BUSY', 'WEATHER_GROUNDED', 'FLEET_FULL', 'NO_CARGO', 'BUYER_FULL', 'BUYER_OUT_OF_FUNDS', 'INSUFFICIENT_STOCK', 'EXCEEDS_SHIP_CAPACITY', 'WORLD_CLOSED', 'AT_CAP', 'ALREADY_ENROLLED', 'NO_HABITAT_CAPACITY', 'NO_SHAFT_CAPACITY', 'CATCHING_UP', 'WORLD_FULL', 'JOIN_DISABLED', 'NOT_ENOUGH_STOCK', 'BALANCE_LIMIT'].includes(code)) return 409;
   if (['METHOD_NOT_ALLOWED'].includes(code)) return 405;
   if (code === 'BODY_TOO_LARGE') return 413;
   if (['INVALID_COMMAND', 'INVALID_AMOUNT', 'INVALID_VERSION', 'INVALID_WORLD', 'INJECTED_FIELD', 'INVALID_PATH', 'UNKNOWN_UPGRADE', 'INVALID_MODE', 'INVALID_COUNT', 'INVALID_LEVEL', 'INVALID_SHAFT', 'INVALID_UNITS', 'UNKNOWN_DESTINATION', 'UNKNOWN_SHIP', 'UNKNOWN_SHIP_CLASS', 'INVALID_PAD', 'UNKNOWN_SHAFT', 'INVALID_FUNDS'].includes(code)) return 400;
@@ -41,7 +41,7 @@ async function uidOf(req, auth) {
   } catch { throw new LedgerError('UNAUTHENTICATED'); }
 }
 
-export function createGameHttpServer({ auth, game, clock = Date.now, allowOrigin = null, admin = null, internalToken = null }) {
+export function createGameHttpServer({ auth, game, clock = Date.now, allowOrigin = null, admin = null, internalToken = null, canonical = null }) {
   if (!auth?.verifyIdToken || !game) throw new TypeError('Verified Firebase Auth and a GameService are required');
   return createServer(async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
@@ -51,6 +51,7 @@ export function createGameHttpServer({ auth, game, clock = Date.now, allowOrigin
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     }
     if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+    let canonicalRequest = false;
     try {
       const url = new URL(req.url, 'http://localhost');
       if (url.search || url.hash) throw new LedgerError('INVALID_PATH');
@@ -62,6 +63,22 @@ export function createGameHttpServer({ auth, game, clock = Date.now, allowOrigin
         if (typeof body.worldId !== 'string' || !/^[A-Za-z0-9_-]{1,160}$/.test(body.worldId)) throw new LedgerError('INVALID_WORLD');
         const out = await admin.tick({ worldId: body.worldId, nowMs: clock() });
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(out)); return;
+      }
+      const canonicalMatch = /^\/v1\/worlds\/([A-Za-z0-9_-]{1,160})\/game$/.exec(url.pathname);
+      if (canonicalMatch) {
+        canonicalRequest = true;
+        const uid = await uidOf(req, auth);
+        if (!canonical) throw new LedgerError('NOT_FOUND');
+        const context = { worldId: canonicalMatch[1], uid, nowMs: clock() };
+        let result;
+        if (req.method === 'GET') result = await canonical.state(context);
+        else if (req.method === 'POST') {
+          const command = await readJson(req);
+          if (Object.keys(command).some(key => !['requestId','expectedVersion','kind','payload'].includes(key))) throw new LedgerError('INJECTED_FIELD');
+          result = await canonical.command({ ...command, ...context });
+        } else throw new LedgerError('METHOD_NOT_ALLOWED');
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify(result)); return;
       }
       const match = /^\/v1\/worlds\/([A-Za-z0-9_-]{1,160})\/(state|join|commands\/([A-Za-z]+))$/.exec(url.pathname);
       if (!match) throw new LedgerError('NOT_FOUND');
@@ -91,10 +108,10 @@ export function createGameHttpServer({ auth, game, clock = Date.now, allowOrigin
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify(result));
     } catch (error) {
-      const code = error instanceof LedgerError || error instanceof UpgradeError ? error.code : 'INTERNAL_ERROR';
+      const code = error instanceof LedgerError || error instanceof UpgradeError || canonicalRequest && typeof error.code === 'string' ? error.code : 'INTERNAL_ERROR';
       const status = statusFor(code);
       res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ error: status === 500 ? 'INTERNAL_ERROR' : code }));
+      res.end(JSON.stringify({ error: status === 500 ? 'INTERNAL_ERROR' : code, ...(canonicalRequest && status === 409 && error.snapshot ? { snapshot: error.snapshot } : {}) }));
     }
   });
 }

@@ -1,3 +1,5 @@
+import { createCanonicalService } from './canonical-game.js';
+import { FirestoreCanonicalRepository } from './canonical-repository.js';
 import { applicationDefault, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
@@ -14,23 +16,25 @@ import { createHash } from 'node:crypto';
 
 const monthOf = (ms) => `${new Date(ms).getUTCFullYear()}-${String(new Date(ms).getUTCMonth() + 1).padStart(2, '0')}`;
 
-export function buildGameServer(env = process.env) {
+export function buildGameServer(env = process.env, { clock = Date.now } = {}) {
   const runtime = validateRuntimeEnvironment(env);
   const app = initializeApp({ projectId: runtime.projectId, ...(runtime.emulator ? {} : { credential: applicationDefault() }) }, `extraction-game-${runtime.projectId}`);
   const firestore = getFirestore(app);
   const repository = new FirestoreGameRepository(firestore);
   const game = new GameService(repository, { npcBuyers: DEFAULT_NPC_BUYERS });
+  const canonicalRepository = new FirestoreCanonicalRepository(firestore);
+  const canonical = createCanonicalService({ repository: canonicalRepository, clock, seedSecret: env.WORLD_SEED_SECRET ?? '' });
   // Handlers are registered here as event types are migrated onto the durable queue (none yet; an empty queue costs reads only).
   const eventWorker = env.WORLD_SEED_SECRET ? new EventWorker({
     queue: new FirestoreEventQueue(firestore), handlers: {}, workerId: `tick-${process.env.K_REVISION || 'local'}`,
     seedFor: ({ worldId, monthId }) => createHash('sha256').update(`${env.WORLD_SEED_SECRET}|events|${worldId}|${monthId}`).digest('hex'),
   }) : null;
-  const admin = env.WORLD_SEED_SECRET ? new WorldAdmin({ eventWorker,
+  const admin = env.WORLD_SEED_SECRET ? new WorldAdmin({ eventWorker, canonical, canonicalRepository,
     firestore, game, repository, inviteCode: env.INVITE_CODE || null, seedSecret: env.WORLD_SEED_SECRET,
     maxMembers: Number(env.MAX_MEMBERS || 10), players: Number(env.WORLD_PLAYERS || 10),
   }) : null;
-  const server = createGameHttpServer({ auth: getAuth(app), game, admin, internalToken: env.INTERNAL_TOKEN || null, allowOrigin: env.ALLOW_ORIGIN || null });
-  return { server, game, firestore, admin };
+  const server = createGameHttpServer({ auth: getAuth(app), clock, game, canonical, admin, internalToken: env.INTERNAL_TOKEN || null, allowOrigin: env.ALLOW_ORIGIN || null });
+  return { server, game, canonical, canonicalRepository, firestore, admin };
 }
 
 /** Idempotent month setup for a world: generated planet (server-only) and NPC buyer budgets. */

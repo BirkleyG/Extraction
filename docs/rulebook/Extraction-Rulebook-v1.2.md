@@ -1522,6 +1522,12 @@ Accessibility and devices
 - First-session guidance is dismissible; reduced-motion and sound controls remain available. Desktop and 320–390px phone-width layouts must remain usable.
 - For new local mines, retain the latest 64 ledger details and 32 shipment details plus any active commitments. Retired rows enter explicit source/sink and paid-ore aggregate archives shown in Records; totals, coin and inventory do not change. Online and original-profile histories are unchanged. This bounds exact catch-up work without introducing a different offline economy.
 
+### One online game at the root · 27 October 2026
+
+**CEO direction supersedes the earlier separate-version publishing instructions.** Extraction Tycoon has one product entry point at `/`, uses online saves, retains the original pixel interface and incorporates the newer mine/industry/colony/Maker features. `/play/`, `/online/` and `/prototype/` are compatibility redirects, not alternative games. Preserve historical source and existing saves for recovery; do not offer a local wallet as an online account or silently import its money.
+
+The browser and trusted server run one shared pure engine. The browser predicts for responsiveness; authenticated semantic commands and server time determine durable progress. Reconcile roughly every 30 seconds and after commands/returning. Refineries, station contracts, safety and saved Maker presentation belong to this same game. There is no mode selector, browser-only fallback, public test grant, fast-forward or local reset in the product. A lost connection must be visible.
+
 ## 21 — Testing, Validation and Acceptance Criteria
 
 **Status: consolidated revision 1.2.** Approved rules use the register in 00; C-numbered coefficients remain calibration work.
@@ -1728,6 +1734,12 @@ Evidence: 70 local tests, 155 backend tests, 14 Auth/Firestore emulator tests an
 ### CEO pacing and CES decision record · 26 October 2026
 
 Confirmed the already-published fast sandbox progression (34/45/39 base upgrade prices, growth 1.75). Recorded the CEO’s CES supply/demand and bid-offer requirement in section 08 and Q-13. Existing premium and hourly-pressure formulas remain fixtures until replaced by the required economic model. No runtime pricing, accounting or deployment changes are made by this decision-record batch.
+
+### Single-game rollout · 27 October 2026
+
+Added a canonical authenticated service/repository over the same shared gameplay modules as the browser, preserving the fast progression and current industry/colony features. Immutable logical ledger entries commit as hashed checkpoint batches; duplicate requests replay receipts, clock/coin injection is rejected, and owner month closure snapshots/finalizes/burns/resets exactly once. Saved Maker prose is validated against recorded facts and cannot change economics. Old namespaces and browser save keys remain untouched.
+
+Deploy backend first, then publish the root client and redirect the former entry URLs. [Rollout and acceptance details](../development/One-Game-Rollout.md). This supersedes prior multi-entry product instructions; full CES/combat/ranking certification is not implied.
 
 ## 23 — Advanced Combat and AI Military Command
 
