@@ -1528,6 +1528,8 @@ Accessibility and devices
 
 The browser and trusted server run one shared pure engine. The browser predicts for responsiveness; authenticated semantic commands and server time determine durable progress. Reconcile roughly every 30 seconds and after commands/returning. Refineries, station contracts, safety and saved Maker presentation belong to this same game. There is no mode selector, browser-only fallback, public test grant, fast-forward or local reset in the product. A lost connection must be visible.
 
+**Implementation and release status:** backend [#22](https://github.com/BirkleyG/Extraction/pull/22) is merged; the root client is saved in draft [#23](https://github.com/BirkleyG/Extraction/pull/23). Validation passed 78 frontend/model/transport tests, 165 backend tests and 15 real Auth/Firestore emulator integration tests. Browser acceptance covered authenticated upgrades/reload, refinery production, station contract accounting, arriving infantry, saved Maker output, mobile layout and compatibility redirects. **Production cutover is blocked** until the repository's Google Cloud identity variables are configured and the canonical backend deploy succeeds. Publish the root client afterward. Full CES market, combat and ranking acceptance remain separate outstanding work.
+
 ## 21 — Testing, Validation and Acceptance Criteria
 
 **Status: consolidated revision 1.2.** Approved rules use the register in 00; C-numbered coefficients remain calibration work.
