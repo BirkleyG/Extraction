@@ -1,65 +1,45 @@
 # Extraction Tycoon
 
-**[Play the development sandbox](https://birkleyg.github.io/Extraction/play/)** · [Original prototype](https://birkleyg.github.io/Extraction/prototype/)
+**[Play Extraction Tycoon](https://birkleyg.github.io/Extraction/)**
 
-Mine ore, open shafts, upgrade your machines, and ship to published NPC buyers. Sales pay at departure. The animated mine runs immediately; no Firebase project, account or API key is needed to try it.
+One online game: a pixel mine that grows into refineries, stations and a colony. Hire the machines rather than micromanaging crates: upgrade your Pick, Lift and Hauler; route ore into your refinery; sell refined output or stock your station; complete buyer orders; bring infantry home by supply shuttle. The original pixel presentation remains the visual foundation.
 
-The default Pages game is a **single-player development sandbox with browser-local saves**. New mines use a provisional three-line Pick/Lift/Hauler economy: ten miners per shaft, punchier upgrades and short early shipping trips. Existing sandbox mines retain their previous economy; open **Tools → Try new economy** to back up the old mine and start fresh. It is not the authoritative multiplayer release. The original prototype and its separate browser saves remain available at `/prototype/`.
+Sign in with Google or email and enter your private invite code. Progress is saved online. The browser predicts smoothly between server updates, normally every 30 seconds; commands reconcile immediately. There is no version or offline-mode selector. Previous entry URLs redirect to the root.
 
-The scene reuses the original game's pixel sprites and look. Each planet is built around one central theme (for example a candy world, a haunted bone-yard, a dead neon city) and picks its own sky, moons, rock layers, ore names/colours and a ring of 5-7 regions. There are 39 region landscapes: 27 earthlike (mesa, dunes, glacier, volcanic, swamp, canyon, salt flats, temperate forest, jungle, savanna, tundra, taiga, prairie, alpine peaks, island chain, sea cliffs, lake country, hoodoo badlands, moor, autumn woodland, scrubland, red-rock arches, waterfall cliffs, geyser basin, palm oasis, rice terraces, redwoods) and 12 alien or sci-fi (crystal spires, fungal forest, floating islands, bone forest, neon ruins, tendril jungle, mirror desert, hive towers, black monoliths, reality rifts, scrap titans, watcher fields).
+Settings contains motion/sound, optional Claude/OpenAI BYOK, a progress download and recovery download for the previous device save. The Maker creates validated facility names, buyer personalities and dispatches from confirmed events; its built-in chronicler works without a key. It never decides money or outcomes.
 
-AI is the default way to make a planet: under **Tools** add your own Claude or OpenAI key, then **Planet → Ask the Maker**. The prompt makes the AI choose a theme first and read a summary of earlier planets (kept in this browser) so each one is new. With no key the Maker improvises from one of twelve built-in themes instead, avoiding recently used ones. Planets are presentation only in this sandbox; they do not change rates, prices or the ledger.
+## Status
 
-Controls: mouse wheel or pinch to zoom, drag to pan, `+` `-` `0` keys or the corner buttons to zoom and fit, and the top-left thumbnail (or `M`) flips between your mine and the whole-planet map, where you can click a region and move your mine there. Upgrades are named machines (Hand Winch → Rope Hoist → Steam Lift ...) that change how the lift, pick, yard and hauler look as you tier up.
+This is a private development game for up to ten friends. Current industry, home safety and market features are playable, but full CES equilibrium, complete combat, global ranking and Release A/B certification remain open. [Single-game rollout and verification](docs/development/One-Game-Rollout.md). Earlier source and save namespaces are preserved for recovery; old balances are not silently imported as trusted money.
 
-Mining follows the rulebook (section 04): each region's site has one endless common ore, and shafts hide finite rare veins (and, in tough regions, a mythic one). Tunnels are dug out as the crew mines, veins sit in the rock ahead, and a vein only yields once the tunnel reaches it *and* the pick is hard enough. Opening a mine in a different region, or building a new planet, starts a fresh mine because ore and veins belong to the site.
+## Develop locally
 
-Open **Tools** to fast-forward, adjust sound/motion, download your save or recovery backup, add explicit test coins, or reset only the sandbox. Older detailed history is summarized in Records while accounting totals are preserved. Prices, buyer budgets, starting coin and incomplete upgrade lines in this build are test fixtures, not certified game balance. No month competition is active.
-
-## Run locally
-
-From the repository root:
+Node 24.19.0 and Java 21 are required for the Firebase emulators.
 
 ```sh
-python3 -m http.server 8000
-```
-
-Visit http://localhost:8000/play/ for the sandbox or http://localhost:8000/prototype/ for the original prototype. Serve the repository root so the shared production ES module can load.
-
-## Development and tests
-
-Node 24.19.0 is pinned in `.nvmrc`.
-
-```sh
-npm --prefix play test
 npm --prefix backend ci
+npm --prefix play test
 npm --prefix backend test
 npm --prefix backend run test:integration
 ```
 
-The Firebase emulator tests additionally require Java 21. See [backend setup](backend/README.md) for the authenticated local API/demo and [SETUP.md](SETUP.md) for the original prototype's Firebase guide. Production Firebase deployment and its spending ceiling remain separate decisions.
+For a playable emulator session, run in one terminal:
 
-## Specification and progress
+```sh
+cd backend
+FIREBASE_PROJECT_ID=demo-extraction E2E_SECONDS=86400 npx firebase emulators:exec --project demo-extraction --only auth,firestore "node scripts/e2e-online.mjs"
+```
 
-- [Maintained rulebook](docs/rulebook/Extraction-Rulebook-v1.2.md)
-- [Buildout plan](docs/development/Buildout-Plan.md)
-- [Questions for the Boss](docs/development/Questions-for-the-Boss.md)
-- [Production calibration evidence](docs/development/calibration/Production-Calibration.md)
+Serve the repository root in another terminal:
 
-GitHub Pages publishes `main`, root directory. Publishing changes must reach `main`; merging into a development/specification branch alone does not update the playable site. Future playable changes should target that published integration branch and pass the model/backend checks before deployment.
+```sh
+python3 -m http.server 8765 --bind 127.0.0.1
+```
 
-## Online play and latest evidence
+Open `http://localhost:8765/?emulator=1&api=http://127.0.0.1:8788`, create an emulator account and use invite `friends-2026`. This runs the same game against isolated test services. Production pages ignore API/emulator overrides from arbitrary URL parameters.
 
-Use **Play online** in the same pixel interface (or [open online mode](https://birkleyg.github.io/Extraction/play/?mode=online)), sign in and enter your private invite code. Online accounts and balances belong to the trusted server; sandbox saves and tuning do not transfer. [Deployment guide](docs/development/Deploy-Guide.md) explains setup. Backend source updates need a separate Cloud Run deployment; merging a PR only publishes browser changes through Pages.
+## Deployment and specification
 
-[Sandbox economy studies](play/sim/README.md) include the supplied fluid approximation, the adopted experimental tuning and reproducible actual-engine pacing. The actual scripted first hour earns 130,010 gross with no grants; full-month balance remains provisional. [Latest progress and verification](docs/development/Overnight-Progress.md).
+[Deployment guide](docs/development/Deploy-Guide.md) · [Maintained rulebook](docs/rulebook/Extraction-Rulebook-v1.2.md) · [Questions for the Boss](docs/development/Questions-for-the-Boss.md) · [Build checklist](docs/development/Build-Checklist.md)
 
-## Industry and colony preview
-
-The new-economy sandbox now includes **Industry** and **Colony** tabs. Build a refinery (25K local test coin), route raw ore into it, refine and sell to NPC stations. Choose an output policy to sell automatically or fill your own station every 30 simulated seconds. Build a station (250K), stock refined goods and complete published spot orders. Hourly simulated market quotes react to supply. Home infantry arrive by supply shuttle and help resolve bounded incidents. These local fixtures preview later systems; they are not shared multiplayer industry.
-
-Use Colony to request Maker facility names, buyer personalities and factual dispatches. Claude/OpenAI use the key configured in Tools; with no key the built-in chronicler works. Requests are explicit and presentation-only. Online play animates locally and reconciles with the trusted server about every 30 seconds, immediately after commands or returning to the tab. Local offline catch-up runs in a browser worker where available. [Scope, coefficients and verification](docs/development/Industry-Release.md).
-
-## Branch integration
-
-The latest integration combines Claude's durable queue and server A2 work, and ports its faster sandbox prices while preserving current industry and save safety. [Scope, evidence and rollout limits](docs/development/Branch-Integration.md). The A2 fleet panel appears when connected to an updated backend; merging browser code does not redeploy Cloud Run or migrate existing owner records.
+GitHub Pages serves the root client from `main`. The keyless backend workflow tests and deploys the existing Cloud Run service. It requires one-time Workload Identity setup and two GitHub Actions variables. Deployment uses the established Firebase project, region and private-player budget; see the guide before changing infrastructure.

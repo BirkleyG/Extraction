@@ -1,6 +1,4 @@
-import { renderFleet, fleetCommand } from './fleet-ui.js';
-import { createLocalRuntime } from './local-runtime.js';
-import { renderIndustry, actionFromIndustryButton } from './industry-ui.js';
+import { renderIndustry, actionFromIndustryButton } from './industry-ui.js?build=one-game';
 import { createMakerBrief, generateMakerContent } from './maker.js';
 import { FRONTIER_TUNE } from './frontier.js';
 import { RECONCILE_MS } from './sync-policy.js';
@@ -98,9 +96,7 @@ const blockedSaveMessage = 'The unreadable save is preserved at its original key
 let grantValue = '10000';
 let toastTimer;
 /* ---- offline sandbox (default) or the online game (opt-in with ?mode=online or the header button) ---- */
-const modeParam = new URLSearchParams(location.search).get('mode');
-if (modeParam === 'online' || modeParam === 'offline') { try { localStorage.setItem('extraction_mode', modeParam); } catch { /* ignore */ } }
-const REMOTE = (() => { try { return localStorage.getItem('extraction_mode') === 'online'; } catch { return false; } })();
+const REMOTE = true;
 let online = null;
 let pendingRemote = 0;
 let nextPollAt = 0;
@@ -108,7 +104,7 @@ let remoteSyncPromise = null;
 let remoteSyncQueued = false;
 let remoteGeneration = 0;
 let makerBusy = false;
-const localRuntime = createLocalRuntime();
+let connectionLost = false;
 let catchupInFlight = false;
 let world = loadPlanet();
 let planet = world.planet;
@@ -140,51 +136,8 @@ function liftRate() { return currentLiftRate(state); }
 function totalRate() { return currentRates(state).reduce((sum, row) => sum + row.ratePerMinute, 0); }
 function safeText(value) { return String(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]); }
 
-function loadSave() {
-  let raw = null;
-  try {
-    raw = localStorage.getItem(SAVE_KEY);
-    if (!raw) return createGameState(siteOpts());
-    const wrapper = JSON.parse(raw);
-    if (!wrapper || wrapper.version !== 1 || !Number.isSafeInteger(wrapper.savedAtMs) || wrapper.savedAtMs < 0) throw new Error('Unsupported save');
-    savedAtMs = wrapper.savedAtMs;
-    const loaded = validateGameState(wrapper.state);
-    if (wrapper.pendingCatchupSeconds !== undefined && (!Number.isSafeInteger(wrapper.pendingCatchupSeconds) || wrapper.pendingCatchupSeconds < 0)) throw new Error('Invalid pending catch-up');
-    catchupRemaining = wrapper.pendingCatchupSeconds || 0;
-    if (wrapper.catchupKind === 'fast-forward' || wrapper.catchupKind === 'offline') catchupKind = wrapper.catchupKind;
-    paused = wrapper.paused === true;
-    const elapsed = Math.floor((Date.now() - savedAtMs) / 1000);
-    if (!paused && elapsed > 0 && Number.isSafeInteger(elapsed)) catchupRemaining += elapsed;
-    else if (elapsed < 0) recovering = 'The browser clock moved backward since the last save. The mine resumed without adding offline time.';
-    return loaded;
-  } catch {
-    corruptRaw = raw;
-    if (raw !== null) {
-      try {
-        const existing = localStorage.getItem(RECOVERY_KEY);
-        if (!existing) {
-          const backup = JSON.stringify({ backedUpAtMs: Date.now(), sourceKey: SAVE_KEY, reason: 'Unreadable local save', raw });
-          localStorage.setItem(RECOVERY_KEY, backup);
-          if (localStorage.getItem(RECOVERY_KEY) !== backup) throw new Error('Recovery backup did not persist');
-        } else if (JSON.parse(existing).raw !== raw) throw new Error('Recovery slot already contains another save');
-      } catch { saveBlocked = true; }
-    }
-    catchupRemaining = 0; paused = false; savedAtMs = Date.now();
-    recovering = saveBlocked ? blockedSaveMessage : 'The unreadable save was preserved as a recovery backup. A fresh sandbox is open. Download the original text from Tools.';
-    return createGameState(siteOpts());
-  }
-}
-
-function save() {
-  if (state && state.remote) return; // the server is the save file online
-  if (saveBlocked) { recovering = blockedSaveMessage; return; }
-  try {
-    savedAtMs = Date.now();
-    localStorage.setItem(SAVE_KEY, JSON.stringify({ version: 1, savedAtMs, pendingCatchupSeconds: catchupRemaining, catchupKind, paused, state }));
-  } catch {
-    recovering = 'Browser storage is unavailable. This session is playable, but its latest changes may not survive a reload.';
-  }
-}
+// Online progress is persisted by authenticated server commands only.
+function save() {}
 
 function toast(message, tone = '') {
   const element = $('#toast');
@@ -225,17 +178,18 @@ async function syncRemote(force = false) {
     if (pendingRemote > 0 || generation !== remoteGeneration) { remoteSyncQueued = true; return; }
     const seen = new Set(before.shipments.map((x) => x.id));
     const fresh = r.state.shipments.filter((x) => !seen.has(x.id));
-    state = r.state; planet = r.planet; regionId = r.regionId; skinOres();
-    if (fresh.length && before.remote && !justSent) {
+    connectionLost = false; paused = false; recovering = ''; state = r.state; planet = r.planet; regionId = r.regionId; skinOres();
+    if (fresh.length && REMOTE && !justSent) {
       const units = fresh.reduce((a, x) => a + x.units, 0); const pay = fresh.reduce((a, x) => a + x.payment, 0);
       online.note(`${fresh.length} automatic takeoff${fresh.length === 1 ? '' : 's'}: ${fmt(units)} units sold for ${fmt(pay)} ◉.`, state.simSeconds);
       state = { ...state, log: [...state.log, { atSecond: state.simSeconds, message: `${fresh.length} automatic takeoff${fresh.length === 1 ? '' : 's'}: ${fmt(units)} units sold for ${fmt(pay)} ◉.`, type: 'sale' }].slice(-80) };
       toast(`Hauler took off automatically — ${fmt(pay)} ◉ paid.`, 'success'); blip([523, 659, 784]);
     }
     justSent = false;
-    nextPollAt = Date.now() + RECONCILE_MS;
+    nextPollAt = Date.now() + (state.catchingUp ? 1000 : RECONCILE_MS);
     render();
   } catch (error) {
+    connectionLost = true; render();
     if (error?.status === 401) { toast('Signed out. Reload to sign in again.', 'error'); return; }
     nextPollAt = Date.now() + RECONCILE_MS;
   } finally {
@@ -248,17 +202,9 @@ async function syncRemote(force = false) {
 let justSent = false;
 const POLL_MS_LOCAL = RECONCILE_MS;
 
-async function sendFleetCommand(command) {
-  if (!state.remote || pendingRemote > 2) return;
-  remoteGeneration += 1; pendingRemote += 1; render();
-  try { await online.send([command]); toast('Fleet order accepted.', 'success'); }
-  catch (error) { toast(remoteMessage(error), 'error'); }
-  finally { pendingRemote -= 1; void syncRemote(true); }
-}
-
-function applyRemote(before, next, success) {
+function applyRemote(before, next, success, intent) {
   remoteGeneration += 1;
-  const cmds = online.commandsFor(before, next);
+  const cmds = intent ? [intent] : [];
   state = next;
   if (!cmds.length) { render(); return true; }
   justSent = true; pendingRemote += 1; render();
@@ -267,12 +213,13 @@ function applyRemote(before, next, success) {
   return true;
 }
 
-function apply(action, success) {
+function apply(action, success, intent) {
   try {
-    if (state.remote && pendingRemote > 2) { toast('One moment — the server is still working.', 'error'); return false; }
+    if (state.catchingUp || connectionLost) { toast('Reconnecting and syncing your mine…'); return false; }
+    if (REMOTE && pendingRemote > 2) { toast('One moment — the server is still working.', 'error'); return false; }
     const before = state;
     const result = validateGameState(action(state));
-    if (state.remote) return applyRemote(before, result, success);
+    if (REMOTE) return applyRemote(before, result, success, intent);
     state = result;
     save();
     render();
@@ -292,7 +239,7 @@ document.documentElement.classList.toggle('reduce-motion', reducedMotion);
 function renderGuide() {
   const el = $('#firstSteps');
   if (!el) return;
-  el.hidden = !!state.remote || guideDismissed;
+  el.hidden = guideDismissed;
   if (el.hidden) return;
   const sold = state.shipments.length > 0;
   const bought = state.ledger.some((e) => e.type === 'SYSTEM_PURCHASE') || (state.historyArchive?.ledger?.amountsByType?.SYSTEM_PURCHASE ?? 0) > 0;
@@ -325,7 +272,7 @@ const levelOf = (type, n = 1) => {
 let lastBought = { type: '', n: 0, at: 0 };
 function buyUpgrade(type, n, count) {
   const before = levelOf(type, n); const tierBefore = tierOf(type, before);
-  const ok = apply((cur) => purchaseUpgrade(cur, type, { shaftNumber: n, count }), '');
+  const ok = apply((cur) => purchaseUpgrade(cur, type, { shaftNumber: n, count }), '', {kind:'upgrade',payload:{type,shaftNumber:n,count}});
   if (!ok) { blip([140]); return; }
   const after = levelOf(type, n); const tierAfter = tierOf(type, after); const spot = FX_SPOTS[type] || [290, 0];
   lastBought = { type, n, at: performance.now() };
@@ -387,7 +334,7 @@ function costButton(type, shaftNumber = 1) {
 }
 
 const TABS = [['sell', 'Sell'], ['upgrades', 'Upgrades'], ['shafts', 'Shafts'], ['planet', 'Planet'], ['industry', 'Industry'], ['colony', 'Colony'], ['records', 'Records'], ['tools', 'Tools']];
-const tabLabel = (id, label) => (REMOTE && id === 'tools' ? 'Account' : label);
+const tabLabel = (id, label) => (id === 'tools' ? 'Settings' : label);
 const shaftCost = () => nextShaftCost(state);
 const crewCap = () => habitatCapacity(state.upgrades.habitat);
 const buyBtn = (attrs, label, cost, cls = '') => `<button class="buy ${cls}" ${attrs} type="button"${cost === null ? ' disabled' : ''}>${label}<br>${cost === null ? 'CAPPED' : `${fmt(cost)} ◉`}</button>`;
@@ -416,23 +363,22 @@ function renderHud() {
   $('#hRate').textContent = `${fmtUnits(rate)} ore / min`;
   $('#hSurface').textContent = `${fmtUnits(surfaceTotal())} / ${fmtUnits(state.production.surface.capacityUnits)}`;
   $('#hEarned').textContent = fmt(state.totalExternalEarnings);
-  if (state.remote) {
+  if (REMOTE) {
     const left = Math.max(0, Math.floor((state.online.monthEndsAtMs - state.online.serverNowMs - (Date.now() - state.online.receivedAtMs)) / 1000));
     $('#hTime').textContent = `${Math.floor(left / 86400)}d ${String(Math.floor(left / 3600) % 24).padStart(2, '0')}h ${String(Math.floor(left / 60) % 60).padStart(2, '0')}m`;
     $('#hTime').previousElementSibling.textContent = 'Month ends';
   } else $('#hTime').textContent = formatClock(state.simSeconds);
-  $('#hLive').textContent = state.remote ? 'ONLINE' : catchingUp ? 'CATCHING UP' : paused ? 'MINE PAUSED' : isNewEconomy() ? 'SANDBOX · NEW' : 'SANDBOX · ORIGINAL';
-  $('#hLive').classList.toggle('off', !state.remote && (paused || catchingUp));
-  for (const sel of ['#pauseBtn', '[data-forward="60"]']) { const el = document.querySelector(sel); if (el) el.hidden = !!state.remote; }
-  const mb = $('#modeBtn'); if (mb) mb.textContent = state.remote ? 'Offline sandbox' : 'Play online ↗';
-  $('#pauseBtn').textContent = paused ? 'Resume' : 'Pause';
-  $('#pauseBtn').setAttribute('aria-pressed', String(paused));
+  $('#hLive').textContent = connectionLost ? 'RECONNECTING' : state.catchingUp ? 'SYNCING' : pendingRemote ? 'SAVING…' : 'ONLINE';
+  $('#hLive').classList.toggle('off', !REMOTE && (paused || catchingUp));
+  for (const sel of ['#pauseBtn', '[data-forward="60"]']) { const el = document.querySelector(sel); if (el) el.hidden = !!REMOTE; }
+  const pauseButton = $('#pauseBtn');
+  if (pauseButton) { pauseButton.textContent = paused ? 'Resume' : 'Pause'; pauseButton.setAttribute('aria-pressed', String(paused)); }
   const tag = $('#stageTag');
-  tag.innerHTML = `<b>${safeText(region().name.toUpperCase())}</b> · ${safeText(TERRAINS[region().terrain].label)} · ${state.remote ? 'ONLINE' : isNewEconomy() ? 'SANDBOX · NEW ECONOMY' : 'SANDBOX · ORIGINAL ECONOMY'} · ${state.production.shafts.length} shaft${state.production.shafts.length === 1 ? '' : 's'} · ${state.workersHired} miners · lift LV ${state.production.lift.level}`;
+  tag.innerHTML = `<b>${safeText(region().name.toUpperCase())}</b> · ${safeText(TERRAINS[region().terrain].label)} · ONLINE · ${state.production.shafts.length} shaft${state.production.shafts.length === 1 ? '' : 's'} · ${state.workersHired} miners · lift LV ${state.production.lift.level}`;
   const yard = state.production.surface.capacityUnits ? surfaceTotal() / state.production.surface.capacityUnits : 0;
   const buf = Math.max(0, ...state.production.shafts.map((s) => (s.bufferCapacityUnits ? s.bufferUnits / s.bufferCapacityUnits : 0)));
   const banner = $('#banner');
-  const msg = catchingUp ? `CATCHING UP · ${fmt(catchupRemaining)} s left` : recovering || state.frontier?.incident && state.frontier.status || (yard >= 0.9 ? 'ORE YARD · near capacity' : buf >= 0.9 ? 'ORE WAITING BELOW · crews at work' : '');
+  const msg = connectionLost ? 'Reconnecting — estimates paused until your server save is available.' : state.catchingUp ? 'Catching up your mine…' : catchingUp ? `CATCHING UP · ${fmt(catchupRemaining)} s left` : recovering || state.frontier?.incident && state.frontier.status || (yard >= 0.9 ? 'ORE YARD · near capacity' : buf >= 0.9 ? 'ORE WAITING BELOW · crews at work' : '');
   banner.hidden = !msg;
   banner.classList.toggle('bad', !catchingUp && !recovering && !!msg);
   banner.textContent = msg;
@@ -463,7 +409,6 @@ function launchPreview() {
 }
 
 function tabSell() {
-  if (state.remote && state.online?.fleet) return renderFleet(state, { fmt });
   const preview = launchPreview();
   const ready = state.ship.readyAtSecond <= state.simSeconds;
   const can = ready && preview.units >= 0.5 && !catchingUp;
@@ -483,14 +428,14 @@ function tabSell() {
     <div class="row"><div><div class="t">${safeText(shipStatus())}</div><div class="d"${tip(GLOSSARY.hold)}>Hold: ${fmtUnits(state.ship.cargoUnits)} / ${fmtUnits(state.ship.capacityUnits)} units · ${state.ship.speedPerMinute.toFixed(2)} AU/min</div><div class="meter" style="margin-top:6px"><i style="width:${holdPct}%"></i></div></div><button class="buy ready" data-act="launch" type="button"${can ? '' : ' disabled'}${tip(GLOSSARY.launch)}>LAUNCH NOW ↗<br>${preview.units >= 0.5 ? `${fmtUnits(preview.units)} u → ${fmt(preview.pay)} ◉` : 'no ore yet'}</button></div>
     <label class="toggle" style="margin:10px 0"${tip(GLOSSARY.auto)}><input type="checkbox" data-act="auto"${state.autoLaunch ? ' checked' : ''}${catchingUp ? ' disabled' : ''}> Take off automatically when the hold is full</label>
     <h3>Buyers</h3><div class="rows">${rows}</div>
-    <div class="note"${tip(GLOSSARY.takeoff)}>You are paid at takeoff — never again on arrival. Prices are playtest fixtures, not certified balance.</div>`;
+    <div class="note"${tip(GLOSSARY.takeoff)}>You are paid at takeoff — never again on arrival. Choose a route for your next shipment.</div>`;
 }
 
 function tabUpgrades() {
   if (isNewEconomy()) return `<h2>Reinvest</h2><div class="chips"><span class="chip">Dig ${fmtUnits(totalRate())}/min</span><span class="chip">Lift ${fmtUnits(liftRate())}/min</span><span class="chip">Hold ${fmtUnits(state.ship.capacityUnits)} crates</span></div><p class="lede">Three machines. One growing mine. Every level applies across all shafts.</p>
     <div class="rows compact-upgrades">${upgradeCard('pick', 1, { bulk: true })}${upgradeCard('lift', 1, { bulk: true })}${upgradeCard('hauler', 1, { bulk: true })}</div>
     <h3>Expand the mine</h3><div class="row"><div><div class="t">Open shaft ${String(state.production.shafts.length + 1).padStart(2, '0')}</div><div class="d">${state.production.shafts.length} / 30 open · includes 10 miners</div></div>${buyBtn('data-act="shaft"', '＋ Shaft', shaftCost())}</div>
-    <div class="note">Single-player sandbox · local save. These three upgrade lines use a simplified economy, separate from the online game.</div>`;
+    <div class="note">Your colony · saved online. Every upgrade applies across your mine.</div>`;
   const hirePrice = hireCost(state.workersHired);
   const hireDisabled = state.workersHired >= crewCap() || state.coins < hirePrice;
   return `<h2>Reinvest</h2><p class="lede">Dig deeper. Keep the lift moving. Every upgrade is a local test curve, and each one changes how the mine looks.</p>
@@ -538,7 +483,7 @@ function tabPlanetRemote() {
 }
 
 function tabPlanet() {
-  if (state.remote) return tabPlanetRemote();
+  if (REMOTE) return tabPlanetRemote();
   const rows = planet.regions.map((r) => {
     const T = TERRAINS[r.terrain]; const sel = r.id === regionId;
     return `<div class="row ${sel ? 'sel' : ''}"><div><div class="t"><span class="swatch2" style="--ore:${r.biome}"></span>${safeText(r.name)}</div><div class="d">${safeText(T.label)}${T.group === 'alien' ? ' · alien' : ''} · ${safeText(r.blurb)}</div></div><button class="buy ${sel ? 'ok' : 'ghost'} sm" data-act="${sel ? 'noop' : 'relocate-ask'}" data-rid="${r.id}" type="button">${sel ? 'Your mine' : 'Mine here'}</button></div>`;
@@ -572,11 +517,13 @@ function tabRecords() {
   const archive = isNewEconomy() ? state.historyArchive : null;
   const archivedLedger = archive?.ledger;
   const archivedCargo = archive?.shipments;
-  const olderLedger = archivedLedger?.count ? `<div class="note"><b>Older ledger · ${fmt(archivedLedger.count)} entries summarized</b><br>Buyer payments: ${fmt(archivedLedger.amountsByType.NPC_RAW_PURCHASE || 0)} ◉<br>Developer grants: ${fmt(archivedLedger.amountsByType.DEV_TEST_GRANT || 0)} ◉<br>Upgrade and shaft spending: ${fmt(archivedLedger.amountsByType.SYSTEM_PURCHASE || 0)} ◉<br>Net coin change: ${archivedLedger.ownerDelta >= 0 ? '+' : '−'}${fmt(Math.abs(archivedLedger.ownerDelta))} ◉</div>` : '';
+  const olderLedger = archivedLedger?.count ? `<div class="note"><b>Older ledger · ${fmt(archivedLedger.count)} entries summarized</b><br>Buyer payments: ${fmt((archivedLedger.amountsByType.NPC_RAW_PURCHASE || 0) + (archivedLedger.amountsByType.NPC_REFINED_PURCHASE || 0) + (archivedLedger.amountsByType.GALACTIC_CONTRACT_SALE || 0))} ◉<br>Upgrade and shaft spending: ${fmt(archivedLedger.amountsByType.SYSTEM_PURCHASE || 0)} ◉<br>Net coin change: ${archivedLedger.ownerDelta >= 0 ? '+' : '−'}${fmt(Math.abs(archivedLedger.ownerDelta))} ◉</div>` : '';
   const olderCargo = archivedCargo?.count ? `<div class="note"><b>Older delivered cargo · ${fmt(archivedCargo.count)} shipments summarized</b><br>${fmt(archivedCargo.payment)} ◉ paid at departure<br>${archivedCargo.unitsByOre.map((r) => `${fmtUnits(r.units)} ${safeText(oreById(r.oreId).name)} units`).join(' · ')}</div>` : '';
   const recent = isNewEconomy();
   return `<h2>Paper trail</h2>${recent ? '<p class="lede">Recent entries are listed below. Older completed records are kept as totals; cargo in transit stays in the detailed history.</p>' : ''}<h3>Ledger · ${state.ledger.length} ${recent ? 'recent' : ''} entries</h3>${olderLedger}<div class="rows">${ledger}</div><h3>${recent ? 'Recent cargo' : 'Cargo'}</h3>${olderCargo}<div class="rows">${cargo}</div><h3>Events</h3><div class="feed">${events}</div>`;
 }
+
+function downloadJson(value, name) { const url = URL.createObjectURL(new Blob([JSON.stringify(value,null,2)], {type:'application/json'})); const link = document.createElement('a'); link.href=url; link.download=name; link.click(); setTimeout(()=>URL.revokeObjectURL(url),1000); }
 
 function tabIndustry() {
   return renderIndustry(state, { fmt, ores: ORES });
@@ -584,12 +531,12 @@ function tabIndustry() {
 
 function tabColony() {
   const f = state.frontier;
-  if (!f) return '<h2>Colony operations</h2><p>Available in the new local sandbox.</p>';
+  if (!f) return '<h2>Colony operations</h2><p>Syncing your colony…</p>';
   const maker = state.maker;
   const names = maker?.content?.facilities ?? [];
   const buyers = maker?.content?.buyers ?? [];
   const news = maker?.content?.news ?? [];
-  return `<h2>Colony operations</h2><div class="note">Local sandbox: a playable preview of industry, safety and colony storytelling.</div>
+  return `<h2>Colony operations</h2><div class="note">Build your colony. Your progress is saved online.</div>
     <h3>Home safety</h3><div class="devbox"><b>${safeText(f.status)}</b><p class="d">${f.infantry.troops} infantry on patrol${f.infantry.incoming ? ` · ${f.infantry.incoming.troops} arrive in ${f.infantry.incoming.arrivesAt - f.simSeconds}s` : ''}. Home always remains operational. Paid cargo is protected.</p>
     <button class="buy sm" data-frontier="recruit" type="button"${f.infantry.purchased || state.coins < FRONTIER_TUNE.infantryCost ? ' disabled' : ''}>${f.infantry.purchased ? 'Patrol ordered' : `Recruit ${FRONTIER_TUNE.infantryTroops} infantry · ${FRONTIER_TUNE.infantryCost} ◉`}</button></div>
     <h3>The Maker's dispatch desk</h3><p class="lede">Give your works and visiting buyers a personality. Dispatches use events that really happened.</p>
@@ -602,43 +549,40 @@ function tabColony() {
 }
 
 async function refreshMaker() {
-  if (makerBusy || state.remote || !isNewEconomy()) return;
+  if (makerBusy || !isNewEconomy()) return;
   makerBusy = true; render();
-  const seed = state.site.seed;
-  const brief = createMakerBrief({ planet,
-    facilities: ['refinery', 'station'].filter(id => state.industry?.[id]).map(id => ({ id, kind: id, name: id })),
-    buyers: destinationsFor(state).map(row => ({ id: row.id, name: row.name })),
-    events: state.log.slice(-5).map((event, index) => ({ id: `${seed}:${event.atSecond}:${index}`, text: event.message })),
-  });
   try {
+    // Brief the writer from confirmed facts, not cosmetic client predictions.
+    const confirmed = await online.fetchView();
+    state = confirmed.state; planet = confirmed.planet; regionId = confirmed.regionId; skinOres();
+    if (state.catchingUp) { toast('Your mine is catching up. Try the dispatch desk again shortly.'); return; }
+    const seed = state.site.seed;
+    const brief = createMakerBrief({ planet,
+      facilities: ['refinery', 'station'].filter(id => state.industry?.[id]).map(id => ({ id, kind: id, name: id })),
+      buyers: destinationsFor(state).map(row => ({ id: row.id, name: row.name })),
+      events: state.log.slice(-5).map((event, index) => ({ id: `${seed}:${event.atSecond}:${index}`, text: event.message })),
+    });
     const result = await generateMakerContent(brief, { userInitiated: true });
-    if (!state.remote && state.site.seed === seed) { state = { ...state, maker: result }; save(); toast(result.how === 'ai' ? 'The Maker filed a colony dispatch.' : 'The built-in chronicler filed a colony dispatch.', 'success'); }
-  } finally { makerBusy = false; render(); }
+    if (state.site.seed === seed) {
+      await online.send([{kind:'maker',payload:{content:result.content,how:result.how}}]);
+      await syncRemote(true);
+      toast(result.how === 'ai' ? 'The Maker filed a colony dispatch.' : 'The built-in chronicler filed a colony dispatch.', 'success');
+    }
+  } catch { toast('The dispatch could not be saved. Please try again.', 'error'); }
+  finally { makerBusy = false; render(); }
 }
 
 function tabAccount() {
-  return `<h2>Account</h2><p class="lede">Signed in as <b>${safeText(state.online.email || 'guest')}</b>. Your mine runs on the server, so it keeps working while you are away.</p>
-    <div class="devbox"><b>Motion</b><div class="btnrow"><button class="buy ghost sm" data-act="motion" type="button">${reducedMotion ? 'Reduced motion: on' : 'Reduced motion: off'}</button></div></div><div class="devbox"><b>Sound</b><p class="d">Little chimes when you buy upgrades.</p><div class="btnrow"><button class="buy ghost sm" data-act="sound" type="button">${soundOn ? 'Sound: on' : 'Sound: off'}</button></div></div>
-    <div class="devbox"><b>Refresh from the server</b><p class="d">The browser animates and predicts locally. Server reconciliation runs about every 30 seconds, and immediately after commands or returning to the game.</p><div class="btnrow"><button class="buy ghost sm" data-act="resync" type="button">Refresh now</button></div></div>
-    <div class="devbox"><b>Sign out</b><div class="btnrow"><button class="buy ghost sm" data-act="signout" type="button">Sign out</button></div></div>
-    <div class="note">Online play counts toward this month's competition. Coin, ore and ships are decided by the server; this page only shows them.</div>`;
+  const ai = aiSettings();
+  return `<h2>Settings</h2><p class="lede">Signed in as <b>${safeText(state.online.email || 'guild member')}</b>. Your progress is saved online.</p>
+    <div class="devbox"><b>The Maker</b><p class="d">Optional facility names, buyer personalities and colony dispatches. The planet is shared for the month. Without an API key the built-in chronicler works.</p>
+      <label class="f">Provider<select id="aiProvider"><option value="off"${ai.provider === 'off' ? ' selected' : ''}>Built-in chronicler</option><option value="anthropic"${ai.provider === 'anthropic' ? ' selected' : ''}>Claude</option><option value="openai"${ai.provider === 'openai' ? ' selected' : ''}>OpenAI</option></select></label>
+      <label class="f">API key<input type="password" id="aiKey" autocomplete="off" value="${safeText(ai.key || '')}"></label><div class="btnrow"><button class="buy sm" data-act="ai-save">Save AI settings</button><button class="buy ghost sm" data-act="ai-test">Test connection</button></div></div>
+    <div class="devbox"><b>Motion & sound</b><div class="btnrow"><button class="buy ghost sm" data-act="motion">Reduced motion: ${reducedMotion ? 'on' : 'off'}</button><button class="buy ghost sm" data-act="sound">Sound: ${soundOn ? 'on' : 'off'}</button></div></div>
+    <div class="btnrow"><button class="buy ghost sm" data-act="resync">Sync now</button><button class="buy ghost sm" data-act="export-current">Download progress</button><button class="buy ghost sm" data-act="export-previous">Download previous device save</button><button class="buy ghost sm" data-act="signout">Sign out</button></div>`;
 }
 
-function tabTools() {
-  if (state.remote) return tabAccount();
-  const ai = aiSettings();
-  return `<h2>Dev tools</h2><p class="lede">Local sandbox only. No server, no month competition.</p>
-    <div class="devbox"><b>Fast-forward</b><p class="d">Runs the same one-second tick.</p><div class="btnrow"><button class="buy ghost sm" data-forward="60" type="button">1 min</button><button class="buy ghost sm" data-forward="600" type="button">10 min</button><button class="buy ghost sm" data-forward="3600" type="button">1 hour</button></div></div>
-    <div class="devbox"><b>Test grant</b><p class="d">Creates an explicit local source entry.</p><div class="btnrow"><input id="grant-amount" type="number" min="1" step="1" value="${safeText(grantValue)}" aria-label="Test grant amount"><button class="buy sm" data-act="grant" type="button">Add test coins</button></div></div>
-    <div class="devbox"><b>AI engine · bring your own key</b><p class="d">Designs planets, names your facilities and writes dispatches from recorded facts. Calls happen only when you ask. Your key stays in this browser and goes straight to the provider.</p>
-      <label class="f">Engine<select id="aiProvider"><option value="off"${ai.provider === 'off' ? ' selected' : ''}>Off</option><option value="anthropic"${ai.provider === 'anthropic' ? ' selected' : ''}>My Claude API key</option><option value="openai"${ai.provider === 'openai' ? ' selected' : ''}>My OpenAI API key</option></select></label>
-      <label class="f">API key<input type="password" id="aiKey" autocomplete="off" value="${safeText(ai.key || '')}" placeholder="paste key"></label>
-      <div class="btnrow"><button class="buy sm" data-act="ai-save" type="button">Save</button><button class="buy ghost sm" data-act="ai-test" type="button">Test connection</button></div></div>
-    <div class="devbox"><b>Motion</b><div class="btnrow"><button class="buy ghost sm" data-act="motion" type="button">${reducedMotion ? 'Reduced motion: on' : 'Reduced motion: off'}</button></div></div><div class="devbox"><b>Sound</b><p class="d">Little chimes when you buy upgrades.</p><div class="btnrow"><button class="buy ghost sm" data-act="sound" type="button">${soundOn ? 'Sound: on' : 'Sound: off'}</button></div></div>
-    ${!isNewEconomy() ? `<div class="devbox"><b>Try the new economy</b><p class="d">Start with 10 miners and three global upgrades: Pick, Lift, Hauler. Your current save is backed up in this browser before starting fresh.</p><div class="btnrow">${newEconomyPrompt ? '<button class="buy sm" data-act="economy-new" type="button">Back up & start fresh</button><button class="buy ghost sm" data-act="economy-cancel" type="button">Keep this mine</button>' : '<button class="buy sm" data-act="economy-ask" type="button">Try new economy…</button>'}</div></div>` : ''}
-    <div class="devbox"><b>Recovery copy</b><p class="d">An unreadable save is kept exactly as found. Download its original text for recovery.</p><div class="btnrow"><button class="buy ghost sm" data-act="export-corrupt" type="button">Download recovery text</button></div></div><div class="devbox"><b>Save a copy</b><p class="d">Download this local mine, or download the backup made before trying the new economy.</p><div class="btnrow"><button class="buy ghost sm" data-act="export-save" type="button">Download save</button><button class="buy ghost sm" data-act="export-backup" type="button">Download backup</button></div></div><div class="devbox"><b>Reset sandbox</b><p class="d">Starts a new local save. The legacy prototype is untouched.</p>${resetPromptOpen ? '<div class="btnrow"><button class="buy danger sm" data-act="confirm-reset" type="button">Reset mine</button><button class="buy ghost sm" data-act="cancel-reset" type="button">Keep playing</button></div>' : '<div class="btnrow"><button class="buy ghost sm" data-act="reset" type="button">Reset local save…</button></div>'}</div>
-    <div class="note">Rates, offers, costs and buyer budgets are local test fixtures, not certified balance.</div>`;
-}
+function tabTools() { return tabAccount(); }
 
 function render() {
   renderHud();
@@ -654,10 +598,6 @@ function render() {
 }
 let renderPending = false;
 
-function freshMine() {
-  state = createGameState(siteOpts()); paused = false; catchupRemaining = 0; catchingUp = false; catchupKind = 'offline'; resetPromptOpen = false; recovering = '';
-  veinSeen.clear(); effectCache.clear(); save();
-}
 let view = 'side';
 const camSide = { auto: true, x: 490, y: 0, z: 1 };
 const camMap = { auto: true, x: 500, y: 500, z: 1 };
@@ -692,99 +632,51 @@ function drawMini() {
 }
 
 function mapCardHTML(r) {
-  const T = TERRAINS[r.terrain]; const here = r.id === regionId;
-  return `<button class="buy sm ghost close" data-act="mapclose" type="button">✕</button><h4>${safeText(r.name)}</h4><p class="lede">${safeText(T.label)}${T.group === 'alien' ? ' · alien' : ''}<br>${safeText(r.blurb)}</p>
-    <div class="chips">${planet.ores.slice(0, 7).map((o) => `<span class="chip"><i style="background:${o.color}"></i>${safeText(o.name)}</span>`).join('')}</div>
-    ${pendingRelocate === r.id ? '<div class="note"><b>Start a new mine here?</b> Your current local mine is replaced.</div><div class="btnrow"><button class="buy danger sm" data-act="relocate-yes" type="button">Yes, start fresh</button><button class="buy ghost sm" data-act="relocate-no" type="button">Cancel</button></div>' : `<div class="btnrow">${here ? '<button class="buy ok" data-act="mapback" type="button">Back to your mine</button>' : `<button class="buy" data-act="relocate-ask" data-rid="${r.id}" type="button">Open a mine here</button>`}</div>`}`;
+  return `<button class="buy sm ghost close" data-act="mapclose" type="button">×</button><h4>${safeText(r.name)}</h4><p class="lede">${safeText(TERRAINS[r.terrain].label)}<br>${safeText(r.blurb)}</p><button class="buy sm" data-act="mapback">Back to your mine</button>`;
 }
 function showMapCard() { const c = $('#mapcard'); c.hidden = view !== 'map' || !mapSel; if (!c.hidden) c.innerHTML = mapCardHTML(mapSel); }
 
-async function catchUpBatch() {
-  if (catchupInFlight) return;
-  if (catchupRemaining <= 0) {
-    catchingUp = false; save(); render();
-    toast(catchupKind === 'fast-forward' ? 'Fast-forward complete.' : 'Offline sandbox catch-up complete.', 'success');
-    catchupKind = 'offline';
-    return;
-  }
-  try {
-    catchupInFlight = true;
-    const batch = await localRuntime.advance(state, catchupRemaining, 300);
-    state = batch.state; catchupRemaining = batch.remainingSeconds;
-    save(); render(); setTimeout(catchUpBatch, 0);
-  } catch {
-    catchingUp = false;
-    recovering = `${catchupKind === 'fast-forward' ? 'Fast-forward' : 'Offline catch-up'} stopped on invalid local state. The latest valid checkpoint is still saved.`;
-    save(); render();
-  } finally { catchupInFlight = false; }
-}
-
-function startForward(seconds) {
-  catchupRemaining += seconds; catchupKind = 'fast-forward'; catchingUp = true;
-  save(); render(); setTimeout(catchUpBatch, 0);
-}
-
 if (REMOTE) {
-  online = await import('./online.js');
+  online = await import('./online.js?build=one-game');
   const boot = await online.startOnline();
   state = boot.state; planet = boot.planet; regionId = boot.regionId; skinOres();
   nextPollAt = Date.now() + POLL_MS_LOCAL;
-} else state = loadSave();
+}
 renderTabs();
 render();
 if (recovering) toast(recovering, 'error');
-if (catchupRemaining > 0) { catchingUp = true; render(); setTimeout(catchUpBatch, 0); }
 
 window.setInterval(() => { if (REMOTE && Date.now() >= nextPollAt && pendingRemote === 0 && !document.hidden) { nextPollAt = Date.now() + POLL_MS_LOCAL; syncRemote(); } }, 1000);
 
 window.setInterval(() => {
-  if (catchingUp) return;
+  if (catchingUp || state.catchingUp || connectionLost) return;
   if (paused) { save(); return; }
   lastTickMs = performance.now();
   try { state = stepGame(state); }
-  catch { paused = true; recovering = 'The local simulation paused after invalid state was detected.'; render(); return; }
+  catch { paused = true; recovering = 'Refreshing your colony from the server…'; render(); return; }
   save(); render();
 }, 1000);
 
 document.addEventListener('click', (event) => {
   const button = event.target.closest('button');
   if (!button) return;
-  if (button.id === 'modeBtn') { try { localStorage.setItem('extraction_mode', REMOTE ? 'offline' : 'online'); } catch { /* ignore */ } const u = new URL(location.href); u.searchParams.delete('mode'); location.href = u.toString(); return; }
-  if (button.id === 'pauseBtn') { paused = !paused; save(); render(); return; }
-  if (catchingUp) return;
   if (button.dataset.tab) { tab = button.dataset.tab; render(); return; }
-  if (button.dataset.forward) { startForward(Number(button.dataset.forward)); return; }
-  if (button.dataset.fleet) { const command = fleetCommand(button, state); if (command) void sendFleetCommand(command); return; }
-  if (button.dataset.industry) { const action = actionFromIndustryButton(button, state); if (action) apply(current => industryCommand(current, action), 'Industry order completed.'); return; }
-  if (button.dataset.frontier) { apply(current => frontierCommand(current, 'recruit-infantry'), 'Supply shuttle dispatched.'); return; }
-  if (button.dataset.destination) { apply((current) => selectDestination(current, button.dataset.destination)); return; }
+  if (button.dataset.forward) return;
+  if (button.dataset.industry) { const action = actionFromIndustryButton(button, state); if (action) apply(current => industryCommand(current, action), 'Industry order sent.', {kind:'industry',payload:{action}}); return; }
+  if (button.dataset.frontier) { apply(current => frontierCommand(current, 'recruit-infantry'), 'Supply shuttle ordered.', {kind:'frontier',payload:{}}); return; }
+  if (button.dataset.destination) { apply((current) => selectDestination(current, button.dataset.destination), '', {kind:'policy',payload:{destinationId:button.dataset.destination}}); return; }
   if (button.dataset.buy) { const raw = button.dataset.count || '1'; buyUpgrade(button.dataset.buy, Number(button.dataset.shaft || 1), raw === 'max' ? 'max' : Number(raw)); return; }
   if (button.dataset.zoom) { const cm = view === 'map' ? camMap : camSide; if (button.dataset.zoom === 'fit') { cm.auto = true; cm.z = 1; } else { cm.auto = false; cm.z *= button.dataset.zoom === 'in' ? 1.4 : 1 / 1.4; } return; }
   if (button.id === 'mapBtn') { view = view === 'map' ? 'side' : 'map'; showMapCard(); return; }
   switch (button.dataset.act) {
+    case 'export-current': downloadJson(state, 'extraction-progress.json'); break;
+    case 'export-previous': { try { const raw = localStorage.getItem(SAVE_KEY); if (raw) downloadJson(JSON.parse(raw), 'extraction-previous-device-save.json'); else toast('No previous device save found.'); } catch { toast('The previous save could not be read.'); } break; }
     case 'maker-create': void refreshMaker(); break;
     case 'motion': reducedMotion = !reducedMotion; document.documentElement.classList.toggle('reduce-motion', reducedMotion); try { localStorage.setItem('extraction_motion', reducedMotion ? 'reduced' : 'full'); } catch {} render(); break;
     case 'guide-dismiss': guideDismissed = true; try { localStorage.setItem('extraction_guide_done', 'yes'); } catch {} renderGuide(); break;
     case 'sound': soundOn = !soundOn; try { localStorage.setItem('extraction_sound', soundOn ? 'on' : 'off'); } catch { /* ignore */ } if (soundOn) blip([660, 880]); render(); break;
     case 'mapclose': mapSel = null; showMapCard(); break;
     case 'mapback': view = 'side'; mapSel = null; showMapCard(); break;
-    case 'newplanet-ask': if (state.simSeconds > 120) { pendingPlanet = true; render(); break; } /* fall through: nothing to lose yet */
-    case 'newplanet-go': {
-      pendingPlanet = false;
-      const prompt = ($('#planetPrompt') && $('#planetPrompt').value) || planetPromptValue; planetPromptValue = prompt; planetBusy = true; render();
-      generatePlanet(prompt).then(({ planet: p, how, error }) => {
-        planet = p; regionId = p.regions[0].id; skinOres(); savePlanet(planet, regionId); freshMine();
-        toast(how === 'ai' ? `The Maker delivered ${planet.name}. A new mine is open.` : `The Maker improvised ${planet.name}${error ? ` (${error})` : ''}. A new mine is open.`, 'success');
-      }).finally(() => { planetBusy = false; render(); });
-      break;
-    }
-    case 'newplanet-no': pendingPlanet = false; render(); break;
-    case 'relocate-ask': pendingRelocate = button.dataset.rid; if (view === 'map') showMapCard(); else render(); break;
-    case 'relocate-no': pendingRelocate = null; if (view === 'map') showMapCard(); else render(); break;
-    case 'relocate-yes': {
-      regionId = pendingRelocate; pendingRelocate = null; savePlanet(planet, regionId); freshMine(); view = 'side'; camSide.auto = true; mapSel = null; showMapCard(); render();
-      toast(`A new mine is open in ${region().name}. Common ore: ${ORES.find((o) => o.id === state.site.commonOreId).name}.`, 'success'); break;
-    }
     case 'noop': break;
     case 'resync': syncRemote(); break;
     case 'signout': online.logout().then(() => location.reload()); break;
@@ -794,69 +686,18 @@ document.addEventListener('click', (event) => {
       askJSON('Reply with only this JSON: {"ok":true}').then((r) => toast(r && r.ok ? 'Connection works.' : 'Connected, but the reply was odd.', r && r.ok ? 'success' : 'error')).catch((e) => toast(e.message, 'error'));
       break;
     }
-    case 'launch': apply(dispatchNow, 'Hauler launched — paid at takeoff.'); break;
-    case 'shaft': if (apply(buyNextShaft, 'Shaft opened. A new tunnel is being dug.')) { addFx(...FX_SPOTS.shaft.slice(0, 2), 'NEW SHAFT', '#5ee6a8'); blip([392, 523, 659]); } else blip([140]); break;
-    case 'hire': if (apply((current) => hireWorkers(current, 1), 'Miner hired and assigned.')) { addFx(80, -30, '+1 MINER', '#5ee6a8'); blip([587, 784]); } else blip([140]); break;
-    case 'grant': {
-      const amount = Number($('#grant-amount').value);
-      if (!Number.isSafeInteger(amount) || amount < 1) { toast('Enter a positive whole coin amount.', 'error'); break; }
-      grantValue = String(amount);
-      apply((current) => grantDevCoins(current, amount), 'Local test grant recorded.');
-      break;
-    }
-    case 'export-corrupt': {
-      try {
-        const raw = corruptRaw ?? JSON.parse(localStorage.getItem(RECOVERY_KEY) || 'null')?.raw;
-        if (typeof raw !== 'string') { toast('No unreadable save is stored.'); break; }
-        const url = URL.createObjectURL(new Blob([raw], { type: 'text/plain' }));
-        const a = document.createElement('a'); a.href = url; a.download = 'extraction-unreadable-save.txt'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
-      } catch { toast('The recovery text could not be downloaded.', 'error'); }
-      break;
-    }
-    case 'export-save':
-    case 'export-backup': {
-      try {
-        save(); const backup = button.dataset.act === 'export-backup';
-        const raw = localStorage.getItem(backup ? 'extraction_sandbox_backup' : SAVE_KEY);
-        if (!raw) { toast('No backup is saved yet.'); break; }
-        const data = backup ? JSON.stringify(JSON.parse(raw).save, null, 2) : raw;
-        const url = URL.createObjectURL(new Blob([data], { type: 'application/json' }));
-        const a = document.createElement('a'); a.href = url; a.download = backup ? 'extraction-mine-backup.json' : 'extraction-mine.json'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
-      } catch { toast('The save could not be downloaded.', 'error'); }
-      break;
-    }
-    case 'economy-ask': newEconomyPrompt = true; render(); break;
-    case 'economy-cancel': newEconomyPrompt = false; render(); break;
-    case 'economy-new': {
-      try { save(); const old = localStorage.getItem(SAVE_KEY); if (!old) throw new Error('Save unavailable'); localStorage.setItem('extraction_sandbox_backup', JSON.stringify({ backedUpAtMs: Date.now(), save: JSON.parse(old) })); }
-      catch { toast('Backup could not be saved. Your current mine is still open.', 'error'); break; }
-      newEconomyPrompt = false; freshMine(); render(); toast('Original mine backed up. New economy ready.', 'success'); break;
-    }
-    case 'reset': resetPromptOpen = true; render(); break;
-    case 'cancel-reset': resetPromptOpen = false; render(); break;
-    case 'confirm-reset':
-      saveBlocked = false;
-      state = createGameState(siteOpts()); paused = false; catchupRemaining = 0; catchingUp = false; catchupKind = 'offline'; resetPromptOpen = false; recovering = '';
-      save(); render(); toast('Fresh local mine opened.', 'success'); break;
+    case 'launch': apply(dispatchNow, 'Launch order sent.', {kind:'dispatch',payload:{}}); break;
+    case 'shaft': if (apply(buyNextShaft, 'Shaft order sent.', {kind:'shaft',payload:{}})) { addFx(...FX_SPOTS.shaft.slice(0, 2), 'NEW SHAFT', '#5ee6a8'); blip([392, 523, 659]); } else blip([140]); break;
     default:
   }
 });
 
 document.addEventListener('change', (event) => {
-  if (event.target.matches('[data-act="auto"]')) apply((current) => setAutoLaunch(current, event.target.checked));
+  if (event.target.matches('[data-act="auto"]')) apply((current) => setAutoLaunch(current, event.target.checked), '', {kind:'policy',payload:{auto:event.target.checked}});
 });
 document.addEventListener('input', (event) => { if (event.target.id === 'grant-amount') grantValue = event.target.value; if (event.target.id === 'planetPrompt') planetPromptValue = event.target.value; });
 document.addEventListener('focusout', (event) => { if (renderPending) { renderPending = false; render(); } });
-document.addEventListener('visibilitychange', () => {
-  if (REMOTE) { if (document.visibilityState === 'visible') syncRemote(true); return; }
-  if (document.visibilityState === 'visible' && !paused) {
-    const elapsed = Math.floor((Date.now() - savedAtMs) / 1000);
-    if (elapsed > 1 && Number.isSafeInteger(elapsed)) {
-      catchupRemaining += elapsed;
-      if (!catchingUp) { catchupKind = 'offline'; catchingUp = true; render(); setTimeout(catchUpBatch, 0); }
-    }
-  }
-});
+document.addEventListener('visibilitychange', () => { if (!document.hidden) syncRemote(true); });
 
 window.addEventListener('focus', () => { if (REMOTE && !document.hidden) syncRemote(true); });
 
