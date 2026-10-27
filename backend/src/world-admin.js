@@ -17,10 +17,10 @@ export class WorldAdmin {
   /**
    * @param {{firestore, game: import('./game-service.js').GameService, repository, inviteCode?: string, maxMembers?: number, seedSecret: string, players?: number}} options
    */
-  constructor({ firestore, game, repository, inviteCode = null, maxMembers = 10, seedSecret, players = 10, eventWorker = null }) {
+  constructor({ canonical = null, canonicalRepository = null, firestore, game, repository, inviteCode = null, maxMembers = 10, seedSecret, players = 10, eventWorker = null }) {
     if (!firestore || !game || !repository) throw new TypeError('firestore, game and repository are required');
     if (typeof seedSecret !== 'string' || seedSecret.length < 16) throw new TypeError('A seedSecret of at least 16 characters is required');
-    Object.assign(this, { firestore, game, repository, inviteCode, maxMembers, seedSecret, players, eventWorker });
+    Object.assign(this, { canonical, canonicalRepository, firestore, game, repository, inviteCode, maxMembers, seedSecret, players, eventWorker });
   }
 
   #worldRef(worldId) { return this.firestore.collection('worlds').doc(sha(worldId)); }
@@ -49,6 +49,23 @@ export class WorldAdmin {
     const rollover = await this.rollover({ worldId, nowMs });
     if (rollover.skipped) return rollover;
     const monthId = monthOf(nowMs);
+    if (this.canonical && this.canonicalRepository) {
+      const members = await this.canonicalRepository.listMembers(worldId);
+      const settlements = [];
+      for (const uid of members) {
+        try {
+          let result;
+          // Hourly work can cover two hours per owner, letting missed ticks recover.
+          // Each checkpoint still has the service's 300-step transaction bound.
+          for (let batch = 0; batch < 24; batch += 1) {
+            result = await this.canonical.state({ worldId, uid, nowMs });
+            if (!result.catchingUp) break;
+          }
+          settlements.push({ ownerId: uid, done: !result.catchingUp });
+        } catch (error) { settlements.push({ ownerId: uid, done: false, error: error.code ?? 'SETTLEMENT_FAILED' }); }
+      }
+      return { ...rollover, settlements, done: settlements.every(row => row.done) };
+    }
     const roster = await this.repository.transact((tx) => tx.getDoc(rosterPath(worldId, monthId)),
       { worldId, ownerId: 'system', monthId, readOnly: true });
     const owners = roster?.owners ?? [];

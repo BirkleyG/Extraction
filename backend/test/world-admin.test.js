@@ -157,3 +157,11 @@ test('tick drains the durable event queue with no clients, reports it, and a stu
   assert.equal(stuck.done, false);
   assert(stuck.settlements.every((s) => s.done)); // owners still advanced
 });
+
+test('single-game scheduler advances registered canonical saves with bounded repeated checkpoints', async () => {
+  const calls=[];
+  const admin=new WorldAdmin({firestore:{},game:{},repository:{},seedSecret:'canonical-worker-seed',canonicalRepository:{listMembers:async()=>['one','two']},canonical:{state:async({uid,nowMs})=>{calls.push({uid,nowMs});return{catchingUp:uid==='one'&&calls.filter(r=>r.uid==='one').length<3};}}});
+  admin.rollover=async()=>({monthId:'2026-10',closed:[]});
+  const result=await admin.tick({worldId:'world',nowMs:12345});
+  assert.equal(result.done,true);assert.equal(calls.length,4);assert(calls.every(row=>row.nowMs===12345));
+});
