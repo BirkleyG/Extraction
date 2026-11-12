@@ -1,0 +1,20 @@
+{
+  "name": "mineshaft-capital",
+  "private": true,
+  "description": "Multiplayer Mineshaft Capital server for Railway (code in game/).",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node game/server.js",
+    "dev": "node --watch game/server.js",
+    "test": "node --test game/test/*.test.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.8.0",
+    "express": "^5.1.0",
+    "openai": "^7.55.0",
+    "pg": "^8.16.0",
+    "ws": "^8.18.0"
+  }
+}
