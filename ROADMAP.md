@@ -9,6 +9,15 @@ Planning rules:
 - **Simple on the surface, deep underneath.** Players see prices, trip times and coin/min. The demand math (hidden buyer maximums, CES, market power) stays in the engine and is revealed through intel, never through rules text.
 - **Each system gets one decision that matters.** If a feature doesn't create a choice, it waits.
 
+## Decisions so far (owner, 2026-11-12)
+
+- The artifact's tribes, army, hunting, species archetypes and skill tree are **hidden** from Phase 1 and rebuilt in their own phases.
+- The species skill tree and archetypes are **replaced**: evolutions (bought with nuke SP) replace the tree; species are rebuilt with the modular builder in Phase 2.
+- **Pacing:** players check in a few times a day. A strong player can first nuke (20M earned) around day 3–4.
+- **Months** stay calendar-length; no shortened test months.
+- **Players:** plan for 3–10 per month.
+- **AI spend:** the current cap (300 calls a day, 60 per player) is fine.
+
 ---
 
 ## Phase 1: The core loop feels great
@@ -34,8 +43,14 @@ Shipping and selling
 - No fuel, crew or maintenance costs. Paid cargo always arrives.
 - **Simple market:** a few computer-run buyers that always buy. Each ore's price falls as the planet sells more of it and recovers over time. Common ores barely move (price takers); mythic swings hard (price maker). This is the visible core of the full economy model.
 
+The planet's look (AI-built, from the archived Tycoon sandbox)
+- Each month the AI picks one central theme (e.g. a candy world, a haunted bone-yard, a dead neon city), then builds the sky, moons, rock layers and ore colors to match.
+- A ring of 5–7 regions, each a distinct landscape with its own skyline, ground details, biome colors and always-on weather effect. Bring back the 39 landscapes from `play/planet.js` and `play/terrains.js` on `archive/legacy-tycoon`: 27 earthlike (mesa, dunes, glacier, volcanic, jungle, redwoods and more) and 12 alien (crystal spires, fungal forest, floating islands, neon ruins and more). They don't have to be copied exactly.
+- The AI reads a summary of earlier months' planets so each one feels new. With no AI, the game improvises from built-in themes.
+- Your mine sits in your region and looks like it. The planet map shows every region.
+
 Month and players
-- Lore: the Maker Guild grants extraction rights, and you are a Guild General. At month start you design your species (name, look) with the Guild.
+- Lore: the Maker Guild grants extraction rights, and you are a Guild General. At month start you name your species and pick a color; the full species builder arrives in Phase 2.
 - Top bar: coin, coin/min, day of the month, rank, alerts.
 - Live monthly leaderboard (coin and coin/min).
 - Bulk buy: 1x, 10x, 100x, Max. Every upgrade shows its cost and next effect.
@@ -45,9 +60,9 @@ Month and players
 - First screen is just the mine and one button. New panels appear as you unlock them. A guided first session: mine, ship, sell, upgrade.
 - Works on phones, reduced-motion mode, sound on by default.
 
-Engineering under the hood: move the economy to a server-side rate engine. The existing pixel-art renderer stays and animates from the rates. The artifact's tribes, army, hunting and skill tree are hidden until their phases (see question 1).
+Engineering under the hood: move the economy to a server-side rate engine. The existing pixel-art renderer stays and animates from the rates. The artifact's tribes, army, hunting, archetypes and skill tree are hidden.
 
-> **Playtest:** Is the first 30 minutes fun? Do people come back the next day to spend what they earned offline?
+> **Playtest:** Is the first 30 minutes fun? Do people come back the next day to spend what they earned offline? Does each month's planet feel like a new place?
 
 ---
 
@@ -62,6 +77,12 @@ Prestige
 - **The Maker negotiation:** ask for one economic change and give a reason; up to 3 rounds of accept, counter or refuse. The AI writes the Maker's lines, the engine decides the outcome (85% Spectacle + 15% negotiation quality, scored by the AI). Allowed changes: demand for an ore, outside supply of an ore, global prices, which factions are buying. Changes apply to everyone and last all month. Fallback lines if the AI fails.
 - Galaxy bulletin listing every active change and who caused it.
 - Evolutions bought with SP: mine speed, refine speed, ship speed, sell price, Spectacle multiplier. Rising costs, lasting all month.
+
+Species builder (with the Maker Guild, at month start)
+- Pixel species assembled from a parts library: heads, bodies, arms and legs, eyes, mouths, skin patterns, accessories and color palettes. Enough combinations that no two colonies look alike.
+- Describe your species in a sentence; the AI picks the parts, colors, name and a one-line tagline from the library. You can reroll or swap any part by hand.
+- The look appears everywhere your colony does: miners, the leaderboard, the feed and the Hall of Fame.
+- Purely cosmetic in this phase; no stat perks.
 
 Stakes and rhythm
 - Closing-bell countdown to the final 48 hours.
@@ -159,4 +180,4 @@ Surface hazards
 - Screens settle into: Colony, Fleet, Market, Refinery, Station, Defense, Map, Reports, Evolutions, Records.
 - Rules page and glossary tooltips.
 - Patch notes shown at login.
-- Balance pass on pacing, Spectacle formula and the nuke threshold using real month data.
+- Balance pass on pacing, Spectacle formula and the nuke threshold using real month data, against the targets above (a few check-ins a day, first nuke around day 3–4).
