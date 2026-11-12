@@ -161,6 +161,38 @@
     },
   };
 
+  // Server AI model picker, shown at the top of the game's AI settings.
+  window.MSC_AI_HTML = function () {
+    setTimeout(fillModels, 0);
+    return `<div id="mscAi"><label class="f">Server model (Claude or ChatGPT) <select id="mscModel" disabled><option>Loading…</option></select></label><p class="lede" id="mscAiNote"></p></div>`;
+  };
+  async function fillModels() {
+    const sel = document.getElementById('mscModel'), note = document.getElementById('mscAiNote');
+    if (!sel || sel.dataset.filled) return;
+    sel.dataset.filled = '1';
+    try {
+      const j = await api('GET', '/api/ai/models');
+      const groups = { anthropic: 'Claude', openai: 'ChatGPT' };
+      const e = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+      let h = j.model ? '' : '<option value="">No AI key on the server</option>';
+      for (const g in groups) {
+        const opts = j.options.filter(o => o.provider === g);
+        if (opts.length) h += `<optgroup label="${groups[g]}">` + opts.map(o => `<option value="${e(o.id)}" ${o.id === j.model ? 'selected' : ''}>${e(o.label)}</option>`).join('') + '</optgroup>';
+      }
+      if (j.model && !j.options.some(o => o.id === j.model)) h = `<option value="${e(j.model)}" selected>${e(j.model)}</option>` + h;
+      sel.innerHTML = h;
+      sel.disabled = !j.canChange || !j.options.length;
+      const missing = Object.keys(groups).filter(g => !j.providers[g]).map(g => groups[g]);
+      note.textContent = (j.canChange ? 'You are the owner: this choice applies to everyone.' : 'The owner picks the model for everyone.') +
+        (missing.length ? ` No ${missing.join(' or ')} key on the server yet.` : '');
+      sel.onchange = async () => {
+        note.textContent = 'Saving…';
+        try { const r = await api('PUT', '/api/ai/model', { model: sel.value }); note.textContent = 'Now using ' + r.model + ' for everyone.'; }
+        catch (err) { note.textContent = err.message; }
+      };
+    } catch (err) { note.textContent = 'Could not load models: ' + err.message; }
+  }
+
   // Shown inside the game's Settings sheet.
   window.MSC_ACCOUNT_HTML = function () {
     if (!me) return '';

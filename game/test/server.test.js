@@ -13,7 +13,13 @@ if (process.env.TEST_DATABASE_URL) backends.push(['postgres', process.env.TEST_D
 for (const [label, url] of backends) {
   describe(`server (${label})`, () => {
     let srv, base;
-    const fakeAi = { enabled: true, model: 'fake', dailyLimit: 3, perPlayerLimit: 2, async json(p, tier) { return { echo: p, tier }; } };
+    const fakeAi = {
+      enabled: true, providers: { anthropic: true, openai: true }, dailyLimit: 3, perPlayerLimit: 2,
+      defaultModel: () => 'claude-opus-5-5',
+      listModels: async () => [{ id: 'claude-opus-5-5', label: 'Claude Opus 5.5', provider: 'anthropic' }, { id: 'gpt-x', label: 'ChatGPT · gpt-x', provider: 'openai' }],
+      canUse: m => !!m && !/^nope/.test(m),
+      async json(model, p, tier) { return { echo: p, tier, model }; },
+    };
 
     before(async () => {
       if (url) {
@@ -98,10 +104,24 @@ for (const [label, url] of backends) {
       assert.equal(code, 4001);
     });
 
+    test('owner picks the AI model for everyone', async () => {
+      const boss = (await call('POST', '/api/join', { name: 'Owner2', code: 'boss' })).body;
+      const pleb = (await join('Pleb')).body;
+      const list = await call('GET', '/api/ai/models', null, pleb.token);
+      assert.equal(list.body.model, 'claude-opus-5-5');
+      assert.equal(list.body.canChange, false);
+      assert.equal(list.body.options.length, 2);
+      assert.equal((await call('PUT', '/api/ai/model', { model: 'gpt-x' }, pleb.token)).status, 403);
+      assert.equal((await call('PUT', '/api/ai/model', { model: 'nope-1' }, boss.token)).status, 400);
+      assert.equal((await call('PUT', '/api/ai/model', { model: 'gpt-x' }, boss.token)).status, 200);
+      assert.equal((await call('GET', '/api/ai/models', null, pleb.token)).body.model, 'gpt-x');
+      await call('PUT', '/api/ai/model', { model: 'claude-opus-5-5' }, boss.token);
+    });
+
     test('AI calls go through the server with daily limits', async () => {
       const a = (await join('Jade')).body, b = (await join('Kai')).body;
       const r = await call('POST', '/api/ai', { prompt: 'hi', tier: 'quick' }, a.token);
-      assert.deepEqual(r.body.result, { echo: 'hi', tier: 'quick' });
+      assert.deepEqual(r.body.result, { echo: 'hi', tier: 'quick', model: 'claude-opus-5-5' });
       await call('POST', '/api/ai', { prompt: 'hi' }, a.token);
       assert.equal((await call('POST', '/api/ai', { prompt: 'hi' }, a.token)).status, 429, 'per-player limit');
       assert.equal((await call('POST', '/api/ai', { prompt: 'hi' }, b.token)).status, 200);

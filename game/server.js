@@ -1,5 +1,5 @@
 // Mineshaft Capital server: serves the game, stores shared state in Postgres,
-// pushes live updates over WebSocket, and runs Claude calls with the server's key.
+// pushes live updates over WebSocket, and runs Claude or ChatGPT calls with the server's keys.
 import http from 'node:http';
 import crypto from 'node:crypto';
 import path from 'node:path';
@@ -131,20 +131,41 @@ export async function startServer(opts = {}) {
     res.json({ acquired: await store.acquireLock(name, me.id, ttl) });
   }));
 
+  // The owner picks the model in Settings; everyone else sees which one is in use.
+  async function currentModel() {
+    const cfg = await store.getDoc('config', 'ai');
+    const m = (cfg && cfg.model) || ai.defaultModel();
+    return ai.canUse(m) ? m : '';
+  }
+
+  app.get('/api/ai/models', need(async (req, res, me) => {
+    res.json({ model: await currentModel(), options: await ai.listModels(), providers: ai.providers, canChange: !!me.owner });
+  }));
+
+  app.put('/api/ai/model', need(async (req, res, me) => {
+    if (!me.owner) throw fail(403, 'permission_denied', 'Only the owner can change the AI model');
+    const model = String(req.body.model || '').trim();
+    if (!/^[A-Za-z0-9._:-]{2,80}$/.test(model)) throw fail(400, 'invalid_argument', 'Bad model name');
+    if (!ai.canUse(model)) throw fail(400, 'invalid_argument', 'The server has no API key for that model');
+    await store.setDoc('config', 'ai', { model, by: me.id });
+    res.json({ ok: true, model });
+  }));
+
   app.post('/api/ai', need(async (req, res, me) => {
     const prompt = String(req.body.prompt || '');
     if (!prompt || prompt.length > 40000) throw fail(400, 'invalid_argument', 'Bad prompt');
-    if (!ai.enabled) throw fail(503, 'ai_off', 'The server has no Claude API key yet');
+    const model = await currentModel();
+    if (!model) throw fail(503, 'ai_off', 'The server has no AI key yet');
     const day = new Date().toISOString().slice(0, 10);
     const used = await store.aiCounts(day, me.id);
     if (used.total >= ai.dailyLimit) throw fail(429, 'ai_limit', 'The Maker is out of words for today (server AI limit reached)');
     if (used.mine >= ai.perPlayerLimit) throw fail(429, 'ai_limit', 'You have used your AI calls for today');
     await store.bumpAi(day, me.id);
     try {
-      res.json({ result: await ai.json(prompt, String(req.body.tier || 'default')) });
+      res.json({ result: await ai.json(model, prompt, String(req.body.tier || 'default')) });
     } catch (e) {
-      console.error('AI error', e.status || '', e.message);
-      throw fail(502, 'ai_error', e.userMessage || 'Claude did not answer. Try again.');
+      console.error('AI error', model, e.status || '', e.message);
+      throw fail(502, 'ai_error', e.userMessage || 'The AI did not answer. Try again.');
     }
   }));
 
@@ -184,7 +205,7 @@ export async function startServer(opts = {}) {
   const port = opts.port ?? Number(env.PORT || 3000);
   await new Promise(r => server.listen(port, r));
   const address = server.address();
-  console.log(`Mineshaft Capital on :${address.port} (store: ${store.kind}, AI: ${ai.enabled ? ai.model : 'off'})`);
+  console.log(`Mineshaft Capital on :${address.port} (store: ${store.kind}, AI keys: ${Object.keys(ai.providers).filter(k => ai.providers[k]).join(', ') || 'none'})`);
   return {
     port: address.port, store,
     async close() { clearInterval(ping); for (const ws of wss.clients) ws.terminate(); wss.close(); await new Promise(r => server.close(r)); await store.close(); },

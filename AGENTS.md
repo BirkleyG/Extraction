@@ -1,38 +1,9 @@
-# Extraction Tycoon development
+# Mineshaft Capital development
 
-## Restart (decided by the owner, 2026-11-12)
-
-- The active game is `game/`: a faithful copy of the Mineshaft Capital artifact, hosted on Railway with Postgres and a server-side Claude key. See `game/README.md`.
+- The game is `game/`: a faithful copy of the Mineshaft Capital artifact, hosted on Railway with Postgres and server-side AI keys. See `game/README.md`.
 - Get the copy playable and multiplayer first; expand the game only after that. Keep changes small and playable.
-- The rulebook, buildout plan, `/play/`, `/online/` and `backend/` belong to the earlier attempt. Keep them, but they do not bind `game/` unless the owner brings a rule back.
-- Run `npm test` and check the real browser loop with two players before calling a `game/` change done.
-
-## Earlier attempt (paused)
-
-### Source of truth
-
-- Read `docs/rulebook/Extraction-Rulebook-v1.2.md` and `docs/development/Buildout-Plan.md` before changing gameplay.
-- Markdown is maintained; the accompanying v1.2 DOCX and calibration JSON are historical snapshots.
-- Approved R rules are binding. C coefficients are provisional, not certified balance. Update the owning rule section and section 22 change log with every gameplay change.
-- Track unresolved developmental decisions in `docs/development/Questions-for-the-Boss.md`; never silently turn a recommendation into an approved rule.
-
-### Budget and ownership
-
-- Use lighter coding models for bounded implementation tasks. The lead owns architecture, integration and acceptance.
-- The CEO authorizes faster parallel work: use a small group of lighter-model agents for independent implementation, focused review and browser QA. Give each agent distinct file ownership; do not spawn recursive teams or duplicate broad audits. Prefer bounded tasks and reuse existing agents/context.
-- Give each task explicit files, rule/test IDs and a stop condition. Return changed files, verification and remaining gaps.
-- Do not enable paid services or paid runtime AI without an established spending ceiling.
-
-### Delivery
-
-- Preserve the legacy prototype and existing saves until the migration decision is recorded.
-- Implement trusted commands, ledger, deterministic engine and scheduler before calling multiplayer authoritative.
-- Clients render filtered read models; they cannot decide money, time, hidden truth, outcomes or admin permissions.
-- Run relevant invariant/security/replay tests as those systems are added. Syntax checks alone are not release acceptance.
-- Push feature branches and open reviewable pull requests. Never label incomplete milestones as released or claim arithmetic checks certify balance.
-
-### Playable publishing
-
-- GitHub Pages publishes `main`, root. Development/specification branch merges alone do not update the live game.
-- Keep `/play/` runnable as the local browser test harness and preserve `/prototype/` with legacy save keys. State clearly that the sandbox is single-player/local and not the authoritative multiplayer release.
-- Validate the actual browser loop and publish reviewed playable changes when the user asks to play; do not deliver only backend PRs in response.
+- `game/public/index.html` is the artifact's game. Change it surgically; `game/public/net.js` adapts it to the server.
+- AI keys stay on the server. The owner picks the model; keep daily AI limits in place.
+- Run `npm test` and check the real browser loop with two players before calling a change done.
+- The earlier Extraction Tycoon attempt is archived on the `archive/legacy-tycoon` branch. It does not bind this game unless the owner brings something back.
+- Push feature branches; the owner decides what merges to `main`.
