@@ -169,7 +169,8 @@ export async function startServer(opts = {}) {
     }
   }));
 
-  app.use(express.static(path.join(here, 'public'), { extensions: ['html'], maxAge: '5m' }));
+  app.use('/shared', express.static(path.join(here, 'shared'), { maxAge: '1m' }));
+  app.use(express.static(path.join(here, 'public'), { extensions: ['html'], maxAge: '1m' }));
 
   const server = http.createServer(app);
 

@@ -32,7 +32,7 @@ Mine
 - A **"!"** marks bottlenecks and wasted labor, with a bottleneck line naming the cheapest upgrade that would help.
 
 Ores
-- Seven ores per planet: 2 common, 4 rare, 1 mythic. The AI names each one and gives it a color, description and galactic use.
+- Seven ores per planet: 2 common, 4 rare, 1 mythic. The AI invents each ore from the planet's theme and its galactic use: name, color palette, crystal shape and description (a candy world might mine "gumdrop quartz" used in starship insulation). Ore sprites are drawn from those choices.
 - Hardness: rarer ore needs better drills. Mythic needs special equipment (a later license).
 - Common ore never runs out. Rare and mythic veins deplete, with vein bars and warnings at 20% and 5%, which pushes you to open deeper shafts.
 
