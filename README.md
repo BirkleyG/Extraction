@@ -1,5 +1,7 @@
 # Extraction Tycoon
 
+> **Restart, November 2026:** active development has moved to [`game/`](game/README.md): the Mineshaft Capital artifact rebuilt as a multiplayer game on Railway with Postgres and server-side Claude. Everything below describes the earlier GitHub Pages sandbox, which stays online but is paused.
+
 **[Play the development sandbox](https://birkleyg.github.io/Extraction/play/)** · [Original prototype](https://birkleyg.github.io/Extraction/prototype/)
 
 Mine ore, open shafts, upgrade your machines, and ship to published NPC buyers. Sales pay at departure. The animated mine runs immediately; no Firebase project, account or API key is needed to try it.
