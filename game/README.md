@@ -3,7 +3,7 @@
 A faithful copy of the **Mineshaft Capital** Claude artifact, hosted on Railway with Postgres and server-side AI keys (Claude and ChatGPT).
 
 - `public/index.html` is the artifact's game, nearly unchanged. It still simulates each player's colony in the browser.
-- `public/net.js` provides the same small API the artifact runtime did (shared documents, live updates, player identity, Claude calls), backed by this server.
+- `public/net.js` provides the same small API the artifact runtime did (shared documents, live updates, player identity, AI calls), backed by this server.
 - `server.js` serves the game, stores everything in Postgres, pushes live updates over WebSocket and enforces who can write what.
 - `ai.js` calls Claude (`ANTHROPIC_API_KEY`) or ChatGPT (`OPENAI_API_KEY`). Players never see the keys.
 
