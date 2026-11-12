@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Planet demo · Mineshaft Capital</title>
+<style>
+  :root { color-scheme: dark; --bg: #0b0714; --panel: #160f24; --line: #2c2140; --text: #ece4ff; --dim: #a597c4; --gold: #ffd23f; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  header { padding: 18px 22px 8px; display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end; justify-content: space-between; }
+  h1 { margin: 0; font-size: 28px; letter-spacing: 1px; color: var(--gold); }
+  h2 { margin: 26px 22px 10px; font-size: 16px; text-transform: uppercase; letter-spacing: 2px; color: var(--dim); }
+  .tag { color: var(--dim); font-style: italic; }
+  .controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  input, button { font: inherit; background: var(--panel); color: var(--text); border: 2px solid var(--line); padding: 6px 10px; }
+  button { cursor: pointer; border-color: #5a3f8a; } button:hover { border-color: var(--gold); }
+  .story { margin: 4px 22px 0; max-width: 980px; }
+  .meta { margin: 6px 22px 0; color: var(--dim); }
+  canvas { image-rendering: pixelated; image-rendering: crisp-edges; display: block; }
+  .hero { margin: 14px 22px 0; border: 2px solid var(--line); width: min(960px, calc(100vw - 44px)); height: auto; }
+  .grid { display: grid; gap: 14px; margin: 0 22px; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); }
+  .card { background: var(--panel); border: 2px solid var(--line); padding: 8px; }
+  .card canvas.land { width: 100%; height: auto; border: 1px solid #000; }
+  .card h3 { margin: 6px 0 2px; font-size: 15px; } .card p { margin: 2px 0; color: var(--dim); }
+  .sw { display: inline-block; width: 14px; height: 14px; border: 1px solid #000; vertical-align: middle; margin-right: 2px; }
+  .ores { display: grid; gap: 12px; margin: 0 22px; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); }
+  .ore { display: flex; gap: 10px; background: var(--panel); border: 2px solid var(--line); padding: 8px; }
+  .ore canvas { width: 120px; height: 120px; flex: none; background: #0f0a1a; }
+  .ore h3 { margin: 0; font-size: 15px; } .ore p { margin: 2px 0; color: var(--dim); font-size: 12px; }
+  .tier-common { color: #b8c4cc; } .tier-rare { color: #7ad1ff; } .tier-mythic { color: #ff9f3d; }
+  .row { display: flex; gap: 14px; margin: 0 22px; flex-wrap: wrap; align-items: flex-start; }
+  .layers div { padding: 4px 8px; border-bottom: 1px solid #0006; }
+  table { border-collapse: collapse; } td, th { border: 1px solid var(--line); padding: 3px 6px; font-size: 12px; } th { color: var(--dim); }
+  .hot { color: var(--gold); }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1 id="name">…</h1>
+    <div class="tag" id="tagline"></div>
+  </div>
+  <div class="controls">
+    <label>seed <input id="seed" size="14"></label>
+    <button id="go">Build</button>
+    <button id="new">New seed</button>
+    <button id="all">All 39 terrains</button>
+    <button id="ai">Garbage AI test</button>
+  </div>
+</header>
+<div class="meta" id="theme"></div>
+<p class="story" id="story"></p>
+<canvas class="hero" id="hero" width="480" height="270"></canvas>
+<h2>Regions</h2>
+<div class="grid" id="regions"></div>
+<h2>Ores</h2>
+<div class="ores" id="ores"></div>
+<h2>Every crystal shape (this planet's ore palettes)</h2>
+<canvas id="shapes" width="480" height="64" style="width:960px;height:128px;margin:0 22px;border:2px solid var(--line)"></canvas>
+<h2>Strata, map, buyers and crew</h2>
+<div class="row">
+  <div class="card layers" id="layers" style="min-width:240px"></div>
+  <canvas id="strata" width="120" height="330" style="width:240px;height:660px;border:2px solid var(--line)"></canvas>
+  <canvas id="map" width="250" height="250" style="width:500px;height:500px;border:2px solid var(--line)"></canvas>
+  <div class="card"><table id="buyers"></table></div>
+  <canvas id="crew" width="380" height="200" style="width:760px;height:400px;border:2px solid var(--line)"></canvas>
+</div>
+<script type="module" src="./planet-demo.js"></script>
+</body>
+</html>
