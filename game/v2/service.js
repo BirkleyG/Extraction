@@ -117,7 +117,7 @@ export function createV2({ store, ai, currentModel, broadcast, now: clock = () =
 
   async function loadColony(uid, world) {
     const c = await store.getDoc('col2', uid);
-    if (!c || c.v !== E.ENGINE_VERSION || c.planetId !== world.planet.id) return null;
+    if (!c || !(c.v >= 3 && c.v <= E.ENGINE_VERSION) || c.planetId !== world.planet.id) return null;
     return c;
   }
 
@@ -281,7 +281,7 @@ export function createV2({ store, ai, currentModel, broadcast, now: clock = () =
       await snapshotHistory(world, t).catch(e => console.error('history', e));
       for (const d of await store.listColl('col2')) {
         const c = d.data;
-        if (c.v !== E.ENGINE_VERSION || c.planetId !== world.planet.id) continue;
+        if (!(c.v >= 3 && c.v <= E.ENGINE_VERSION) || c.planetId !== world.planet.id) continue;
         if (t - (c.t || 0) < 55_000) continue;
         await settle(c, world, t);
       }

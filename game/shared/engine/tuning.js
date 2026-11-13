@@ -86,11 +86,11 @@ export const T = {
     valueMult: 4,
     computer: 0.6,              // no parties: a computer buyer takes everything at 0.6x base value
     tripSecs: 12,               // one way to the orbital refinery at speed 1
-    growthPow: 2,
-    demandScale: 1,
+    growthPow: 1.3,
+    demandScale: 0.25,
     tierDemand: { common: 1, rare: 0.5, mythic: 0.1 },
     markupMin: 0.5, markupMax: 3,
-    planet:  { cost: 3_000_000,  thru: 4_000,  yield: 1,    storage: 60_000,  label: 'On-planet refinery' },
+    planet:  { cost: 1_500_000,  thru: 4_000,  yield: 1,    storage: 60_000,  label: 'On-planet refinery' },
     orbital: { cost: 40_000_000, thru: 15_000, yield: 1.25, storage: 300_000, docks: 2, label: 'Orbital refinery' },
     // upgrade cost = build cost x base x growth^level
     up: {

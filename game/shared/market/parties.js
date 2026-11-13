@@ -54,7 +54,8 @@ export function generateParties(seed, planet, count = 24) {
       id: 'pt' + i, name, type, personality,
       blurb: `A ${personality} ${T.label.toLowerCase()} buyer.`,
       wants: wantsFor(R, type, ores),
-      demand: round(between(R, T.demand)), ref: round(between(R, T.ref)), sigma: round(between(R, T.sigma)), cap: round(between(R, T.cap)),
+      // demand: units/min this party buys at its reference price on day 1
+      demand: round(60 * between(R, T.demand)), ref: round(between(R, T.ref)), sigma: round(between(R, T.sigma)), cap: round(between(R, T.cap)),
     });
   }
   return out;

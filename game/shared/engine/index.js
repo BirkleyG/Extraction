@@ -15,7 +15,13 @@
  *                                        risk (mishaps/hour, 0..1), haltMins, lights, supports }],
  *                             ships: [{ id, name, cls, cap, dest, tripSecs, perMin, cycleSecs }],
  *                             hazards: { perHour, loss (share of output), lossPerMin, colony: { gas, flood, fire, quake } },
- *                             evo: { mine, ship, sell } (multipliers) }
+ *                             evo: { mine, ship, sell } (multipliers),
+ *                             refinery: { [site: 'planet'|'orbital']: { inPerMin (raw), outPerMin, soldPerMin, coinPerMin, stock, cap, full,
+ *                                         throughput, yield, docks?, hold? (orbital raw hold),
+ *                                         byOre: { [oreId]: { on, ask, inPerMin, soldPerMin, coinPerMin, stock, vsRaw } } } } }
+ *       coinPerMin includes refined sales; score values refineries (steady state) for bestMoves.
+ *       vsRaw = coin per raw ore from refining (at what sells now) / coin per raw ore sold raw - 1 (0.38 = "+38% vs selling raw").
+ *       Ships flying to the orbital refinery show dest REF_DEST ('@refinery').
  *   bottleneck(colony, world) -> { stage, wastedPerMin, wastedOrePerMin, message, suggestion: { cmd, cost, label, gainPerMin, canAfford } }
  *       stage: 'mine' | 'lift' | 'yard' | 'conveyor' | 'ships' | 'idle' | 'blocked' | 'safety'
  *   destinations(colony, world, shipClass) -> [{ id, name, distance, price: { oreId: n }, tripSecs, coinPerMin, best }]
@@ -28,7 +34,9 @@
  *
  * Balance numbers live in tuning.js (exported as TUNING); tune with `node game/test/pacing.mjs`.
  * Extra exports: catchUpGrant(world, now), bestMoves(colony, world, { cmds?, limit }), candidateMoves,
- *   marketTable(world, now), fmt(n), PANELS, TUTORIAL, TUNING, spectacleOf(colony, runEarned), evoMult(colony, kind).
+ *   marketTable(world, now), fmt(n), PANELS, TUTORIAL, TUNING, spectacleOf(colony, runEarned), evoMult(colony, kind),
+ *   demandAt(world, colony, oreId, ask, now) -> refined units/min the parties buy at that ask (Infinity with no parties;
+ *     hidden: tests and future intel only), demandGrowth(world, t), REF_DEST, LEDGER_IN, LEDGER_OUT.
  *
  * Commands ({ type, ...args }; n = 1 | 10 | 100 | 'max' where noted):
  *   hire {n} · buyShaft · upgradeShaft {shaftId, kind:'cart'|'bunk', n}
@@ -37,10 +45,13 @@
  *   rename {target:'colony'|'shaft'|'ship', id, name} · tutorial {step} · autoSpend {keep?: 0..0.9}
  *   Safety: upgradeShaft {shaftId, kind:'lights'|'supports', n} (not the home shaft) · upgradeSafety {kind:'ventilation'|'pumps'|'firebreaks', n}
  *   Prestige: nuke {confirm:'NUKE'} (runEarned >= TUNING.nukeMin) · evolve {kind:'mine'|'ship'|'sell'|'spectacle', n} (costs SP)
+ *   Refinery (license + panel 'refinery'): buildRefinery {site:'planet'|'orbital'} · upgradeRefinery {site, kind:'throughput'|'yield'|'storage'|'docks', n}
+ *     (docks: orbital only) · setRefine {site, oreId, on?: bool, markup?: 0.5..3} (free) · setRoute {shipId, policy:'refinery'} (needs the orbital)
  *
  * Panels: mine, hire, shafts, carts, lift, ships, bunks, conveyor, yard, drill, routes, fleet, pads, market,
  *   safety (a shaft at depth index >= 3, or the first mishap), prestige (runEarned >= 5M, or after a nuke).
- * Licenses (day of month AND coin earned+grant): cruiser, freighter, mythicDrill.
+ *   refinery (opens with the refinery license).
+ * Licenses (day of month AND coin earned+grant): cruiser, freighter, mythicDrill, refinery (day 4, 20M).
  *
  * Colony (plain JSON):
  *   { v, id, uid, name, species, siteRegion, planetId, seed, rng, t, born,
@@ -54,12 +65,26 @@
  *     ships: [{ id, name, cls, lvl, policy, destId, state: 'home'|'loading'|'out'|'back', cargo: { oreId: amt }, cargoG,
  *               dest, readyAt, dockedAt, firstLoadAt, departAt, arriveAt, homeAt }],
  *     stats: { mined, lifted, loaded, sold, sales, launches, upgrades, spent, firstSaleAt, hazards, lost },
- *     unlocked: { panels, licenses }, tutorial, nextId }
+ *     unlocked: { panels, licenses }, tutorial, nextId,
+ *     refinery: { planet: null | R, orbital: null | R }, refineMemo: { [site]: ores } (buy settings kept through a nuke),
+ *       R = { site, lvl: { throughput, yield, storage, docks }, ores: { oreId: { on, markup } } (missing = on at 1.0),
+ *             stock: { oreId: refined units }, raw/rawG: { oreId } (orbital raw hold), full },
+ *     ledger: { month: { in: { raw, refined, nukeCargo, grant }, out: { miners, shafts, drill, lift, surface, ships, refinery, safety } },
+ *               run: same, reset by a nuke } }   (coin change = in.raw + in.refined + in.grant - sum(out); nukeCargo never lands in coin)
  * Event types: autoSpend, sale, sales (summary with data.ore/coin), salesSummary, launch, buy, unlock, license,
  *   strike { shaftId, oreId, tier } (face broke into a pocket), pocketOut { shaftId, oreId }, blocked { shaftId, oreId, need },
  *   pocketSummary { count } (past 12 pocket events in one advance),
  *   hazard { kind: 'cavein'|'insanity'|'gas'|'flood'|'fire'|'quake', shaftId?, lost, haltMins, rescued?, burned? } (story text),
- *   hazardSummary { count, lost }, nuke { spectacle, runEarned, sp, paid }, evolve { kind, sp, n, level }.
+ *   hazardSummary { count, lost }, nuke { spectacle, runEarned, sp, paid }, evolve { kind, sp, n, level },
+ *   refined { coin, ore: { oreId: units } } (summary per advance), refineryFull { site } (store filled: asks too high),
+ *   deliver { shipId, raw, coin } (ship unloaded at the orbital; coin = overflow/unrefined ore sold at the nearest buyer), deliverSummary { count }.
+ * Refineries (refinery.js): output = raw grade units x yield; one refined unit is worth TUNING.ref.valueMult x the ore's value
+ *   x ask. Party k buys q_k = demand x growth(day) x wants[ore] x (ask/ref)^-sigma (0 above ref x cap) x demandScale x tierDemand,
+ *   growth(day) = day^growthPow, scaled by world changes global / demand / supply / buyer (buyerId = party id). No parties: a
+ *   computer buyer takes everything at TUNING.ref.computer x base. Sales = min(output + stock, demand); a full store holds intake
+ *   to what sells. On-planet draws from the yard (before the conveyor) as the lift fills it; the orbital is fed by ships
+ *   (policy 'refinery', or 'best' when it pays better and docks/hold have room). advance() integrates it exactly (step-invariant).
+ *   A nuke removes refineries (their buy settings are remembered).
  *
  * Tunnels (pockets.js): each shaft digs sideways; its face advances as ore is mined (ore per metre scales with the crew,
  *   the haul slows long tunnels). Pockets { ore, start, len } are rolled from (seed, nukes, depth, n), richer deeper

@@ -111,9 +111,10 @@ export const effAsk = (world, I, ask) => (hasParties(world, I) ? ask : T.ref.com
 // One refinery over dt ms, exact (piecewise-linear in time, split where a stock empties, the store fills,
 // or a source runs dry), so advance() stays step-invariant.
 //   buf/bufG: the source (the yard, or the orbital's raw hold), drawn at up to `thru` (raw/ms), best ore first.
+//   inflow/inflowG (optional): ore arriving in the source during the step (per ms), e.g. the lift filling the yard.
 //   on[o]: intake allowed. D[o]: demand in units/ms (Infinity = takes everything). stock[o]: refined units.
 // Mutates buf, bufG, stock. Returns { took (raw per ore), sold (units per ore), full }.
-export function refineFlow(buf, bufG, stock, on, D, thru, y, cap, dt, order) {
+export function refineFlow(buf, bufG, stock, on, D, thru, y, cap, dt, order, inflow = null, inflowG = null) {
   const n = stock.length;
   const took = new Array(n).fill(0), sold = new Array(n).fill(0);
   for (let o = 0; o < n; o++) if (D[o] === Infinity && stock[o] > 0) { sold[o] += stock[o]; stock[o] = 0; }
@@ -126,11 +127,15 @@ export function refineFlow(buf, bufG, stock, on, D, thru, y, cap, dt, order) {
     let budget = 0;
     if (full) for (let o = 0; o < n; o++) if (stock[o] > EPS) budget += D[o];
     let rem = thru;
-    for (let o = 0; o < n; o++) { inR[o] = 0; out[o] = 0; gpu[o] = buf[o] > EPS ? bufG[o] / buf[o] : 0; }
+    for (let o = 0; o < n; o++) {
+      inR[o] = 0; out[o] = 0;
+      gpu[o] = buf[o] > EPS ? bufG[o] / buf[o] : inflow && inflow[o] > 0 ? inflowG[o] / inflow[o] : 0;
+    }
     for (const o of order) {
       if (!(rem > 0)) break;
-      if (!on[o] || !(buf[o] > EPS) || !(gpu[o] > 0)) continue;
-      let r = rem;
+      const fin = inflow ? inflow[o] : 0;
+      if (!on[o] || !(buf[o] > EPS || fin > 0) || !(gpu[o] > 0)) continue;
+      let r = buf[o] > EPS ? rem : Math.min(rem, fin);
       if (full) {
         const pass = stock[o] > EPS ? 0 : D[o]; // an ore with no stock sells straight off the line
         const maxOut = pass + budget;
@@ -145,19 +150,22 @@ export function refineFlow(buf, bufG, stock, on, D, thru, y, cap, dt, order) {
       sl[o] = stock[o] > EPS ? D[o] : Math.min(out[o], D[o]);
       const d = out[o] - sl[o];
       net += d;
-      if (inR[o] > 0) h = Math.min(h, buf[o] / inR[o]);
+      const fin = inflow ? inflow[o] : 0;
+      if (inR[o] > fin && buf[o] > EPS) h = Math.min(h, buf[o] / (inR[o] - fin));
       if (d < 0 && stock[o] > EPS) h = Math.min(h, stock[o] / -d);
     }
     let hitCap = false;
     if (!full && net > 0) { const tc = (cap - total) / net; if (tc < h) { h = Math.max(0, tc); hitCap = true; } }
     total = 0;
     for (let o = 0; o < n; o++) {
+      const fin = inflow ? inflow[o] : 0;
+      if (fin > 0) { buf[o] += fin * h; bufG[o] += inflowG[o] * h; }
       if (inR[o] > 0) {
         const x = Math.min(buf[o], inR[o] * h);
         const g = x >= buf[o] ? bufG[o] : x * gpu[o];
         buf[o] -= x; bufG[o] -= g; took[o] += x;
-        if (buf[o] <= EPS * 1e3) { buf[o] = 0; bufG[o] = 0; }
       }
+      if (buf[o] <= EPS * 1e3) { buf[o] = 0; bufG[o] = 0; } else if (bufG[o] < 0) bufG[o] = 0;
       sold[o] += sl[o] * h;
       stock[o] = Math.max(0, stock[o] + (out[o] - sl[o]) * h);
       if (stock[o] < 1e-9) stock[o] = 0;

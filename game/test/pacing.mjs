@@ -188,6 +188,9 @@ function run({ quiet = false, strategy = 'none', refine = 'tune' } = {}) {
           continue;
         }
       }
+      if (!noRefine && !c.refinery?.planet && E.quote(c, world, { type: 'buildRefinery', site: 'planet' }).canAfford) {
+        c = E.applyCommand(c, world, { type: 'buildRefinery', site: 'planet' }, t).colony; // a player builds as soon as the license lands
+      }
       if (day < HOARD_FROM - 1) c = spend(c, world, t, 400, { noRefine }).c; // closing bell: the bot hoards the last days
       if (!noRefine) c = tunePrices(c, world, t, refine);
       if (refBuilt == null && (c.refinery?.planet || c.refinery?.orbital)) refBuilt = t;

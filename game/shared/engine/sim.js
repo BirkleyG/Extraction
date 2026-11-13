@@ -262,11 +262,11 @@ export function advance(colony, world, now) {
     }
     cargo[k].fill(0); cargoG[k].fill(0);
   }
-  function refine(site, buf, bufG, dt, t0) {
+  function refine(site, buf, bufG, dt, t0, inflow = null, inflowG = null) {
     const x = rs[site];
     const D = demandVec(world, I, x.ask, t0).map((d) => d / 60000);
     const was = x.full;
-    const r = refineFlow(buf, bufG, x.stock, x.on, D, x.thru, x.y, x.cap, dt, I.byValue);
+    const r = refineFlow(buf, bufG, x.stock, x.on, D, x.thru, x.y, x.cap, dt, I.byValue, inflow, inflowG);
     let coin = 0;
     for (let o = 0; o < I.n; o++) if (r.sold[o] > 0) { coin += r.sold[o] * x.price[o]; refSold[o] += r.sold[o]; }
     if (coin > 0) { credit(coin, 'refined'); refCoin += coin; }
@@ -427,12 +427,14 @@ export function advance(colony, world, now) {
       }
       c.stats.mined += fm;
     }
+    let up = null, upG = null;
     if (fl > 0) {
-      const [up, upG] = takeByValue(I, tun, tunG, fl);
-      for (let o = 0; o < I.n; o++) { yd[o] += up[o]; ydG[o] += upG[o]; }
+      [up, upG] = takeByValue(I, tun, tunG, fl);
       c.stats.lifted += fl;
     }
-    if (rs.planet) refine('planet', yd, ydG, dt, t0);
+    // the on-planet refinery draws from the yard while the lift fills it (a steady inflow over the step)
+    if (rs.planet) refine('planet', yd, ydG, dt, t0, up && up.map((x) => x / dt), upG && upG.map((x) => x / dt));
+    else if (up) for (let o = 0; o < I.n; o++) { yd[o] += up[o]; ydG[o] += upG[o]; }
     if (rs.orbital) refine('orbital', rs.orbital.raw, rs.orbital.rawG, dt, t0);
     const fcReal = Math.min(fc, sum(yd));
     let left = fcReal;

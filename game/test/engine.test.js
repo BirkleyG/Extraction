@@ -913,3 +913,216 @@ test('evolve: SP costs, effects on rates, prices and speed', () => {
   const expect = Object.entries(out.cargoG).reduce((acc, [o, n]) => acc + n * E.marketPrice(w, o, out.dest, out.arriveAt), 0) * (1 + 2 * T.sell.per);
   assert.ok(Math.abs(sale.data.coin - expect) < 1e-9);
 });
+
+// ---------------------------------------------------------------- Phase 3: refineries, parties, ledger
+const PARTIES = [
+  { id: 'ind1', name: 'Iron Union', type: 'industrial', wants: { gravel: 1, slate: 1, amber: 0.5 }, demand: 400, ref: 1, sigma: 1.5, cap: 2 },
+  { id: 'mil1', name: 'Fleet Office', type: 'military', wants: { gravel: 0.6, slate: 0.5, jade: 1 }, demand: 200, ref: 1.4, sigma: 2, cap: 1.5 },
+  { id: 'fr1', name: 'Night Market', type: 'fringe', wants: { gravel: 0.3, amber: 1 }, demand: 300, ref: 0.8, sigma: 4, cap: 2.5 },
+];
+const refWorld = (parties = PARTIES) => ({ ...newWorld(), parties });
+// A midgame colony holding the refinery license, with the given refineries built.
+function refColony(w, sites = ['planet'], markup) {
+  let c = midgame(w);
+  c.unlocked.licenses.push('refinery');
+  c.coin = 1e12;
+  for (const site of sites) c = run(c, w, { type: 'buildRefinery', site });
+  if (markup != null) for (const site of sites) for (const o of PLANET.ores) c = run(c, w, { type: 'setRefine', site, oreId: o.id, markup });
+  c.coin = 0;
+  return c;
+}
+const refinedIn = (c) => c.ledger.month.in.refined;
+const stockOf = (c, site) => Object.values(c.refinery[site].stock).reduce((a, b) => a + b, 0);
+
+test('demand curve: falls with the ask, zero above the hidden max, grows, follows world changes', () => {
+  const w = refWorld();
+  let prev = Infinity;
+  for (const p of [0.5, 0.7, 0.9, 1, 1.2, 1.5, 1.9]) {
+    const d = E.demandAt(w, null, 'gravel', p, DAY);
+    assert.ok(d > 0 && d < prev, `ask ${p}: ${d}`);
+    prev = d;
+  }
+  // the highest hidden max for gravel is 1.4 x 1.5 = 2.1; above it nobody buys
+  assert.equal(E.demandAt(w, null, 'gravel', 2.11, DAY), 0);
+  assert.equal(E.demandAt(w, null, 'ruby', 1, DAY), 0, 'nobody wants ruby');
+  assert.ok(E.demandAt(w, null, 'gravel', 1, 10 * DAY) > 2 * E.demandAt(w, null, 'gravel', 1, DAY), 'demand grows through the month');
+  const base = E.demandAt(w, null, 'gravel', 1, DAY);
+  const ch = (x) => ({ ...w, changes: [x] });
+  assert.ok(rel(E.demandAt(ch({ kind: 'global', mult: 2 }), null, 'gravel', 1, DAY), 2 * base) < 1e-9);
+  assert.ok(rel(E.demandAt(ch({ kind: 'demand', oreId: 'gravel', mult: 3 }), null, 'gravel', 1, DAY), 3 * base) < 1e-9);
+  assert.ok(rel(E.demandAt(ch({ kind: 'demand', oreId: 'amber', mult: 3 }), null, 'gravel', 1, DAY), base) < 1e-9);
+  const only = (id) => E.demandAt({ ...w, parties: PARTIES.filter((p) => p.id === id) }, null, 'gravel', 1, DAY);
+  const b2 = E.demandAt(ch({ kind: 'buyer', buyerId: 'ind1', mult: 2 }), null, 'gravel', 1, DAY);
+  assert.ok(rel(b2, base + only('ind1')) < 1e-9, 'a buyer change scales that party only');
+  assert.equal(E.demandAt(newWorld(), null, 'gravel', 1, DAY), Infinity, 'no parties: the computer buyer takes everything');
+});
+
+test('refinery: license, build, quotes, the on-planet refinery is fed from the yard', () => {
+  const w = refWorld();
+  const m = midgame(w);
+  m.coin = 1e12;
+  assert.match(E.quote(m, w, { type: 'buildRefinery', site: 'planet' }).error, /unlocked|license/i);
+  let c = refColony(w, ['planet']);
+  assert.ok(c.unlocked.panels.includes('refinery'));
+  assert.match(E.quote(c, w, { type: 'buildRefinery', site: 'planet' }).error, /already/);
+  assert.match(E.quote(c, w, { type: 'upgradeRefinery', site: 'planet', kind: 'docks' }).error, /docks/);
+  assert.match(E.quote(c, w, { type: 'setRoute', shipId: c.ships[0].id, policy: 'refinery' }).error, /orbital/);
+  assert.match(E.quote(c, w, { type: 'upgradeRefinery', site: 'planet', kind: 'yield' }).effect, /\+10% yield \(1\.00 → 1\.10 refined per ore\)/);
+  assert.match(E.quote(c, w, { type: 'upgradeRefinery', site: 'planet', kind: 'throughput', n: 2 }).effect, /throughput/);
+  assert.match(E.quote(c, w, { type: 'setRefine', site: 'planet', oreId: 'gravel', markup: 1.25 }).effect, /Gravel: refine, ask 1\.25x/);
+  assert.equal(E.quote(c, w, { type: 'setRefine', site: 'planet', oreId: 'gravel', markup: 1.25 }).cost, 0);
+  const r0 = E.rates(c, w).refinery.planet;
+  assert.ok(r0.inPerMin > 0 && r0.byOre.gravel.ask === 1);
+  const x = E.advance(c, w, c.t + 30 * MIN);
+  const after = x.colony;
+  assert.ok(refinedIn(after) > 0, 'refined goods sold');
+  assert.ok(x.events.some((e) => e.type === 'refined' && e.data.coin > 0));
+  assert.ok(E.rates(after, w).coinPerMin > E.rates(midgame(w), w).coinPerMin, 'refining pays more than selling raw here');
+  assertSane(after, 'refinery');
+});
+
+test('refinery: ships deliver to the orbital refinery; best may choose it', () => {
+  const w = refWorld();
+  let c = refColony(w, ['orbital']);
+  for (const s of c.ships) c = run(c, w, { type: 'setRoute', shipId: s.id, policy: 'refinery' });
+  const x = E.advance(c, w, c.t + 20 * MIN);
+  const dl = x.events.filter((e) => e.type === 'deliver');
+  assert.ok(dl.length > 0 && dl[0].data.raw > 0, 'ships unload at the refinery');
+  assert.ok(refinedIn(x.colony) > 0);
+  const r = E.rates(x.colony, w);
+  assert.ok(r.ships.some((s) => s.dest === E.REF_DEST));
+  assert.ok(r.refinery.orbital.inPerMin > 0);
+  // the default 'best' policy flies there too while it pays better
+  const b = E.advance(refColony(w, ['orbital']), w, c.t + 20 * MIN);
+  assert.ok(b.events.some((e) => e.type === 'deliver'), 'best picks the refinery');
+});
+
+test('refinery: a full store stops intake; storage upgrade is honored', () => {
+  const w = refWorld();
+  let c = refColony(w, ['planet'], 3); // nobody pays 3x: nothing sells
+  const a = E.advance(c, w, c.t + 6 * HOUR);
+  const cap = E.rates(a.colony, w).refinery.planet.cap;
+  assert.ok(Math.abs(stockOf(a.colony, 'planet') - cap) < 1e-6 * cap, `stock ${stockOf(a.colony, 'planet')} vs cap ${cap}`);
+  assert.ok(a.colony.refinery.planet.full);
+  assert.ok(a.events.some((e) => e.type === 'refineryFull'));
+  assert.equal(refinedIn(a.colony), 0);
+  const r = E.rates(a.colony, w).refinery.planet;
+  assert.equal(r.inPerMin, 0, 'full and unsold: no intake');
+  assert.equal(r.byOre.gravel.vsRaw, -1);
+  const b = E.advance(a.colony, w, a.colony.t + HOUR).colony;
+  assert.ok(Math.abs(stockOf(b, 'planet') - cap) < 1e-6 * cap);
+  assert.ok(b.ledger.month.in.raw > a.colony.ledger.month.in.raw, 'ore goes back to the ships');
+  // lower the price: stock starts to sell
+  const d = E.advance(run(b, w, { type: 'setRefine', site: 'planet', oreId: 'gravel', markup: 1 }), w, b.t + 10 * MIN).colony;
+  assert.ok(refinedIn(d) > 0);
+});
+
+test('refinery: a lower markup sells more units; vsRaw', () => {
+  const w = refWorld();
+  const sold = (markup) => {
+    const c = refColony(w, ['planet'], markup);
+    c.refinery.planet.stock = { gravel: 1e6 }; c.refinery.planet.lvl.storage = 30; // plenty in store: sales = demand
+    const r = E.advance(c, w, c.t + 10 * MIN);
+    return r.events.find((e) => e.type === 'refined')?.data.ore.gravel || 0;
+  };
+  const lo = sold(0.8), mid = sold(1.2), hi = sold(1.8);
+  assert.ok(lo > mid && mid > hi && hi > 0, `${lo} > ${mid} > ${hi}`);
+  const c = refColony(w, ['planet']);
+  const g = E.rates(c, w).refinery.planet.byOre.gravel;
+  assert.ok(Number.isFinite(g.vsRaw) && g.vsRaw > 0, `vsRaw ${g.vsRaw}`);
+});
+
+test('ledger: every coin is tagged and the sums match coin changes', () => {
+  const w = refWorld();
+  let c = refColony(w, ['planet', 'orbital']);
+  c.coin = 1e9;
+  const sumIn = (x) => Object.values(x.ledger.month.in).reduce((a, b) => a + b, 0) - x.ledger.month.in.nukeCargo;
+  const sumOut = (x) => Object.values(x.ledger.month.out).reduce((a, b) => a + b, 0);
+  const in0 = sumIn(c), out0 = sumOut(c), coin0 = c.coin;
+  c = E.advance(c, w, c.t + HOUR).colony;
+  for (const cmd of [{ type: 'hire', n: 3 }, { type: 'upgradeLift' }, { type: 'upgradeRefinery', site: 'planet', kind: 'throughput' },
+    { type: 'upgradeRefinery', site: 'orbital', kind: 'docks' }, { type: 'upgradeSafety', kind: 'pumps' }, { type: 'upgradeShip', shipId: c.ships[0].id }]) {
+    const r = E.applyCommand(c, w, cmd, c.t + 5 * MIN);
+    if (!r.error) c = r.colony;
+  }
+  c = E.advance(c, w, c.t + HOUR).colony;
+  assert.ok(Math.abs((c.coin - coin0) - ((sumIn(c) - in0) - (sumOut(c) - out0))) < 1e-6 * c.coin, 'coin change = in - out');
+  const L = c.ledger.month;
+  assert.ok(L.in.refined > 0 && L.out.refinery > 0 && L.out.miners > 0 && L.out.lift > 0 && L.out.safety > 0 && L.out.ships > 0);
+  assert.deepEqual(c.ledger.run.out, c.ledger.month.out);
+  const g = E.newColony({ id: 'g', planet: PLANET, now: 0, grant: 5000 });
+  assert.equal(g.ledger.month.in.grant, 5000);
+});
+
+test('refinery: step invariance across store-full transitions and a 3-day catch-up', () => {
+  const w = refWorld();
+  let c = refColony(w, ['planet', 'orbital'], 1.5);
+  c.refinery.planet.lvl.storage = 0;
+  const end = c.t + 3 * DAY;
+  const t0 = performance.now();
+  const one = E.advance(c, w, end);
+  assert.ok(performance.now() - t0 < 4000, 'catch-up is fast');
+  let many = c;
+  for (let t = c.t + MIN; t <= end; t += MIN) many = E.advance(many, w, t).colony;
+  let odd = c, t = c.t, s = 7;
+  while (t < end) { s = (s * 16807) % 2147483647; t = Math.min(end, t + 500 + (s % (2 * HOUR))); odd = E.advance(odd, w, t).colony; }
+  for (const x of [many, odd]) {
+    assert.ok(rel(one.colony.coin, x.coin) < 0.005, `coin ${one.colony.coin} vs ${x.coin}`);
+    assert.ok(rel(refinedIn(one.colony), refinedIn(x)) < 0.005, `refined ${refinedIn(one.colony)} vs ${refinedIn(x)}`);
+  }
+  assert.ok(refinedIn(one.colony) > 0);
+  assertSane(one.colony, 'refinery catch-up');
+  // a store that fills at a high ask, drains at a low one, then fills again: one call per phase vs 1-minute steps
+  const f = refColony(w, ['planet'], 2.05);
+  const phases = [[6, null], [10, 1], [16, 2.05]];
+  const play = (step) => {
+    let q = f, t = f.t, full = 0;
+    for (const [h, m] of phases) {
+      if (m != null) for (const o of ['gravel', 'slate', 'amber', 'jade']) q = run(q, w, { type: 'setRefine', site: 'planet', oreId: o, markup: m }, q.t);
+      const end = f.t + h * HOUR;
+      while (t < end) { t = Math.min(end, t + step); const r = E.advance(q, w, t); q = r.colony; full += r.events.filter((e) => e.type === 'refineryFull').length; }
+    }
+    return { q, full };
+  };
+  const fa = play(16 * HOUR), fb = play(MIN);
+  assert.ok(fa.full >= 2, `the store filled twice (${fa.full})`);
+  assert.equal(fa.full, fb.full);
+  assert.ok(rel(refinedIn(fa.q), refinedIn(fb.q)) < 0.005, `${refinedIn(fa.q)} vs ${refinedIn(fb.q)}`);
+  assert.ok(rel(stockOf(fa.q, 'planet'), stockOf(fb.q, 'planet')) < 0.005);
+});
+
+test('refinery: a nuke removes refineries, keeps the panel and buy settings, resets the run ledger', () => {
+  const w = refWorld();
+  let c = refColony(w, ['planet', 'orbital']);
+  c = run(c, w, { type: 'setRefine', site: 'planet', oreId: 'amber', markup: 1.4, on: false });
+  c = E.advance(c, w, c.t + HOUR).colony;
+  c.runEarned = 3e7;
+  const month = JSON.parse(JSON.stringify(c.ledger.month));
+  const x = run(c, w, { type: 'nuke', confirm: 'NUKE' });
+  assert.equal(x.refinery.planet, null);
+  assert.equal(x.refinery.orbital, null);
+  assert.ok(x.unlocked.panels.includes('refinery'));
+  assert.equal(x.ledger.run.in.raw, 0);
+  assert.equal(x.ledger.run.out.refinery, 0);
+  assert.equal(x.ledger.month.out.refinery, month.out.refinery, 'the month ledger stays');
+  let y = { ...x, coin: 1e9 };
+  y = run(y, w, { type: 'buildRefinery', site: 'planet' });
+  assert.deepEqual(y.refinery.planet.ores.amber, { on: false, markup: 1.4 }, 'rebuilt with the old settings');
+});
+
+test('refinery: with no parties a computer buyer takes everything at 0.6x', () => {
+  const w = newWorld();
+  const c = refColony(w, ['planet'], 2);
+  const r = E.advance(c, w, c.t + 30 * MIN);
+  const ev = r.events.find((e) => e.type === 'refined');
+  assert.ok(ev && ev.data.coin > 0);
+  const I = PLANET.ores;
+  const expect = Object.entries(ev.data.ore).reduce((a, [id, n]) => {
+    const o = I.find((x) => x.id === id);
+    const v = o.baseValue || E.TUNING.value[o.tier] * Math.pow(E.TUNING.valueHard[o.tier], o.hardness - 1);
+    return a + n * v * E.TUNING.ref.valueMult * E.TUNING.ref.computer;
+  }, 0);
+  assert.ok(rel(ev.data.coin, expect) < 1e-9);
+  assert.equal(stockOf(r.colony, 'planet'), 0, 'nothing piles up');
+  assert.equal(E.rates(r.colony, w).refinery.planet.byOre.gravel.ask, E.TUNING.ref.computer);
+});
