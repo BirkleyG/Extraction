@@ -67,6 +67,38 @@ export const T = {
     freighter:   { day: 2, coin: 150_000,   label: 'Freighter license' },
     mythicDrill: { day: 3, coin: 3_000_000, label: 'Mythic drill license' },
   },
+
+  // World changes (Maker deals, galactic events): combined price multiplier is clamped.
+  changeMin: 0.2, changeMax: 5,
+
+  // Hazards. Rates are per hour; danger of a shaft = its depth index (the home shaft is safe).
+  // Each safety level halves the matching risk (x hz.cut per level).
+  hz: {
+    calmMs: 30 * 60_000,           // no hazards in a colony's first 30 minutes
+    cut: 0.5,
+    cave: 0.0016,                  // cave-ins per hour per depth (supports)
+    mad: 0.0012,                   // insanity per hour per depth, shafts with miners (lights)
+    gas: 0.0005, flood: 0.0004, fire: 0.0003, // per hour per total depth (ventilation, pumps, firebreaks)
+    quake: 0.00012,                // per hour per total depth, softened by supports
+    caveHalt: [25, 60], madHalt: [5, 12], gasHalt: [10, 20], floodHalt: [20, 40], quakeHalt: [10, 25], // minutes
+    fireBurn: [0.15, 0.35],        // share of the surface yard that burns
+    rescue: 0.45,                  // chance a cave-in's trapped miners are all dug out
+  },
+  shaftSafeBase: 120, shaftSafeGrowth: 3.2, shaftSafeMax: 6,  // lights/supports, x depthCost per depth
+  safetyBase: 1_500, safetyGrowth: 3.4, safetyMax: 12,           // ventilation, pumps, firebreaks (colony-wide)
+
+  // Prestige
+  nukeMin: 20_000_000,            // runEarned needed to nuke
+  spectaclePow: 1 / 7.5,
+  prestigePanelAt: 5_000_000,
+  // Evolutions (bought with SP, last the month). Effect compounds: (1 + per)^level.
+  evo: {
+    mine:      { per: 0.20, cost: 2, growth: 1.55, label: 'Mine speed' },
+    ship:      { per: 0.12, cost: 2, growth: 1.55, label: 'Ship speed' },
+    sell:      { per: 0.08, cost: 2, growth: 1.55, label: 'Sale price' },
+    spectacle: { per: 0.10, cost: 3, growth: 1.7,  label: 'Spectacle' },  // additive: x(1 + per*level)
+  },
+  evoMax: 60,
 };
 
 export const geoSum = (base, g, from, k) => base * Math.pow(g, from) * (Math.pow(g, k) - 1) / (g - 1);

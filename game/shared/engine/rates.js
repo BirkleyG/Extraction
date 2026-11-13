@@ -3,21 +3,47 @@ import { T } from './tuning.js';
 import { info, pos } from './util.js';
 import {
   liftRate, convRate, yardCap, bunkCap, perMiner, tunnelCap, shipCap, tripSecs,
-  shaftStatus, pickDest, priceAt, grade,
+  shaftStatus, pickDest, priceAt, grade, evoMult, hazardRates, depthOf,
 } from './model.js';
+
+const avg = ([a, b]) => (a + b) / 2;
+// Hazards as expected numbers: per-shaft risk (mishaps/hour) and the share of time a shaft sits halted.
+export function hazardOutlook(c) {
+  const hr = hazardRates(c, 8.64e15);
+  const H = T.hz, D = Math.max(1, depthOf(c)), col = hr.colony;
+  const shafts = c.shafts.map((s, k) => {
+    const share = s.idx / D;
+    const h = hr.shafts[k];
+    const risk = h.cave + h.mad + (col.gas + col.flood) * share + (s.idx > 0 ? col.quake : 0);
+    const haltMinsPerHour = h.cave * avg(H.caveHalt) + h.mad * avg(H.madHalt)
+      + (col.gas * avg(H.gasHalt) + col.flood * avg(H.floodHalt)) * share
+      + (s.idx > 0 ? col.quake * avg(H.quakeHalt) * Math.pow(H.cut, s.up.supports || 0) : 0);
+    return { risk: Math.min(1, risk), down: Math.min(0.9, haltMinsPerHour / 60) };
+  });
+  const perHour = hr.shafts.reduce((a, h) => a + h.cave + h.mad, 0) + col.gas + col.flood + col.fire + col.quake;
+  return { shafts, perHour, fire: col.fire, colony: col };
+}
 
 export function rates(colony, world) {
   const c = colony;
   const I = info(world);
   const now = c.t;
+  const mineK = evoMult(c, 'mine'), sellK = evoMult(c, 'sell');
+  const hz = hazardOutlook(c);
   const ore = new Array(I.n).fill(0), oreG = new Array(I.n).fill(0);
-  const shafts = c.shafts.map((s) => {
+  const shaftV = [];
+  const shafts = c.shafts.map((s, k) => {
     const st = shaftStatus(c, I, s);
-    const r = st.ok ? s.miners * perMiner(s.up.cart, s.idx) : 0;
+    const haltMs = Math.max(0, (s.haltUntil || 0) - now);
+    const r = st.ok && !haltMs ? s.miners * perMiner(s.up.cart, s.idx) * mineK : 0;
     if (r > 0) { ore[I.idx[s.ore]] += r; oreG[I.idx[s.ore]] += r * grade(s.idx); }
+    shaftV.push(r * grade(s.idx) * (I.ores[I.idx[s.ore]]?.value || 0));
     return {
       id: s.id, name: s.name, ore: s.ore, miners: s.miners, cap: bunkCap(s.up.bunk), orePerMin: r,
-      perMiner: perMiner(s.up.cart, s.idx), grade: grade(s.idx), ok: st.ok, reason: st.reason,
+      perMiner: perMiner(s.up.cart, s.idx) * mineK, grade: grade(s.idx), ok: st.ok,
+      reason: haltMs && st.ok ? `Halted: ${Math.ceil(haltMs / 60000)} min to clear` : st.reason,
+      haltMins: Math.ceil(haltMs / 60000), risk: hz.shafts[k].risk,
+      lights: s.up.lights || 0, supports: s.up.supports || 0,
       vein: s.vein ? { total: s.vein.total, left: s.vein.left, pct: s.vein.total > 0 ? Math.round(1000 * s.vein.left / s.vein.total) / 10 : 0 } : null,
     };
   });
@@ -41,7 +67,7 @@ export function rates(colony, world) {
     const bi = pickDest(world, I, s, mixG, now);
     const b = I.buyers[bi];
     const cap = shipCap(s);
-    const rt = 2 * tripSecs(b, s.cls) / 60;
+    const rt = 2 * tripSecs(b, s.cls, c) / 60;
     const loadFull = cap / convPad;                       // minutes at full conveyor speed
     const loadReal = Math.min(T.maxLoadSecs / 60, cap / fill); // what really happens at current supply
     return { id: s.id, name: s.name, cls: s.cls, cap, dest: b.id, tripSecs: rt * 30, bi, loadFull, loadReal, rt };
@@ -68,7 +94,7 @@ export function rates(colony, world) {
   for (let o = 0; o < I.n; o++) {
     let p = 0;
     for (const s of ships) p += (wsum > 0 ? s.perMin / wsum : 1 / ships.length) * priceAt(world, I, o, s.bi, now);
-    price[o] = p;
+    price[o] = p * sellK;
   }
   let coin = 0;
   for (let o = 0; o < I.n; o++) coin += del[o] * g[o] * price[o];
@@ -77,7 +103,12 @@ export function rates(colony, world) {
   const stages = { mine, lift, conveyor, ships: shipMax };
   let soft = 0;
   for (const k in stages) soft += Math.pow(Math.max(1e-9, stages[k]), -P);
-  soft = Math.pow(soft, -1 / P) * (1 - yardLoss);
+  // Hazards: expected share of output lost to halted shafts and yard fires.
+  const vSum = shaftV.reduce((a, b) => a + b, 0);
+  let hzLoss = vSum > 0 ? shaftV.reduce((a, v, k) => a + v / vSum * hz.shafts[k].down, 0) : 0;
+  if (supply > 0) hzLoss += Math.min(0.2, hz.fire * avg(T.hz.fireBurn) * 0.5 * yardCap(c.yardLvl) / (supply * 60));
+  hzLoss = Math.min(0.9, hzLoss);
+  soft = Math.pow(soft, -1 / P) * (1 - yardLoss) * (1 - hzLoss);
   let vpo = through > 0 ? coin / through : 0;
   if (!(vpo > 0)) { let m = 0, v = 0; for (let o = 0; o < I.n; o++) { m += mix[o]; v += mixG[o] * price[o]; } vpo = m > 0 ? v / m : 0; }
   let limit = 'mine';
@@ -90,6 +121,8 @@ export function rates(colony, world) {
     yardLoss, yardCap: yardCap(c.yardLvl), tunnelCap: tunnelCap(c), idleMiners: c.idle || 0, pads: c.pads,
     shafts, ships: ships.map(({ bi, loadFull, loadReal, rt, ...s }) => ({ ...s, cycleSecs: (loadFull + rt) * 60 })),
     limit, score: mine > 0 ? pos(soft * vpo) : 0,
+    hazards: { perHour: hz.perHour, loss: hzLoss, lossPerMin: pos(coin) * hzLoss, colony: hz.colony },
+    evo: { mine: mineK, ship: evoMult(c, 'ship'), sell: sellK },
     _price: price, _ore: ore, _mix: mix, _mixG: mixG, _unit: price.map((p, o) => p * g[o]), _order: order,
   };
 }

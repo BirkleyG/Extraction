@@ -3,12 +3,14 @@ import { T, geoSum, geoMax } from './tuning.js';
 import { info, clone, num, fmt, cleanName, hashSeed, DAY_MS } from './util.js';
 import {
   liftRate, convRate, yardCap, bunkCap, perMiner, shipCap, tripSecs,
-  assignMiners, rollVein, shaftStatus, grade,
+  assignMiners, rollVein, shaftStatus, grade, evoMult, evoLvl, spectacleOf, priceAt,
 } from './model.js';
-import { advance } from './sim.js';
+import { advance, toArr, toMap } from './sim.js';
 import { licensesOpen, panelFor, syncUnlocks } from './unlocks.js';
+import { ensureHz, ensureShaftHz } from './hazards.js';
 
-export const ENGINE_VERSION = 1;
+export const ENGINE_VERSION = 2;
+const SAFETY = { ventilation: 'Ventilation (gas)', pumps: 'Pumps (floods)', firebreaks: 'Firebreaks (yard fires)' };
 const MAX_LVL = 400;
 
 const SHIP_NAMES = ['Old Faithful', 'Dusty Mule', 'Rustbucket', 'Lucky Strike', 'Ore Wagon', 'Night Owl', 'Stubborn Goat',
@@ -27,12 +29,22 @@ function makeShip(c, cls) {
 }
 
 function makeShaft(c, idx, roll) {
-  return { id: 's' + (c.nextId++), idx, name: `Shaft ${idx + 1}`, ore: roll.ore, vein: roll.vein, up: { bunk: 0, cart: 0 }, miners: 0 };
+  const s = { id: 's' + (c.nextId++), idx, name: `Shaft ${idx + 1}`, ore: roll.ore, vein: roll.vein, up: { bunk: 0, cart: 0, lights: 0, supports: 0 }, miners: 0 };
+  if (c.hzRng != null) ensureShaftHz(c, s);
+  return s;
 }
+
+// Starter mine: one shaft of the easiest common ore and one hauler.
+function starter(c, world) {
+  const I = info(world);
+  const first = I.ores.filter((o) => o.tier === 'common').sort((a, b) => a.hardness - b.hardness || a.value - b.value)[0] || I.ores[0];
+  c.shafts.push(makeShaft(c, 0, { ore: first.id, vein: null }));
+  c.ships.push(makeShip(c, 'hauler'));
+}
+const freshStats = () => ({ mined: 0, lifted: 0, loaded: 0, sold: 0, sales: 0, launches: 0, upgrades: 0, spent: 0, firstSaleAt: null, hazards: 0, lost: 0 });
 
 export function newColony({ id, uid, name, species, planet, siteRegion, now, grant } = {}) {
   const world = planetWorld(planet);
-  const I = info(world);
   now = num(now, 0);
   const g = Math.max(0, num(typeof grant === 'object' && grant ? grant.coin : grant, 0));
   const seed = hashSeed(`${uid ?? id ?? ''}|${planet?.seed ?? planet?.id ?? ''}`);
@@ -42,18 +54,17 @@ export function newColony({ id, uid, name, species, planet, siteRegion, now, gra
     name: cleanName(name, 'New Colony'), species: species ?? null, siteRegion: siteRegion ?? null,
     planetId: planet?.id ?? null, seed, rng: seed,
     t: now, born: now,
-    coin: T.startCoin + g, earned: 0, grant: g,
+    coin: T.startCoin + g, earned: 0, grant: g, runEarned: 0, monthEarned: 0,
+    sp: 0, evo: { mine: 0, ship: 0, sell: 0, spectacle: 0 }, nukes: 0, lastNuke: null,
     miners: 0, idle: 0, drill: 1,
     lift: 0, conveyor: 0, yardLvl: 0, pads: 1,
     tunnel: {}, tunnelG: {}, yard: {}, yardG: {},
     shafts: [], ships: [],
-    stats: { mined: 0, lifted: 0, loaded: 0, sold: 0, sales: 0, launches: 0, upgrades: 0, spent: 0, firstSaleAt: null },
+    stats: freshStats(),
     unlocked: { panels: [], licenses: [] }, tutorial: 0, nextId: 1,
   };
-  // Shaft 1 is always the easiest common ore.
-  const first = I.ores.filter((o) => o.tier === 'common').sort((a, b) => a.hardness - b.hardness || a.value - b.value)[0] || I.ores[0];
-  c.shafts.push(makeShaft(c, 0, { ore: first.id, vein: null }));
-  c.ships.push(makeShip(c, 'hauler'));
+  ensureHz(c);
+  starter(c, world);
   assignMiners(c, world);
   syncUnlocks(c, world, now, []);
   return c;
@@ -84,7 +95,7 @@ function levelPlan(c, cur, max, base, g, n, cap = MAX_LVL) {
 }
 
 // Build a plan for a command: { cost, n, effect, apply(c) } or { error }.
-function plan(c, world, cmd, now) {
+function plan(c, world, cmd, now, quoting = false) {
   const I = info(world);
   if (!cmd || typeof cmd.type !== 'string') return { error: 'Bad command' };
   const panel = panelFor(cmd);
@@ -145,7 +156,52 @@ function plan(c, world, cmd, now) {
         if (p.maxed) return { error: 'Bunkhouses are maxed for this depth' };
         return { ...p, n: p.k, effect: `+${T.bunkCapPer * p.k} bunks (${bunkCap(s.up.bunk)} → ${bunkCap(s.up.bunk + p.k)} miners)`, apply: (x) => { x.shafts.find((q) => q.id === s.id).up.bunk += p.k; } };
       }
+      if (kind === 'lights' || kind === 'supports') {
+        if (s.idx === 0) return { error: 'The home shaft is safe enough' };
+        const lv = num(s.up[kind]);
+        const p = levelPlan(c, lv, T.shaftSafeMax, T.shaftSafeBase * dm, T.shaftSafeGrowth, n);
+        if (p.maxed) return { error: `${kind === 'lights' ? 'Lights' : 'Supports'} are maxed` };
+        const r0 = Math.pow(T.hz.cut, lv), r1 = Math.pow(T.hz.cut, lv + p.k);
+        const what = kind === 'lights' ? 'insanity' : 'cave-ins';
+        return { ...p, n: p.k, effect: `${what} risk in ${s.name} -${Math.round(100 * (1 - r1 / r0))}% (level ${lv} → ${lv + p.k})`,
+          apply: (x) => { const y = x.shafts.find((q) => q.id === s.id); y.up[kind] = num(y.up[kind]) + p.k; } };
+      }
       return { error: 'Unknown upgrade' };
+    }
+    case 'upgradeSafety': {
+      const kind = cmd.kind;
+      if (!SAFETY[kind]) return { error: 'Unknown safety upgrade' };
+      const lv = num(c.safety?.[kind]);
+      const p = levelPlan(c, lv, T.safetyMax, T.safetyBase, T.safetyGrowth, n);
+      if (p.maxed) return { error: 'Already as safe as it gets' };
+      return { ...p, n: p.k, effect: `${SAFETY[kind]}: risk -${Math.round(100 * (1 - Math.pow(T.hz.cut, p.k)))}% (level ${lv} → ${lv + p.k})`,
+        apply: (x) => { x.safety = { ventilation: 0, pumps: 0, firebreaks: 0, ...x.safety }; x.safety[kind] += p.k; } };
+    }
+    case 'nuke': {
+      const run = num(c.runEarned);
+      if (run < T.nukeMin) return { error: `The Guild needs ${fmt(T.nukeMin)} earned this run to sign off a nuke (you have ${fmt(run)})` };
+      const spect = spectacleOf(c, run);
+      if (!quoting && cmd.confirm !== 'NUKE') return { error: 'Type NUKE to confirm' };
+      return {
+        cost: 0, n: 1, k: 1, free: true, spectacle: spect,
+        effect: `Spectacle ${spect.toFixed(1)}: +${spect.toFixed(1)} SP. Ships in flight get paid; everything else becomes a crater.`,
+        apply: (x, ctx) => nukeColony(x, world, spect, ctx),
+      };
+    }
+    case 'evolve': {
+      const e = T.evo[cmd.kind];
+      if (!e) return { error: 'Unknown evolution' };
+      const lv = evoLvl(c, cmd.kind);
+      const g = e.growth;
+      const room = Math.max(0, T.evoMax - lv);
+      if (!room) return { error: 'Fully evolved' };
+      let k = n === 'max' ? Math.min(room, geoMax(e.cost, g, lv, num(c.sp))) : Math.min(room, Math.max(1, Math.floor(num(Number(n), 1))));
+      if (k < 1) k = 1;
+      const cost = geoSum(e.cost, g, lv, k);
+      const a = evoMult(c, cmd.kind), b = evoMult({ evo: { [cmd.kind]: lv + k } }, cmd.kind);
+      const what = { mine: 'ore/min', ship: 'ship speed', sell: 'sale prices', spectacle: 'Spectacle at your next nuke' }[cmd.kind];
+      return { cost, n: k, k, currency: 'sp', effect: `${e.label} ${lv} → ${lv + k}: ${what} x${a.toFixed(2)} → x${b.toFixed(2)}`,
+        apply: (x) => { x.evo = { mine: 0, ship: 0, sell: 0, spectacle: 0, ...x.evo }; x.evo[cmd.kind] = lv + k; } };
     }
     case 'upgradeLift': {
       const p = levelPlan(c, c.lift, MAX_LVL, T.liftCost, T.liftGrowth, n);
@@ -190,7 +246,7 @@ function plan(c, world, cmd, now) {
       const near = I.buyers.reduce((a, b) => (T.tripSecs[b.distance] < T.tripSecs[a.distance] ? b : a));
       return {
         cost, n: 1, k: 1,
-        effect: `New ${T.ship[cls].label}: ${fmt(shipCap({ cls, lvl }))} cargo, ${Math.round(tripSecs(near, cls))}s to ${near.name}`,
+        effect: `New ${T.ship[cls].label}: ${fmt(shipCap({ cls, lvl }))} cargo, ${Math.round(tripSecs(near, cls, c))}s to ${near.name}`,
         apply: (x) => { const s = makeShip(x, cls); s.lvl = lvl; x.ships.push(s); },
       };
     }
@@ -234,20 +290,34 @@ function plan(c, world, cmd, now) {
 }
 
 export function quote(colony, world, cmd) {
-  const p = plan(colony, world, cmd, colony.t);
+  const p = plan(colony, world, cmd, colony.t, true);
   if (p.error) return { cost: 0, effect: '', canAfford: false, n: 0, error: p.error };
   const cost = Number.isFinite(p.cost) ? p.cost : Infinity;
-  return { cost, effect: p.effect, canAfford: Number.isFinite(cost) && colony.coin >= cost - 1e-9, n: p.n ?? 1 };
+  const have = p.currency === 'sp' ? num(colony.sp) : colony.coin;
+  const q = { cost, effect: p.effect, canAfford: Number.isFinite(cost) && have >= cost - 1e-9, n: p.n ?? 1 };
+  if (p.currency) q.currency = p.currency;
+  if (p.spectacle != null) q.spectacle = p.spectacle;
+  return q;
 }
 
 // Apply a command to an already-advanced colony (mutates c). Returns error string or null.
-export function applyNow(c, world, cmd, events) {
+// `sales` (optional array) collects ore sold by the command itself (a nuke settles ships in flight).
+export function applyNow(c, world, cmd, events, sales) {
+  ensureHz(c);
   const p = plan(c, world, cmd, c.t);
   if (p.error) return p.error;
   if (!Number.isFinite(p.cost)) return 'Maxed out';
+  if (p.currency === 'sp') {
+    if (num(c.sp) < p.cost - 1e-9) return `Not enough SP: need ${p.cost.toFixed(1)}`;
+    c.sp = Math.max(0, num(c.sp) - p.cost);
+    p.apply(c);
+    events.push({ type: 'evolve', text: p.effect, at: c.t, data: { kind: cmd.kind, sp: p.cost, n: p.n, level: c.evo[cmd.kind] } });
+    assignMiners(c, world);
+    return null;
+  }
   if (c.coin < p.cost - 1e-9) return `Not enough coin: need ${fmt(p.cost)}`;
   c.coin = Math.max(0, c.coin - p.cost);
-  p.apply(c);
+  p.apply(c, { events, sales });
   if (!p.free) {
     c.stats.spent += p.cost;
     if (cmd.type !== 'hire') c.stats.upgrades++;
@@ -262,8 +332,54 @@ export function applyCommand(colony, world, cmd, now) {
   const r = advance(colony, world, now);
   const c = r.colony;
   const events = r.events;
-  const error = applyNow(c, world, cmd, events);
-  return error ? { colony: c, events, sales: r.sales, error } : { colony: c, events, sales: r.sales };
+  const extra = [];
+  const error = applyNow(c, world, cmd, events, extra);
+  const sales = mergeSales(r.sales, extra);
+  return error ? { colony: c, events, sales, error } : { colony: c, events, sales };
+}
+function mergeSales(a, b) {
+  if (!b.length) return a;
+  const m = {};
+  for (const s of [...a, ...b]) m[s.oreId] = (m[s.oreId] || 0) + s.amount;
+  return Object.entries(m).map(([oreId, amount]) => ({ oreId, amount }));
+}
+
+// The nuke: pay ships already flying at today's price, then start over from a starter mine.
+// Keeps SP, evolutions, month totals, name, species, site and unlocked panels/licenses. Mutates c.
+function nukeColony(c, world, spect, ctx = {}) {
+  const I = info(world);
+  const sellK = evoMult(c, 'sell');
+  let paid = 0;
+  const sold = new Array(I.n).fill(0);
+  for (const s of c.ships) {
+    if (s.state !== 'out') continue;
+    const bi = I.buyerIdx[s.dest] ?? 0;
+    const cargo = toArr(I, s.cargo), cargoG = toArr(I, s.cargoG);
+    for (let o = 0; o < I.n; o++) if (cargo[o] > 0) { paid += cargoG[o] * priceAt(world, I, o, bi, c.t) * sellK; sold[o] += cargo[o]; }
+  }
+  paid = Math.max(0, paid);
+  c.earned += paid; c.runEarned += paid; c.monthEarned += paid;
+  const runEarned = c.runEarned;
+  if (ctx.sales) for (let o = 0; o < I.n; o++) if (sold[o] > 0) ctx.sales.push({ oreId: I.ores[o].id, amount: sold[o] });
+  const keep = {
+    sp: num(c.sp) + spect, nukes: num(c.nukes) + 1,
+    lastNuke: { at: c.t, spectacle: spect, runEarned, makerUsed: false },
+    hazards: num(c.stats?.hazards), lost: num(c.stats?.lost),
+  };
+  Object.assign(c, {
+    coin: T.startCoin, earned: 0, runEarned: 0, miners: 0, idle: 0, drill: 1,
+    lift: 0, conveyor: 0, yardLvl: 0, pads: 1, tunnel: {}, tunnelG: {}, yard: {}, yardG: {},
+    shafts: [], ships: [], born: c.t, stats: freshStats(), tutorial: 5,
+    safety: { ventilation: 0, pumps: 0, firebreaks: 0 },
+    sp: keep.sp, nukes: keep.nukes, lastNuke: keep.lastNuke,
+  });
+  c.stats.hazards = keep.hazards; c.stats.lost = keep.lost;
+  starter(c, world);
+  if (ctx.events) {
+    const settled = paid > 0 ? ` Ships in flight delivered ${fmt(paid)} coin on the way out.` : '';
+    ctx.events.push({ type: 'nuke', text: `${c.name} went up in a ${spect.toFixed(1)} Spectacle blast. +${spect.toFixed(1)} SP.${settled} Rebuild!`, at: c.t,
+      data: { spectacle: spect, runEarned, sp: c.sp, paid } });
+  }
 }
 
 export { clone };

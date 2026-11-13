@@ -52,7 +52,8 @@ export function applyCommand(colony, world, cmd, now) {
   return baseApply(colony, world, cmd, now);
 }
 export { advance } from './sim.js';
-export { rates, bottleneck, destinations, marketPrice, recordSales, bestMoves, candidateMoves, marketTable } from './analysis.js';
+export { rates, bottleneck, destinations, marketPrice, recordSales, bestMoves, candidateMoves, marketTable, activeChanges, priceMult } from './analysis.js';
+export { spectacleOf, evoMult } from './model.js';
 export { unlocks, PANELS, TUTORIAL } from './unlocks.js';
 export { fmt } from './util.js';
 export { T as TUNING } from './tuning.js';
