@@ -26,9 +26,9 @@ export const PANELS = [
   { id: 'pads', label: 'Launch pads', at: 12_000, hours: 6, early: (c) => c.ships.length >= 2 },
   { id: 'market', label: 'Market', at: 25_000, hours: 12 },
   // Safety opens with danger: a shaft at depth index 3+ or the first mishap.
-  { id: 'safety', label: 'Safety', at: Infinity, early: (c) => c.shafts.some((s) => s.idx >= 3) || num(c.stats?.hazards) > 0 },
+  { id: 'safety', label: 'Safety', at: Infinity, hint: 'opens when you dig shaft 4 or hit your first hazard', early: (c) => c.shafts.some((s) => s.idx >= 3) || num(c.stats?.hazards) > 0 },
   // Prestige shows up well before the nuke is allowed, so players see it coming.
-  { id: 'prestige', label: 'Prestige', at: Infinity, early: (c) => num(c.runEarned) >= T.prestigePanelAt || num(c.nukes) > 0 || num(c.sp) > 0 },
+  { id: 'prestige', label: 'Prestige', at: Infinity, hint: 'opens at 5M earned since your last nuke', early: (c) => num(c.runEarned) >= T.prestigePanelAt || num(c.nukes) > 0 || num(c.sp) > 0 },
 ];
 const ageH = (c) => (num(c.t) - num(c.born, c.t)) / 3_600_000;
 const waited = (c, p) => !p.hours || num(c.grant) > 0 || ageH(c) >= p.hours;
@@ -97,7 +97,7 @@ export function unlocks(colony, world, now) {
     tutorial: { step, id: TUTORIAL[step].id, hint: TUTORIAL[step].hint },
     next: {
       panel: nextPanel ? {
-        id: nextPanel.id, label: nextPanel.label, at: Number.isFinite(nextPanel.at) ? nextPanel.at : null, have: got(colony),
+        id: nextPanel.id, label: nextPanel.label, at: Number.isFinite(nextPanel.at) ? nextPanel.at : null, hint: nextPanel.hint || null, have: got(colony),
         waitH: waited(colony, nextPanel) ? 0 : Math.max(0, nextPanel.hours - ageH(colony)),
       } : null,
       license: nextLicense,

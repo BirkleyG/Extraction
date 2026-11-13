@@ -265,6 +265,7 @@ export function createUI(S, A) {
   function nextUnlock() {
     const n = S.unl.next.panel;
     if (!n) return '';
+    if (n.at == null) return `Next: <b>${esc(n.label)}</b> ${esc(n.hint || '')}`;
     const pct = Math.max(0, Math.min(100, n.at ? (100 * n.have) / n.at : 100));
     const wait = n.waitH > 0 ? ` · opens in ${n.waitH >= 1 ? Math.ceil(n.waitH) + 'h' : Math.ceil(n.waitH * 60) + 'm'}` : '';
     return `Next: <b>${esc(n.label)}</b> at ${fmt(n.at)} earned (${fmt(n.have)})${wait}<span class="nextbar"><i style="width:${pct.toFixed(1)}%"></i></span>`;
