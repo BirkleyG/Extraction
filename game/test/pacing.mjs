@@ -1,6 +1,8 @@
 // Pacing bot: plays the engine and prints how fast things happen.
-//   node game/test/pacing.mjs            (a) 30-minute active session, (b) 30-day month, 4 check-ins a day
+//   node game/test/pacing.mjs            (a) 30-minute active session, (b) 30-day month, 4 check-ins a day,
+//                                        (c) prestige strategies (no nuke / first chance / day 15 / day 28), run in parallel
 //   node game/test/pacing.mjs --quiet    tables only
+import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
 import * as E from '../shared/engine/index.js';
 
 export const PLANET = {
@@ -54,16 +56,42 @@ export function spend(c, world, now, maxBuys = 400) {
   return { c, buys };
 }
 
-function run({ quiet = false } = {}) {
+// Spend SP greedily: the cheapest next level of mine / ship / sale price.
+export function evolveGreedy(c, world, now) {
+  for (let i = 0; i < 200; i++) {
+    const qs = ['sell', 'mine', 'ship'].map((kind) => ({ kind, q: E.quote(c, world, { type: 'evolve', kind, n: 1 }) }))
+      .filter((x) => !x.q.error && x.q.canAfford).sort((a, b) => a.q.cost - b.q.cost);
+    if (!qs.length) break;
+    const r = E.applyCommand(c, world, { type: 'evolve', kind: qs[0].kind, n: 1 }, now);
+    if (r.error) break;
+    c = r.colony;
+  }
+  return c;
+}
+
+// strategy: 'none' | 'first' (nuke at the first eligible check-in) | a day number (first check-in of that day)
+function run({ quiet = false, strategy = 'none' } = {}) {
   const t0 = performance.now();
   let world = { month: 'pace', planet: PLANET, market: {}, startedAt: 0, endsAt: 30 * DAY };
   const born = 8 * HOUR;
   let c = E.newColony({ uid: 'bot', name: 'Pace Colony', planet: PLANET, now: born });
+  let hazards = [];
   const step = (to) => {
     const r = E.advance(c, world, to);
     c = r.colony;
     if (r.sales.length) world = E.recordSales(world, r.sales, to);
+    for (const e of r.events) if (e.type === 'hazard') hazards.push(e);
     return r.events;
+  };
+  // an active session: a click every 3 seconds
+  const active = (from, mins, onTick) => {
+    for (let t = from; t <= from + mins * MIN; t += 3000) {
+      const ev = step(t);
+      const r = spend(c, world, t, 20);
+      c = r.c;
+      if (onTick) onTick(t, ev, r.buys);
+    }
+    return from + mins * MIN;
   };
 
   // (a) active session: a click every 3 seconds for 30 minutes
@@ -87,7 +115,7 @@ function run({ quiet = false } = {}) {
 
   // (b) the month: check-ins at 08:00, 12:00, 17:00, 22:00
   const checkins = [8, 12, 17, 22];
-  let first20M = null;
+  let first20M = null, nukedAt = null, nukeInfo = null, prestigeAt = null;
   const rows = [];
   let t = born + 30 * MIN;
   for (let day = 0; day < 30; day++) {
@@ -99,25 +127,70 @@ function run({ quiet = false } = {}) {
         step(t);
         if (first20M == null && c.earned >= 2e7) first20M = t;
       }
-      c = spend(c, world, t).c;
+      if (prestigeAt == null && c.unlocked.panels.includes('prestige')) prestigeAt = t;
+      const want = strategy === 'first' || (typeof strategy === 'number' && day + 1 >= strategy);
+      if (nukedAt == null && want && E.quote(c, world, { type: 'nuke' }).canAfford) {
+        const r = E.applyCommand(c, world, { type: 'nuke', confirm: 'NUKE' }, t);
+        if (!r.error) {
+          c = r.colony;
+          if (r.sales.length) world = E.recordSales(world, r.sales, t);
+          nukeInfo = r.events.find((e) => e.type === 'nuke').data;
+          nukedAt = t;
+          c = evolveGreedy(c, world, t);
+          t = active(t, 30); // rebuild with a short active session
+          continue;
+        }
+      }
+      if (day < 28) c = spend(c, world, t).c; // closing bell: everyone hoards the last two days
     }
     const end = (day + 1) * DAY;
     while (t < end) { t = Math.min(end, t + 30 * MIN); step(t); if (first20M == null && c.earned >= 2e7) first20M = t; }
     const r = E.rates(c, world);
     rows.push({ day: day + 1, coin: c.coin, earned: c.earned, cpm: r.coinPerMin, shafts: c.shafts.length, ships: c.ships.length, mix: ['hauler','cruiser','freighter'].map(k => c.ships.filter(s => s.cls === k).length).join('/'), miners: c.miners, drill: c.drill,
-      bn: E.bottleneck(c, world).stage, exh: c.shafts.filter((s) => s.vein && s.vein.left <= 0).length });
+      bn: E.bottleneck(c, world).stage, exh: c.shafts.filter((s) => s.vein && s.vein.left <= 0).length, month: c.monthEarned });
   }
+  const result = {
+    strategy, coin: c.coin, monthEarned: c.monthEarned, sp: c.sp, evo: c.evo, nukedAt, nukeInfo, first20M, prestigeAt,
+    hazards: hazards.length, lost: c.stats.lost, safety: c.safety,
+    byKind: hazards.reduce((a, e) => { a[e.data.kind] = (a[e.data.kind] || 0) + 1; return a; }, {}),
+    rows: rows.map((r) => ({ day: r.day, coin: r.coin, month: r.month, cpm: r.cpm })), secs: (performance.now() - t0) / 1000,
+  };
+  if (strategy !== 'none') return result;
   out.push('');
   out.push('== (b) 30-day month, 4 check-ins/day, greedy ==');
   out.push('day  coin     earned   coin/min  shafts ships miners drill exhausted bottleneck');
   for (const r of rows) out.push(`${String(r.day).padStart(3)}  ${E.fmt(r.coin).padEnd(8)} ${E.fmt(r.earned).padEnd(8)} ${E.fmt(r.cpm).padEnd(9)} ${String(r.shafts).padStart(6)} ${String(r.ships).padStart(5)} ${String(r.miners).padStart(6)} ${String(r.drill).padStart(5)} ${String(r.exh).padStart(9)} ${r.bn}`);
-  out.push(`first 20M earned: ${first20M == null ? 'never' : 'day ' + (first20M / DAY + 1).toFixed(2)}`);
-console.log('ship mix hauler/cruiser/freighter by day:', rows.filter((r) => [1, 3, 5, 10, 20, 30].includes(r.day)).map((r) => r.day + ':' + r.mix).join('  '));
+  out.push(`first 20M earned: ${first20M == null ? 'never' : 'day ' + (first20M / DAY + 1).toFixed(2)} · prestige panel: day ${prestigeAt == null ? '-' : (prestigeAt / DAY + 1).toFixed(2)}`);
+  out.push(`hazards: ${hazards.length} (${Object.entries(result.byKind).map(([k, v]) => k + ' ' + v).join(', ')}), miners lost ${c.stats.lost}, safety ${JSON.stringify(c.safety)}, lights/supports avg ${(c.shafts.reduce((a, s) => a + (s.up.lights || 0), 0) / c.shafts.length).toFixed(1)}/${(c.shafts.reduce((a, s) => a + (s.up.supports || 0), 0) / c.shafts.length).toFixed(1)}`);
+  for (const e of hazards.slice(0, 4)) out.push(`  day ${(e.at / DAY + 1).toFixed(2)}: ${e.text}`);
+  if (!quiet) console.log('ship mix hauler/cruiser/freighter by day:', rows.filter((r) => [1, 3, 5, 10, 20, 30].includes(r.day)).map((r) => r.day + ':' + r.mix).join('  '));
   out.push(`colony JSON size: ${(JSON.stringify(c).length / 1024).toFixed(1)} KB · market: ${E.marketTable(world, t).map((m) => m.id + ' ' + m.index.toFixed(2)).join(', ')}`);
   out.push(`ran in ${((performance.now() - t0) / 1000).toFixed(1)}s`);
   if (!quiet) console.log(out.join('\n'));
-  return { firstBuy, firstSale: c.stats.firstSaleAt - born, purchases, first20M, rows };
+  return { ...result, firstBuy, firstSale: c.stats.firstSaleAt - born, purchases, rows };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) run({ quiet: process.argv.includes('--quiet') && false });
+// (c) prestige strategies, one worker each (they all play the same month from the start).
+async function strategies() {
+  const t0 = performance.now();
+  const strats = ['first', 15, 28];
+  const jobs = strats.map((strategy) => new Promise((res, rej) => {
+    const w = new Worker(new URL(import.meta.url), { workerData: { strategy } });
+    w.once('message', res); w.once('error', rej);
+  }));
+  const base = run({ quiet: false, strategy: 'none' });
+  const all = [base, ...(await Promise.all(jobs))];
+  const name = (s) => (s === 'none' ? 'no nuke' : s === 'first' ? 'first chance' : 'day ' + s);
+  const at = (r, d) => E.fmt(r.rows[d - 1].month);
+  console.log('\n== (c) Prestige: month-end coin (bot hoards days 29-30) ==');
+  console.log('strategy      nuke day  spectacle  evo m/s/p      coin@30   earned@10 earned@20 earned@30  vs no nuke');
+  for (const r of all) {
+    const ev = r.evo ? `${r.evo.mine}/${r.evo.ship}/${r.evo.sell}` : '-';
+    console.log(`${name(r.strategy).padEnd(13)} ${(r.nukedAt == null ? '-' : (r.nukedAt / DAY + 1).toFixed(2)).padEnd(9)} ${(r.nukeInfo ? r.nukeInfo.spectacle.toFixed(1) : '-').padEnd(10)} ${ev.padEnd(14)} ${E.fmt(r.coin).padEnd(9)} ${at(r, 10).padEnd(9)} ${at(r, 20).padEnd(9)} ${at(r, 30).padEnd(10)} ${(r.coin / base.coin).toFixed(2)}x`);
+  }
+  console.log(`strategies ran in ${((performance.now() - t0) / 1000).toFixed(1)}s (parallel)`);
+}
+
+if (!isMainThread && workerData) parentPort.postMessage(run({ quiet: true, strategy: workerData.strategy }));
+else if (import.meta.url === `file://${process.argv[1]}`) strategies();
 export { run };
