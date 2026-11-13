@@ -48,7 +48,8 @@ export async function ensureSignedIn() {
       <label class="f">Your name <input type="text" id="jName" maxlength="24" required autocomplete="nickname"></label>
       ${cfg.inviteRequired ? '<label class="f">Invite code <input type="password" id="jCode" required></label>' : ''}
       <details><summary>Already playing on another device?</summary>
-        <label class="f">Device code (Settings on your other device) <input type="password" id="jRec"></label></details>
+        <label class="f">Device code (Settings on your other device) <input type="password" id="jRec"></label>
+        ${cfg.inviteRequired ? '' : '<label class="f">Owner code (if you run this server) <input type="password" id="jCode"></label>'}</details>
       <div class="btnrow"><button class="buy big" type="submit">Join the Guild</button></div>
       <p class="err" id="jErr" hidden></p></form>`;
     document.body.appendChild(ov);

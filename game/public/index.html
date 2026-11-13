@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#130d1f">
+<title>Mineshaft Capital</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;600;700&family=Silkscreen:wght@400;700&family=VT323&display=swap">
+<link rel="stylesheet" href="/app/style.css">
+</head>
+<body>
+<div id="boot" class="boot"><div class="guild-seal">MG</div><p>Opening the mine…</p></div>
+<div id="app" hidden>
+  <header class="hud">
+    <div class="brand">MINESHAFT<span>CAPITAL</span></div>
+    <div class="stat coin"><small>Coin</small><b id="coin">0</b><i id="cpm"></i></div>
+    <div class="stat day"><small id="day">Day 1</small><b><span id="left"></span><span class="lw"> left</span></b></div>
+    <button class="stat rank" id="rankBtn" aria-label="Rank"><small>Rank</small><b><span id="rank">–</span> <span id="rankOf"></span></b></button>
+    <span class="spacer"></span>
+    <button class="icon-btn" id="alertsBtn" aria-label="Alerts"><svg viewBox="0 0 8 8" width="18" height="18" shape-rendering="crispEdges"><path fill="currentColor" d="M3 0h2v1h1v3h1v2H1V4h1V1h1zM3 7h2v1H3z"/></svg><span id="alertsN" class="badge" hidden>0</span></button>
+    <button class="icon-btn" id="gear" aria-label="Settings"><svg viewBox="0 0 8 8" width="18" height="18" shape-rendering="crispEdges"><path fill="currentColor" d="M3 0h2v1h1V0h1v2H6v1h2v2H6v1h1v2H6V7H5v1H3V7H2v1H1V6h1V5H0V3h2V2H1V0h1v1h1zm0 3v2h2V3z"/></svg></button>
+  </header>
+  <main class="layout">
+    <section class="stage">
+      <canvas id="cv" aria-label="Your mine"></canvas>
+      <div class="zoom"><button id="zoomIn" aria-label="Zoom in">+</button><button id="zoomOut" aria-label="Zoom out">−</button><button id="zoomHome" aria-label="Recenter">◎</button></div>
+      <div id="card" class="card" hidden></div>
+    </section>
+    <aside class="panel">
+      <nav class="tabs" id="tabs" role="tablist" hidden></nav>
+      <div class="tabbody" id="tabbody"></div>
+    </aside>
+  </main>
+  <footer class="ticker" id="ticker"></footer>
+</div>
+<div id="coach" class="coach" hidden></div>
+<div id="toasts" aria-live="polite"></div>
+<div id="banner" class="banner"></div>
+<script type="module" src="/app/main.js"></script>
+</body>
+</html>
