@@ -46,6 +46,8 @@ export function rollVein(world, idx, rng, { redrill = false, up = null } = {}) {
   const I = info(world);
   let cands = I.ores.filter((o) => o.depthMin <= idx);
   if (redrill && cands.some((o) => o.tier !== 'common')) cands = cands.filter((o) => o.tier !== 'common');
+  // The first shafts always hit ore the starting drill can cut, so the early game has no dead ends.
+  if (!redrill && idx < 3 && cands.some((o) => o.hardness <= 1)) cands = cands.filter((o) => o.hardness <= 1);
   const pool = cands.length ? cands : I.ores.filter((o) => o.tier === 'common').slice(0, 1);
   if (!pool.length) pool.push(I.ores[0]);
   const w = pool.map((o) => {

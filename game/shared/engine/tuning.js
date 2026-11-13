@@ -2,7 +2,7 @@
 // Rates are per minute, times in seconds unless named *Ms.
 
 export const T = {
-  startCoin: 12,
+  startCoin: 40,                // enough for a few miners right away
   gridMs: 60_000, // advance() never integrates across a minute boundary in one piece
 
   // Miners

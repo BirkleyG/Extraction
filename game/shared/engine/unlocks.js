@@ -12,7 +12,7 @@ export const PANELS = [
   { id: 'carts', label: 'Carts & rails', when: (c) => c.earned >= 45 },
   { id: 'lift', label: 'Lift', when: (c, I, r) => c.earned >= 150 || (r().limit === 'lift' && c.earned >= 15) },
   { id: 'ships', label: 'Ship upgrades', when: (c, I, r) => c.earned >= 300 || (r().limit === 'ships' && c.earned >= 15) },
-  { id: 'bunks', label: 'Bunkhouses', when: (c) => c.earned >= 400 },
+  { id: 'bunks', label: 'Bunkhouses', when: (c) => c.earned >= 400 || c.miners >= 5 },
   { id: 'conveyor', label: 'Conveyors', when: (c, I, r) => c.earned >= 700 || (r().limit === 'conveyor' && c.earned >= 15) },
   { id: 'yard', label: 'Surface yard', when: (c, I, r) => c.earned >= 1_200 || (r().yardLoss > 0.03 && c.earned >= 15) },
   { id: 'drill', label: 'Drill', when: (c, I) => c.earned >= 2_000 || c.shafts.some((s) => /drill/.test(shaftStatus(c, I, s).reason)) },

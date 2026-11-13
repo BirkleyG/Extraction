@@ -155,6 +155,8 @@ test('offline 3-day catch-up runs fast and pays at about the live rate', () => {
 test('commands: hire with n = 1, 10, 100 and max', () => {
   const w = newWorld();
   let c = rich(fresh(0), w, 1e6);
+  assert.match(E.quote(c, w, { type: 'hire', n: 10 }).effect, /\+3 miners .*bunks full/, 'hiring stops at free bunks');
+  c.shafts = Array.from({ length: 12 }, (_, i) => ({ ...c.shafts[0], id: 's' + i, up: { bunk: 10, cart: 0 } }));
   const q1 = E.quote(c, w, { type: 'hire', n: 1 });
   const q10 = E.quote(c, w, { type: 'hire', n: 10 });
   const q100 = E.quote(c, w, { type: 'hire', n: 100 });
@@ -168,6 +170,8 @@ test('commands: hire with n = 1, 10, 100 and max', () => {
   const after = run(c, w, { type: 'hire', n: 'max' });
   assert.equal(after.miners, qm.n);
   assert.ok(Math.abs(after.coin - (5000 - qm.cost)) < 1e-6);
+  const full = run({ ...after, coin: 1e9 }, w, { type: 'hire', n: 'max' });
+  assert.match(E.quote(full, w, { type: 'hire' }).error, /No free bunks/);
   const poor = { ...after, coin: 0 };
   const qp = E.quote(poor, w, { type: 'hire', n: 'max' });
   assert.equal(qp.canAfford, false);
@@ -342,6 +346,9 @@ test('hardness: a vein harder than the drill produces nothing until upgraded', (
   c = run(c, w, { type: 'buyShaft' });
   c.shafts[1] = { ...c.shafts[1], ore: 'jade', vein: { total: 1e9, left: 1e9, warn: 0 } };
   c = run(c, w, { type: 'hire', n: 6 });
+  assert.equal(c.miners, 3, 'blocked shafts offer no bunks');
+  c.miners = 6; // e.g. miners hired before the shaft was blocked
+  c = E.advance(c, w, c.t + 1).colony;
   let r = E.rates(c, w).shafts[1];
   assert.equal(r.ok, false);
   assert.equal(r.orePerMin, 0);

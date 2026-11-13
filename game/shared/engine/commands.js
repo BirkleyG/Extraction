@@ -59,11 +59,11 @@ export function newColony({ id, uid, name, species, planet, siteRegion, now, gra
   return c;
 }
 
-// Late joiners: coin to roughly catch a casual player (about a fifth of a greedy pacing-bot player's earnings by that day).
+// Late joiners: a head start worth roughly a strong player's first day or two, not their whole month.
 export function catchUpGrant(world, now) {
   const day = (num(now) - num(world.startedAt)) / DAY_MS;
   if (day < 0.5) return 0;
-  return Math.round(Math.min(1e13, 2e5 * Math.pow(day, 3.3)));
+  return Math.round(25_000 * day * day);
 }
 
 export const upMax = (s) => T.upMax0 + T.upMaxPerDepth * s.idx;
@@ -93,12 +93,14 @@ function plan(c, world, cmd, now) {
   const n = cmd.n ?? 1;
   switch (cmd.type) {
     case 'hire': {
-      const p = levelPlan(c, c.miners, 1e6, T.hireBase, T.hireGrowth, n, 1e6);
       const slots = c.shafts.reduce((a, s) => a + (shaftStatus(c, I, s).ok ? bunkCap(s.up.bunk) : 0), 0);
       const free = Math.max(0, slots - c.miners);
+      // Miners need a bunk: hiring stops at free bunks, so the next step is always clear.
+      if (free <= 0) return { error: 'No free bunks. Build a bunkhouse or dig a new shaft.' };
+      const p = levelPlan(c, c.miners, c.miners + free, T.hireBase, T.hireGrowth, n === 'max' ? 'max' : Math.min(free, Math.max(1, Math.floor(num(Number(n), 1)))), 1e6);
       return {
         ...p, n: p.k,
-        effect: `+${p.k} miner${p.k > 1 ? 's' : ''} (${c.miners} → ${c.miners + p.k})` + (free < p.k ? (free ? `, only ${free} bunk${free > 1 ? 's' : ''} free` : ', no free bunks') : ''),
+        effect: `+${p.k} miner${p.k > 1 ? 's' : ''} (${c.miners} → ${c.miners + p.k})` + (free - p.k <= 0 ? ', bunks full' : ''),
         apply: (x) => { x.miners += p.k; },
       };
     }
