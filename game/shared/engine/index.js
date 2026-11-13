@@ -6,41 +6,63 @@
  *   newColony({ id, uid, name, species, planet, siteRegion, now, grant }) -> colony   (grant: coin number or { coin })
  *   advance(colony, world, now) -> { colony, events, sales }       sales: [{ oreId, amount }] for recordSales
  *   applyCommand(colony, world, cmd, now) -> { colony, events, sales, error? }
- *   quote(colony, world, cmd) -> { cost, effect, canAfford, n, error? }
+ *   quote(colony, world, cmd) -> { cost, effect, canAfford, n, error?, currency?: 'sp', spectacle? }   (evolve costs SP)
  *   rates(colony, world) -> { orePerMin, minePerMin, liftPerMin, conveyorPerMin, conveyorPerPad, shipPerMin,
  *                             throughput, coinPerMin, valuePerOre, yardLoss, yardCap, tunnelCap, idleMiners, pads,
- *                             shafts: [{ id, name, ore, miners, cap, orePerMin, perMiner, ok, reason, vein }],
- *                             ships: [{ id, name, cls, cap, dest, tripSecs, perMin, cycleSecs }] }
+ *                             shafts: [{ id, name, ore, miners, cap, orePerMin, perMiner, ok, reason, vein,
+ *                                        risk (mishaps/hour, 0..1), haltMins, lights, supports }],
+ *                             ships: [{ id, name, cls, cap, dest, tripSecs, perMin, cycleSecs }],
+ *                             hazards: { perHour, loss (share of output), lossPerMin, colony: { gas, flood, fire, quake } },
+ *                             evo: { mine, ship, sell } (multipliers) }
  *   bottleneck(colony, world) -> { stage, wastedPerMin, wastedOrePerMin, message, suggestion: { cmd, cost, label, gainPerMin, canAfford } }
- *       stage: 'mine' | 'lift' | 'yard' | 'conveyor' | 'ships' | 'idle' | 'blocked'
+ *       stage: 'mine' | 'lift' | 'yard' | 'conveyor' | 'ships' | 'idle' | 'blocked' | 'safety'
  *   destinations(colony, world, shipClass) -> [{ id, name, distance, price: { oreId: n }, tripSecs, coinPerMin, best }]
- *   marketPrice(world, oreId, destId, now) -> number
+ *   marketPrice(world, oreId, destId, now) -> number   (includes active world.changes; not the colony's sell evolution)
+ *   activeChanges(world, now) -> changes in effect (at <= now < until; missing at/until = open-ended)
+ *   priceMult(world, oreId, buyerId, now) -> combined change multiplier, clamped to [0.2, 5]
+ *       demand: x mult for that ore · supply: / mult for that ore · global: x mult · buyer: x mult at that buyer
  *   recordSales(world, sales, now) -> world
  *   unlocks(colony, world, now) -> { panels, licenses, tutorial: { step, id, hint }, next: { panel, license }, day }
  *
  * Balance numbers live in tuning.js (exported as TUNING); tune with `node game/test/pacing.mjs`.
  * Extra exports: catchUpGrant(world, now), bestMoves(colony, world, { cmds?, limit }), candidateMoves,
- *   marketTable(world, now), fmt(n), PANELS, TUTORIAL, TUNING.
+ *   marketTable(world, now), fmt(n), PANELS, TUTORIAL, TUNING, spectacleOf(colony, runEarned), evoMult(colony, kind).
  *
  * Commands ({ type, ...args }; n = 1 | 10 | 100 | 'max' where noted):
  *   hire {n} · buyShaft · redrill {shaftId} (exhausted veins only) · upgradeShaft {shaftId, kind:'cart'|'bunk', n}
  *   upgradeLift {n} · upgradeConveyor {n} · upgradeYard {n} · buyPad {n} · upgradeDrill
  *   buyShip {cls:'hauler'|'cruiser'|'freighter'} · upgradeShip {shipId, n} · setRoute {shipId, policy:'best'|'nearest'|'fixed', destId?}
  *   rename {target:'colony'|'shaft'|'ship', id, name} · tutorial {step} · autoSpend {keep?: 0..0.9}
+ *   Safety: upgradeShaft {shaftId, kind:'lights'|'supports', n} (not the home shaft) · upgradeSafety {kind:'ventilation'|'pumps'|'firebreaks', n}
+ *   Prestige: nuke {confirm:'NUKE'} (runEarned >= TUNING.nukeMin) · evolve {kind:'mine'|'ship'|'sell'|'spectacle', n} (costs SP)
  *
- * Panels: mine, hire, shafts, carts, lift, ships, bunks, conveyor, yard, drill, routes, fleet, pads, market.
+ * Panels: mine, hire, shafts, carts, lift, ships, bunks, conveyor, yard, drill, routes, fleet, pads, market,
+ *   safety (a shaft at depth index >= 3, or the first mishap), prestige (runEarned >= 5M, or after a nuke).
  * Licenses (day of month AND coin earned+grant): cruiser, freighter, mythicDrill.
  *
  * Colony (plain JSON):
  *   { v, id, uid, name, species, siteRegion, planetId, seed, rng, t, born,
- *     coin, earned, grant, miners, idle, drill, lift, conveyor, yardLvl, pads,
+ *     coin, earned, grant, runEarned (since the last nuke, grant excluded), monthEarned (all runs),
+ *     sp, evo: { mine, ship, sell, spectacle }, nukes, lastNuke: null | { at, spectacle, runEarned, makerUsed },
+ *     safety: { ventilation, pumps, firebreaks }, hz: { gas, flood, fire, quake }, hzRng,   (hz = hazard clocks, see hazards.js)
+ *     miners, idle, drill, lift, conveyor, yardLvl, pads,
  *     tunnel: { oreId: amt }, tunnelG, yard: { oreId: amt }, yardG,   (…G = grade units: amount x depth grade; value = G x price)
- *     shafts: [{ id, idx, name, ore, vein: null | { total, left, warn }, up: { bunk, cart }, miners }],
+ *     shafts: [{ id, idx, name, ore, vein: null | { total, left, warn }, up: { bunk, cart, lights, supports }, miners,
+ *                haltUntil (ms or null), hz: { cave, mad } }],
  *     ships: [{ id, name, cls, lvl, policy, destId, state: 'home'|'loading'|'out'|'back', cargo: { oreId: amt }, cargoG,
  *               dest, readyAt, dockedAt, firstLoadAt, departAt, arriveAt, homeAt }],
- *     stats: { mined, lifted, loaded, sold, sales, launches, upgrades, spent, firstSaleAt },
+ *     stats: { mined, lifted, loaded, sold, sales, launches, upgrades, spent, firstSaleAt, hazards, lost },
  *     unlocked: { panels, licenses }, tutorial, nextId }
- * Event types: autoSpend, sale, sales (summary with data.ore/coin), salesSummary, launch, vein20, vein5, veinOut, buy, unlock, license.
+ * Event types: autoSpend, sale, sales (summary with data.ore/coin), salesSummary, launch, vein20, vein5, veinOut, buy, unlock, license,
+ *   hazard { kind: 'cavein'|'insanity'|'gas'|'flood'|'fire'|'quake', shaftId?, lost, haltMins, rescued?, burned? } (story text),
+ *   hazardSummary { count, lost }, nuke { spectacle, runEarned, sp, paid }, evolve { kind, sp, n, level }.
+ *
+ * Hazards: danger = shaft depth index (home shaft safe); none in a colony's first 30 minutes (after a nuke too).
+ *   Each hazard spends a seeded Exp(1) clock at its current rate, so advance() stays deterministic and step-invariant.
+ *   Halted shafts dig nothing until haltUntil; mishaps never take the colony's last miner.
+ * Prestige: nuke pays paid cargo on ships in flight at today's price, then resets to a starter mine and keeps
+ *   sp, evo, nukes, monthEarned, lastNuke, name, species, siteRegion, grant and unlocked panels/licenses.
+ *   Spectacle = runEarned^(1/7.5) x (1 + 0.1 x spectacle level). Evolutions: x(1 + per x level), costs in TUNING.evo.
  */
 import { applyCommand as baseApply } from './commands.js';
 import { autoSpend } from './autospend.js';

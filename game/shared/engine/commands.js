@@ -360,6 +360,7 @@ function nukeColony(c, world, spect, ctx = {}) {
   paid = Math.max(0, paid);
   c.earned += paid; c.runEarned += paid; c.monthEarned += paid;
   const runEarned = c.runEarned;
+  spect = spectacleOf(c, runEarned); // cargo paid on the way out counts toward the blast
   if (ctx.sales) for (let o = 0; o < I.n; o++) if (sold[o] > 0) ctx.sales.push({ oreId: I.ores[o].id, amount: sold[o] });
   const keep = {
     sp: num(c.sp) + spect, nukes: num(c.nukes) + 1,

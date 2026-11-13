@@ -94,9 +94,9 @@ export const T = {
   // Evolutions (bought with SP, last the month). Effect per level is additive: x(1 + per * level).
   // Steep costs: the first levels are cheap and big, later ones are a long-term bet.
   evo: {
-    mine:      { per: 0.25, cost: 2.5, growth: 3, label: 'Mine speed' },   // miners and the lift
-    ship:      { per: 0.20, cost: 2.5, growth: 3, label: 'Ship speed' },
-    sell:      { per: 0.20, cost: 2.5, growth: 3, label: 'Sale price' },
+    mine:      { per: 0.20, cost: 2.5, growth: 3, label: 'Mine speed' },   // miners and the lift
+    ship:      { per: 0.15, cost: 2.5, growth: 3, label: 'Ship speed' },
+    sell:      { per: 0.15, cost: 2.5, growth: 3, label: 'Sale price' },
     spectacle: { per: 0.10, cost: 3, growth: 3, label: 'Spectacle' },
   },
   evoMax: 60,

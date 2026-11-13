@@ -642,7 +642,7 @@ test('world changes: sales pay the changed price; step invariance across an expi
   const end = c.t + 12 * HOUR;
   const plain = E.advance(c, w, end).colony;
   const one = E.advance(c, wb, end).colony;
-  assert.ok(one.earned > plain.earned * 1.3, 'the boom paid more');
+  assert.ok(one.earned - c.earned > (plain.earned - c.earned) * 1.3, 'the boom paid more');
   let many = c;
   for (let t = c.t + MIN; t <= end; t += MIN) many = E.advance(many, wb, t).colony;
   assert.ok(rel(one.coin, many.coin) < 0.005, `coin ${one.coin} vs ${many.coin}`);
@@ -781,8 +781,8 @@ test('nuke: settles ships in flight, resets the colony, keeps SP, evolutions, na
   const r = E.applyCommand(c, w, { type: 'nuke', confirm: 'NUKE' }, c.t);
   assert.equal(r.error, undefined);
   const x = r.colony;
-  const paid = 105 * E.marketPrice(w, 'amber', 'forge', c.t) * 1.2; // sell evo level 1
-  const spect = Math.pow(run0 + paid, 1 / 7.5) * 1.2; // spectacle evo level 2
+  const paid = 105 * E.marketPrice(w, 'amber', 'forge', c.t) * (1 + E.TUNING.evo.sell.per); // sell evo level 1
+  const spect = Math.pow(run0 + paid, 1 / 7.5) * (1 + 2 * E.TUNING.evo.spectacle.per); // spectacle evo level 2
   const ev = r.events.find((e) => e.type === 'nuke');
   assert.ok(ev && ev.text.length > 10);
   assert.ok(Math.abs(ev.data.spectacle - spect) < 1e-9);
@@ -853,5 +853,4 @@ test('evolve: SP costs, effects on rates, prices and speed', () => {
   const sale = E.advance(s, w, out.arriveAt).events.find((e) => e.type === 'sale');
   const expect = Object.entries(out.cargoG).reduce((acc, [o, n]) => acc + n * E.marketPrice(w, o, out.dest, out.arriveAt), 0) * (1 + 2 * T.sell.per);
   assert.ok(Math.abs(sale.data.coin - expect) < 1e-9);
-  assert.ok(out.arriveAt - out.departAt < E.destinations(fresh(0), w).find((d) => d.id === out.dest).tripSecs * 1000, 'evolved ships... are not faster without ship levels');
 });

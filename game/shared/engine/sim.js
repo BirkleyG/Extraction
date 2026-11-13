@@ -177,7 +177,10 @@ export function advance(colony, world, now) {
   };
 
   function budget() { const [b, r] = rollBudget(c.hzRng); c.hzRng = r; return b; }
-  function rnd() { const [u, r] = hzPick(c.hzRng); c.hzRng = r; return u; }
+  // Every mishap draws the same number of rolls whatever happens, so the seeded stream stays
+  // aligned even when tiny timing differences change an outcome (step invariance).
+  let rolls = [];
+  function rnd() { return rolls.length ? rolls.shift() : 0.5; }
   const between = ([a, b]) => Math.round(a + (b - a) * rnd());
   const halt = (s, t, mins) => { if (mins > 0) s.haltUntil = Math.max(num(s.haltUntil, 0), t + mins * 60_000); };
   // Lose up to `want` miners from shaft s; the colony always keeps at least one miner.
@@ -195,6 +198,8 @@ export function advance(colony, world, now) {
     return deep[deep.length - 1];
   };
   function hazard(kind, s, t) {
+    rolls = [];
+    for (let i = 0; i < 6; i++) { const [u, r] = hzPick(c.hzRng); c.hzRng = r; rolls.push(u); }
     const H = T.hz;
     let lost = 0, haltMins = 0, saved = false, burned = 0;
     let kindName = kind;
