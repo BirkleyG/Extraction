@@ -4,6 +4,12 @@
 import crypto from 'node:crypto';
 import * as E from '../shared/engine/index.js';
 import { improvisePlanet, planetPrompt, planetFromAI, planetSummary } from '../shared/planet/index.js';
+import { createMaker } from './maker.js';
+import { createEvents } from './events.js';
+
+// Species library (shared/species) is optional until the client ships it.
+let speciesLib = null;
+async function species() { if (speciesLib === null) speciesLib = await import('../shared/species/index.js').catch(() => false); return speciesLib || null; }
 
 // Server-only collections (never client-writable).
 export const SUB_COLLS = new Set(['board2', 'world2', 'feed2']);
@@ -100,6 +106,7 @@ export function createV2({ store, ai, currentModel, broadcast, now: clock = () =
     broadcast('board2', r.colony.uid, s);
     for (const ev of r.events || []) {
       if (['license', 'veinOut'].includes(ev.type) && ev.text) await addFeed(`${r.colony.name}: ${ev.text}`, ev.type, r.colony.uid, t);
+      if (ev.type === 'nuke') await addFeed(`☢ ${players[0] ? players[0].name : r.colony.name} nuked their whole colony for ${Number(ev.data && ev.data.spectacle || 0).toFixed(1)} Spectacle. The Maker is listening.`, 'nuke', r.colony.uid, t);
     }
     return r;
   }
@@ -130,8 +137,39 @@ export function createV2({ store, ai, currentModel, broadcast, now: clock = () =
     return true;
   }
 
+  const maker = createMaker({ store, ai, currentModel, getWorld, saveWorld, addFeed, clock });
+  const events = createEvents({ ai, currentModel, getWorld, saveWorld, addFeed, clock });
+
   return {
     getWorld,
+    maybeEvent: () => queue(() => events.maybeEvent()),
+
+    maker: (me, body) => queue(async () => {
+      const world = await getWorld();
+      const colony = await loadColony(me.id, world);
+      return maker.handle(me, colony, body || {});
+    }),
+
+    bulletin: () => queue(async () => {
+      const t = clock();
+      const world = await getWorld();
+      const active = (world.changes || []).filter(c => !c.until || c.until > t);
+      const names = Object.fromEntries((await store.players_(active.map(c => c.by).filter(Boolean))).map(p => [p.id, p.name]));
+      return { changes: active.map(c => ({ ...c, byName: c.by ? names[c.by] || 'A General' : null })), nextEventAt: world.nextEventAt || null };
+    }),
+
+    species: (me, body) => queue(async () => {
+      const lib = await species();
+      if (!lib) throw Object.assign(new Error('The species builder is not ready yet'), { status: 503, code: 'not_ready', expose: true });
+      const description = String((body && body.description) || '').slice(0, 300);
+      const seed = me.id + ':' + crypto.randomBytes(3).toString('hex');
+      const model = ai && await currentModel();
+      if (model && description) {
+        try { return { species: lib.speciesFromAI(await ai.json(model, lib.speciesPrompt(description), 'quick'), seed) }; }
+        catch (e) { console.error('Species AI failed:', e.message); }
+      }
+      return { species: lib.randomSpecies(seed, description) };
+    }),
     rollIfDue: () => queue(rollIfDue),
 
     state: (me) => queue(async () => {
