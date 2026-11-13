@@ -8,6 +8,7 @@ import express from 'express';
 import { WebSocketServer } from 'ws';
 import { createStore } from './store.js';
 import { createAi } from './ai.js';
+import { createV2, SUB_COLLS } from './v2/service.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -169,6 +170,20 @@ export async function startServer(opts = {}) {
     }
   }));
 
+  // ---------- v2: server-authoritative game ----------
+  const v2 = createV2({ store, ai, currentModel, broadcast: (c, i, d) => broadcast(c, i, d), now: opts.now });
+  app.get('/api/v2/state', need(async (req, res, me) => res.json(await v2.state(me))));
+  app.post('/api/v2/start', need(async (req, res, me) => res.json(await v2.start(me, req.body || {}))));
+  app.post('/api/v2/command', need(async (req, res, me) => {
+    const out = await v2.command(me, req.body && req.body.cmd);
+    res.status(out.error ? 422 : 200).json(out);
+  }));
+  app.get('/api/v2/board', need(async (req, res) => res.json(await v2.board())));
+  app.post('/api/v2/admin/end-month', need(async (req, res, me) => {
+    if (!me.owner) throw fail(403, 'permission_denied', 'Owner only');
+    res.json({ rolled: await v2.forceRoll() });
+  }));
+
   app.use('/shared', express.static(path.join(here, 'shared'), { maxAge: '1m' }));
   app.use(express.static(path.join(here, 'public'), { extensions: ['html'], maxAge: '1m' }));
 
@@ -187,9 +202,9 @@ export async function startServer(opts = {}) {
     ws.on('close', () => subs.delete(ws));
     ws.on('message', async raw => {
       let m; try { m = JSON.parse(raw); } catch { return; }
-      if (m.op === 'sub' && COLLS.has(m.coll)) {
+      if (m.op === 'sub' && (COLLS.has(m.coll) || SUB_COLLS.has(m.coll))) {
         subs.get(ws)?.add(m.coll);
-        const docs = await store.listColl(m.coll, m.coll === 'feed' ? { orderBy: 't', desc: true, limit: 50 } : {});
+        const docs = await store.listColl(m.coll, (m.coll === 'feed' || m.coll === 'feed2') ? { orderBy: 't', desc: true, limit: 50 } : {});
         send(ws, { op: 'init', coll: m.coll, docs });
       }
     });
@@ -203,13 +218,18 @@ export async function startServer(opts = {}) {
     for (const [ws, set] of subs) if (set.has(coll) && ws.readyState === 1) ws.send(msg);
   }
 
+  const timers = opts.noTimers ? [] : [
+    setInterval(() => v2.rollIfDue().catch(e => console.error('rollover', e)), 60_000),
+    setInterval(() => v2.sweep().catch(e => console.error('sweep', e)), 60_000),
+  ];
+
   const port = opts.port ?? Number(env.PORT || 3000);
   await new Promise(r => server.listen(port, r));
   const address = server.address();
   console.log(`Mineshaft Capital on :${address.port} (store: ${store.kind}, AI keys: ${Object.keys(ai.providers).filter(k => ai.providers[k]).join(', ') || 'none'})`);
   return {
     port: address.port, store,
-    async close() { clearInterval(ping); for (const ws of wss.clients) ws.terminate(); wss.close(); await new Promise(r => server.close(r)); await store.close(); },
+    async close() { clearInterval(ping); timers.forEach(clearInterval); for (const ws of wss.clients) ws.terminate(); wss.close(); await new Promise(r => server.close(r)); await store.close(); },
   };
 }
 
