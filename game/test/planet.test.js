@@ -1,29 +1,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { regionNeighbors, MIN_SITE_GAP } from '../shared/planet/layout.js';
-import { improvisePlanet, planetFromAI, planetPrompt, planetSummary, oreSpriteSpec, TERRAINS, TERRAIN_IDS, WEATHER, SHAPES, THEMES } from '../shared/planet/index.js';
+import { sampleSpot, startSpot, spotOK, isWater, territoryAt, MIN_SITE_GAP, improvisePlanet, planetFromAI, planetPrompt, planetSummary, oreSpriteSpec, TERRAINS, TERRAIN_IDS, WEATHER, SHAPES, THEMES } from '../shared/planet/index.js';
 import { SPEC, DECOR } from '../public/app/pixel/terrains.js';
 
 const HEX = /^#[0-9a-f]{6}$/;
 
 const commonIds = (p) => p.ores.filter((o) => o.tier === 'common').map((o) => o.id);
 function assertLayout(p) {
-  const [c0, c1] = commonIds(p); const mythic = p.ores[6].id; const rares = p.ores.slice(2, 6).map((o) => o.id);
-  const reg = new Map(p.regions.map((r) => [r.id, r]));
+  const [c0, c1] = commonIds(p);
   for (const r of p.regions) {
     assert.ok([c0, c1].includes(r.common)); assert.ok(r.soil >= 0.75 && r.soil <= 1.35); assert.equal(typeof r.tough, 'boolean');
     assert.ok(r.temperature >= -1 && r.temperature <= 1); assert.ok(Array.isArray(r.neighbors));
   }
-  const ids = new Set();
-  for (const s of p.sites) {
-    assert.ok(!ids.has(s.id)); ids.add(s.id); const r = reg.get(s.regionId); assert.ok(r);
-    assert.ok(Math.abs(s.soil - r.soil) <= 0.07); assert.equal(s.richness[r.common], 1);
-    assert.ok(!((r.common === c0 ? c1 : c0) in s.richness));
-    for (const [id, v] of Object.entries(s.richness)) { assert.ok(v >= 0.2 && v <= 1 || v === 1); assert.ok(s.veinSize[id] >= 0.6 && s.veinSize[id] <= 1.6); if (id !== r.common) assert.ok(rares.includes(id) || id === mythic); }
-    assert.deepEqual(Object.keys(s.veinSize).sort(), Object.keys(s.richness).sort());
-    if (mythic in s.richness) assert.ok(r.tough);
-    assert.equal(typeof s.start, 'boolean'); assert.ok(s.score > 0);
-  }
+  assert.ok(p.field && typeof p.field === 'object'); assert.ok(JSON.stringify(p.field).length < 8000);
+  assert.equal(territoryAt(p, 500, 500), null);
 }
 
 function assertValid(p) {
@@ -163,85 +153,108 @@ test('oreSpriteSpec never throws and orders the palette dark to light', () => {
   assert.equal(oreSpriteSpec({ tier: 'mythic' }).sparkle, 1);
 });
 
-const seeds = (n, f) => Array.from({ length: n }, (_, i) => f(improvisePlanet(`layout-${i}`, {}), i));
+const seeds = (n, f) => Array.from({ length: n }, (_, i) => f(improvisePlanet(`field-${i}`, {}), i));
+const G = 50;
+/* sample the map on a grid: land cells with their spots */
+function grid(p) {
+  const cells = new Array(G * G).fill(null); let land = 0;
+  for (let j = 0; j < G; j += 1) for (let i = 0; i < G; i += 1) { const x = (i + 0.5) * (1000 / G); const y = (j + 0.5) * (1000 / G); if (!isWater(p, x, y)) { cells[j * G + i] = sampleSpot(p, x, y); land += 1; } }
+  return { cells, land };
+}
+function pieces(cells, pred) {
+  const on = cells.map((s) => !!s && pred(s)); const seen = new Uint8Array(on.length); const out = [];
+  for (let s0 = 0; s0 < on.length; s0 += 1) {
+    if (!on[s0] || seen[s0]) continue;
+    let n = 0; const st = [s0]; seen[s0] = 1;
+    while (st.length) {
+      const c = st.pop(); n += 1; const ci = c % G; const cj = (c - ci) / G;
+      for (let dj = -1; dj <= 1; dj += 1) for (let di = -1; di <= 1; di += 1) { const ii = ci + di; const jj = cj + dj; if (ii < 0 || jj < 0 || ii >= G || jj >= G) continue; const k = jj * G + ii; if (on[k] && !seen[k]) { seen[k] = 1; st.push(k); } }
+    }
+    out.push(n);
+  }
+  return out;
+}
 
-test('12-18 regions with two contiguous, non-overlapping common zones', () => {
+test('sampleSpot is deterministic and in range, with only present ores keyed', () => {
+  const p = improvisePlanet('spot-a', {}); const again = improvisePlanet('spot-a', {});
+  assert.deepEqual(p.field, again.field);
+  const ids = new Set(p.ores.map((o) => o.id)); const regionIds = new Set(p.regions.map((r) => r.id));
+  const { cells } = grid(p);
+  for (const s of cells) {
+    if (!s) continue;
+    assert.deepEqual(s, sampleSpot(again, s.x, s.y));
+    assert.ok(regionIds.has(s.regionId)); assert.ok(TERRAINS[s.terrain]); assert.equal(s.terrain, p.regions.find((r) => r.id === s.regionId).terrain);
+    assert.ok(s.height >= 0 && s.height <= 1 && s.temperature >= -1 && s.temperature <= 1 && s.moisture >= 0 && s.moisture <= 1);
+    assert.ok(s.soil >= 0.75 && s.soil <= 1.35, `soil ${s.soil}`); assert.equal(typeof s.tough, 'boolean'); assert.equal(typeof s.climate, 'string');
+    assert.equal(s.richness[s.common], 1); assert.ok(commonIds(p).includes(s.common));
+    assert.deepEqual(Object.keys(s.veinSize).sort(), Object.keys(s.richness).sort());
+    for (const [id, v] of Object.entries(s.richness)) { assert.ok(ids.has(id)); assert.ok(v > 0 && v <= 1); assert.ok(s.veinSize[id] >= 0.6 && s.veinSize[id] <= 1.6); }
+    assert.ok(Number.isFinite(s.score) && s.score > 0);
+  }
+  const c = sampleSpot(p, -50, 5000); assert.ok(c.x === 0 && c.y === 1000);
+});
+
+test('painted fields: commons ~50/50, rares ~37% each, mythic ~5% on tough ground, patches never tiny', () => {
+  const lo = (n) => n; let seen = 0;
+  seeds(10, (p) => {
+    const [c0, c1] = commonIds(p); const rares = p.ores.slice(2, 6).map((o) => o.id); const my = p.ores[6].id;
+    const { cells, land } = grid(p); seen += 1;
+    assert.ok(land / (G * G) > 0.4 && land / (G * G) < 0.9, `land ${land}`);
+    const frac = (f) => cells.filter((s) => s && f(s)).length / land;
+    const a = frac((s) => s.common === c0); assert.ok(a > 0.4 && a < 0.6, `common split ${a}`);
+    for (const id of rares) { const v = frac((s) => id in s.richness); assert.ok(v > 0.32 && v < 0.42, `rare ${v}`); }
+    const m = frac((s) => my in s.richness); assert.ok(m > 0.03 && m < 0.075, `mythic ${m}`);
+    for (const s of cells) if (s && my in s.richness) assert.ok(s.tough, 'mythic only on tough ground');
+    const minPiece = (pred, share) => { const ps = pieces(cells, pred); assert.ok(ps.length >= 1); const mn = Math.min(...ps) / land; assert.ok(mn >= share, `smallest patch ${mn.toFixed(3)} < ${share}`); };
+    for (const id of [c0, c1]) minPiece((s) => s.common === id, 0.04);
+    for (const id of rares) minPiece((s) => id in s.richness, 0.04);
+    minPiece((s) => my in s.richness, 0.015);
+    const counts = [0, 0, 0, 0, 0]; for (const s of cells) if (s) counts[rares.filter((id) => id in s.richness).length] += 1; assert.ok(counts[0] > 0 && counts[1] > 0 && counts[2] > 0);
+  });
+  assert.equal(lo(seen), 10);
+});
+
+test('startSpot: land, gap kept, no mythic, similar scores near +1 SD', () => {
+  seeds(6, (p, n) => {
+    const mythic = p.ores[6].id; const taken = []; const scores = [];
+    for (let i = 0; i < 10; i += 1) {
+      const s = startSpot(p, taken, `player-${n}-${i}`); assert.ok(s, 'got a spot');
+      assert.ok(!isWater(p, s.x, s.y)); assert.ok(!(mythic in s.richness));
+      for (const t of taken) assert.ok(Math.hypot(t.x - s.x, t.y - s.y) >= MIN_SITE_GAP);
+      assert.deepEqual(s, sampleSpot(p, s.x, s.y)); assert.equal(spotOK(p, s.x, s.y, taken).ok, true);
+      assert.equal(spotOK(p, s.x, s.y, taken.concat(s)).reason, 'too-close');
+      taken.push({ x: s.x, y: s.y }); scores.push(s.score);
+    }
+    const { cells } = grid(p); const all = cells.filter((s) => s && !(mythic in s.richness)).map((s) => s.score);
+    const mean = all.reduce((t, v) => t + v, 0) / all.length; const sd = Math.sqrt(all.reduce((t, v) => t + (v - mean) ** 2, 0) / all.length);
+    const sm = scores.reduce((t, v) => t + v, 0) / 10;
+    assert.ok(Math.abs(sm - (mean + sd)) < 0.5 * sd, `start mean ${sm.toFixed(1)} vs ${(mean + sd).toFixed(1)}`);
+    assert.ok(Math.max(...scores) - Math.min(...scores) < 1.2 * sd, 'starts are comparable');
+    assert.equal(startSpot(p, taken, 'x').x === startSpot(p, taken, 'x').x, true);
+  });
+});
+
+test('spotOK rejects water, edges and crowding', () => {
+  const p = improvisePlanet('ok-1', {});
+  assert.equal(spotOK(p, 5, 5, []).ok, false);
+  const { cells } = grid(p); const sea = cells.findIndex((s) => !s);
+  if (sea >= 0) { const x = ((sea % G) + 0.5) * (1000 / G); const y = (Math.floor(sea / G) + 0.5) * (1000 / G); if (x > 20 && x < 980 && y > 20 && y < 980) assert.equal(spotOK(p, x, y, []).reason, 'water'); }
+});
+
+test('12-18 named climate areas with sensible neighbours; AI planets get painted fields too', () => {
   const counts = new Set();
-  seeds(120, (p) => {
-    counts.add(p.regions.length);
-    const nb = regionNeighbors(p.regions);
-    for (const c of commonIds(p)) {
-      const zone = p.regions.filter((r) => r.common === c); assert.ok(zone.length >= 3, `zone of ${c} has ${zone.length}`);
-      const inZone = new Set(zone.map((r) => r.id)); const seen = new Set([zone[0].id]); const stack = [zone[0].id];
-      while (stack.length) for (const n of nb[stack.pop()]) if (inZone.has(n) && !seen.has(n)) { seen.add(n); stack.push(n); }
-      assert.equal(seen.size, zone.length, 'zone is one connected piece');
-    }
-    assert.equal(p.regions.filter((r) => commonIds(p).includes(r.common)).length, p.regions.length);
-    // everything that touches is stored on the region too
-    for (const r of p.regions) assert.deepEqual([...r.neighbors].sort(), [...nb[r.id]].sort());
-    const tough = p.regions.filter((r) => r.tough).length; assert.ok(tough / p.regions.length >= 0.19 && tough / p.regions.length <= 0.31, `${tough}/${p.regions.length}`);
-  });
-  assert.ok(counts.size >= 6 && Math.min(...counts) === 12 && Math.max(...counts) === 18);
-});
-
-test('tough ground favours rugged terrain and temperature follows terrain', () => {
-  const rugged = new Set(['volcanic', 'alpine', 'canyon', 'crystal', 'badlands']); let a = 0; let b = 0; let n = 0; let m = 0;
-  seeds(150, (p) => p.regions.forEach((r) => { if (rugged.has(r.terrain)) { a += 1; if (r.tough) b += 1; } n += 1; if (r.tough) m += 1; }));
-  assert.ok(b / a > 0.5, `rugged tough share ${b / a}`); assert.ok(b / a > (m - b) / (n - a) * 2);
-  const t = (id) => { const xs = []; seeds(80, (p) => p.regions.forEach((r) => { if (r.terrain === id) xs.push(r.temperature); })); return xs.length ? xs.reduce((u, v) => u + v, 0) / xs.length : null; };
-  assert.ok(t('volcanic') > 0.5); assert.ok(t('glacier') < -0.5);
-});
-
-test('rare ores: independent ~37% per site, 16/37/33/13/2% by count; mythic ~5% on tough ground only', () => {
-  const bins = [0, 0, 0, 0, 0]; const per = [0, 0, 0, 0]; let n = 0; let my = 0; let perPlanet = 0;
-  seeds(300, (p) => {
-    const rares = p.ores.slice(2, 6).map((o) => o.id); let mm = 0;
-    for (const s of p.sites) {
-      n += 1; const k = rares.filter((id) => id in s.richness).length; bins[k] += 1; rares.forEach((id, i) => { if (id in s.richness) per[i] += 1; });
-      if (p.ores[6].id in s.richness) { my += 1; mm += 1; assert.ok(p.regions.find((r) => r.id === s.regionId).tough); }
-    }
-    assert.ok(mm >= 1); perPlanet += mm;
-  });
-  [0.16, 0.37, 0.33, 0.13, 0.02].forEach((e, k) => assert.ok(Math.abs(bins[k] / n - e) < 0.035, `${k} rares: ${bins[k] / n}`));
-  per.forEach((c, i) => assert.ok(Math.abs(c / n - 0.37) < 0.03, `rare ${i}: ${c / n}`));
-  assert.ok(Math.abs(my / n - 0.05) < 0.01, `mythic ${my / n}`);
-});
-
-test('sites: 3-6 per region, minimum spacing, inside the map, in their own region cell', () => {
-  seeds(60, (p) => {
-    for (const r of p.regions) { const k = p.sites.filter((s) => s.regionId === r.id).length; assert.ok(k >= 3 && k <= 6, `${k} sites`); }
-    for (const [i, a] of p.sites.entries()) {
-      assert.ok(Math.hypot(a.x - 500, a.y - 500) <= 480);
-      let best = null; let bd = 1e9; for (const r of p.regions) { const d = Math.hypot(r.x - a.x, r.y - a.y); if (d < bd) { bd = d; best = r; } }
-      assert.equal(best.id, a.regionId);
-      for (const b of p.sites.slice(i + 1)) assert.ok(Math.hypot(a.x - b.x, a.y - b.y) >= MIN_SITE_GAP);
-    }
-  });
-});
-
-test('start sites: at least 12, both common zones, similar quality near mean + 1 SD, never mythic', () => {
-  seeds(150, (p) => {
-    const starts = p.sites.filter((s) => s.start); const reg = new Map(p.regions.map((r) => [r.id, r]));
-    assert.ok(starts.length >= 12 && starts.length <= 16, `${starts.length} starts`);
-    for (const c of commonIds(p)) assert.ok(starts.filter((s) => reg.get(s.regionId).common === c).length >= 5);
-    for (const s of starts) assert.ok(!(p.ores[6].id in s.richness));
-    const plain = p.sites.filter((s) => !(p.ores[6].id in s.richness)); const mean = plain.reduce((t, s) => t + s.score, 0) / plain.length;
-    const sd = Math.sqrt(plain.reduce((t, s) => t + (s.score - mean) ** 2, 0) / plain.length);
-    for (const s of starts) assert.ok(Math.abs(s.score - (mean + sd)) < 0.8 * sd, `start score ${s.score} vs ${(mean + sd).toFixed(1)} (sd ${sd.toFixed(1)})`);
-    assert.ok(starts.every((s) => s.score > mean));
-    const sm = starts.reduce((t, s) => t + s.score, 0) / starts.length;
-    assert.ok(Math.sqrt(starts.reduce((t, s) => t + (s.score - sm) ** 2, 0) / starts.length) < 0.55 * sd, 'starts are comparable');
-    assert.ok(Math.abs(sm - (mean + sd)) < 0.6 * sd, 'starts average about +1 SD');
-  });
-});
-
-test('hardness bands and AI planets get seeded layouts too', () => {
-  seeds(40, (p) => {
-    for (const o of p.ores) { const [a, b] = { common: [1, 3], rare: [3, 7], mythic: [9, 10] }[o.tier]; assert.ok(o.hardness >= a && o.hardness <= b); }
-    const rh = p.ores.slice(2, 6).map((o) => o.hardness); assert.deepEqual(rh, rh.slice().sort((x, y) => x - y));
-  });
+  seeds(30, (p) => { counts.add(p.regions.length); for (const r of p.regions) assert.ok(isWater(p, r.x, r.y) === false); assertLayout(p); });
+  assert.ok(counts.size >= 4 && Math.min(...counts) === 12 && Math.max(...counts) === 18);
   const ai = planetFromAI({ name: 'X', regions: [{ name: 'Brie Flats', terrain: 'mesa', x: 5, y: 5, soil: 99 }], ores: [{ name: 'A', tier: 'rare', hardness: 99 }] }, 'k');
   assertValid(ai); assert.equal(ai.regions[0].name, 'Brie Flats'); assert.ok(ai.regions[0].soil <= 1.35 && ai.regions[0].x !== 5);
   assert.deepEqual(planetFromAI({}, 'k'), planetFromAI({}, 'k'));
-  assert.deepEqual(planetFromAI({}, 'k').sites.map((s) => s.id), improvisePlanet('k', {}).sites.map((s) => s.id));
+  for (const junk of [null, 42, 'nope', [], { regions: 'x', ores: 7 }]) assertValid(planetFromAI(junk, 'g'));
+});
+
+test('hardness bands hold and planet JSON stays small', () => {
+  seeds(20, (p) => {
+    for (const o of p.ores) { const [a, b] = { common: [1, 3], rare: [3, 7], mythic: [9, 10] }[o.tier]; assert.ok(o.hardness >= a && o.hardness <= b); }
+    const rh = p.ores.slice(2, 6).map((o) => o.hardness); assert.deepEqual(rh, rh.slice().sort((x, y) => x - y));
+    assert.ok(JSON.stringify(p).length < 60000);
+  });
 });

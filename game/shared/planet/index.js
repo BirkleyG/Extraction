@@ -12,17 +12,18 @@
  *   layers: [5 { name, color }] shallow -> deep,
  *   regions: [12-18 { id, name, terrain, biomes: [3 hex], blurb, weather, x, y (0..1000 map), neighbors: [ids],
  *     common: oreId, soil 0.75-1.35, tough: bool, temperature -1..1 }]  (numbers come from layout.js, seeded),
- *   sites: [~3-6 per region { id, regionId, name, x, y, soil, richness: {oreId: 0-1}, veinSize: {oreId: 0.6-1.6}, start, score }],
+ *   field: { seeds, thresholds, patch discs, region centres } (hidden painted fields, see field.js),
+ *   sites: [legacy: 16 equal start spots (server still reads them until it uses startSpot)] was [~3-6 per region { id, regionId, name, x, y, soil, richness: {oreId: 0-1}, veinSize: {oreId: 0.6-1.6}, start, score }],
  *   ores: [7 { id, name, tier, hardness, depthMin, baseValue, color, palette, shape, use, useId, description }],
  *   buyers: [4 { id, name, blurb, distance: 'near'|'mid'|'far', units, offPlanet, leave, likes: { [oreId]: 0.8-1.4 } }], ai: bool } */
 import { hash, rng, clamp, pick, shuffle, hsl, hexOr, mix, shade, adjust, toHsl, cleanText, slug, num } from './util.js';
 import { TERRAINS, TERRAIN_IDS, WEATHER, WEATHER_IDS, inferTerrain } from './terrains.js';
 import { THEMES, THEME_IDS } from './themes.js';
-import { applyLayout, regionCountFor, regionNeighbors, MIN_SITE_GAP } from './layout.js';
+import { buildField as applyLayout, regionCountFor, MIN_SITE_GAP, sampleSpot, startSpot, spotOK, territoryAt, fieldAt, climateOf, regionWeights, isWater } from './field.js';
 import { SHAPES, TIERS, USES, USE_IDS, TIER_RULES, improviseOres, cleanOre, oreSpriteSpec, orePalette } from './ores.js';
 
 export { TERRAINS, TERRAIN_IDS, WEATHER, WEATHER_IDS, inferTerrain, THEMES, THEME_IDS, SHAPES, TIERS, USES, USE_IDS, TIER_RULES, oreSpriteSpec, orePalette };
-export { applyLayout, regionCountFor, regionNeighbors, MIN_SITE_GAP };
+export { applyLayout, regionCountFor, MIN_SITE_GAP, sampleSpot, startSpot, spotOK, territoryAt, fieldAt, climateOf, regionWeights, isWater };
 export * as color from './util.js';
 
 export const MAPW = 1000;
@@ -127,7 +128,7 @@ function buildFromTheme(R, seed, theme) {
   return {
     id: `p${hash(`${seed}:id`).toString(36)}`, seed, name, theme: theme.concept, themeId: theme.id, mood: theme.mood, motifs: theme.motifs.slice(),
     tagline: pick(R, theme.tag), story, sky, stars: R() < 0.5 ? '#ffffff' : shade(sky[1], 0.7), surface,
-    moons: makeMoons(R, sky, 1 + Math.floor(R() * 3)), layers: makeLayers(R, surface, theme.adj), regions, sites, ores,
+    moons: makeMoons(R, sky, 1 + Math.floor(R() * 3)), layers: makeLayers(R, surface, theme.adj), regions, field: sites.field, sites, ores,
     buyers: makeBuyers(R, theme, ores), ai: false,
   };
 }
@@ -269,7 +270,7 @@ export function planetFromAI(raw, seed) {
     theme: cleanText(themeText, base.theme, 160), themeId: 'ai', mood: cleanText(r.mood || themeObj.mood, base.mood, 40),
     motifs: motifs.map((m) => cleanText(m, '', 20)).filter(Boolean).slice(0, 5),
     tagline: cleanText(r.tagline, base.tagline, 90), story: cleanText(r.story, base.story, 600),
-    sky, stars: hexOr(r.stars, base.stars), surface, moons, layers, regions, sites, ores, buyers, ai: true,
+    sky, stars: hexOr(r.stars, base.stars), surface, moons, layers, regions, field: sites.field, sites, ores, buyers, ai: true,
   };
 }
 

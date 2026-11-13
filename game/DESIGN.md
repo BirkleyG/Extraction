@@ -187,3 +187,9 @@ shaft: { id, idx, name, dir, band: 'shallow'|'middle'|'deep'|'deepest',
   - `renderPlanetMap(...)` lives in the client pixel kit, not shared.
 - The server stores the colony's `site` from `sampleSpot` (id = `s<x>_<y>`, plus the sampled numbers). The engine reads only `colony.site`.
 - The client map never draws ore or territory fields.
+
+### Ships rework (Phase 3.5)
+- Remove `upgradeShip {shipId}`. Add `upgradeClass { cls: 'hauler'|'cruiser'|'freighter', kind, n }` with kinds: all classes `hold` (cargo capacity); `hauler` also `loading` (load rate); `cruiser` also `speed`; `freighter` also `multi` (one-time, very expensive unlock) and `hold2` (second-hold capacity, needs `multi`). Levels live in `colony.fleet[cls]`; every ship of a class uses them.
+- Each ship loads one ore type at a time (`ship.oreId`); a freighter with `multi` also loads a second type into `hold2`.
+- Ore choice happens when a ship docks. Pick the ore that maximizes the fleet's total coin/min given yard stock, inflow rates and what other docked or loading ships have already claimed. Deterministic and step-invariant.
+- `rates().ships[]` adds `oreId`, `oreId2?`, `fill` (0..1) for the loading animation.

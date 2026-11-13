@@ -97,6 +97,24 @@ function expand(c, world, cmd) {
     const s = x.shafts[x.shafts.length - 1];
     const st = { type: 'hireMiners', shaftId: s.id, n: 3 };
     if (!applyNow(x, world, st, [])) steps.push(st);
+    // A shaft is a whole new business: the bundle also puts half its price into the new shaft's miners, gear and cart,
+    // best ore per coin first (the bot would otherwise never see why a shaft is worth it).
+    const budget = quote(c, world, cmd).cost * 0.5;
+    let spent = 0;
+    for (let guard = 0; guard < 80 && spent < budget; guard++) {
+      const sh = x.shafts.find((q) => q.id === s.id);
+      const crew = sh.miners * perMiner(sh) / soilOf(x), cap = cartRate(sh);
+      const opts = [
+        { cmd: { type: 'hireMiners', shaftId: sh.id, n: 1 }, gain: Math.min((sh.miners + 1) * perMiner(sh) / soilOf(x), cap) - Math.min(crew, cap) },
+        { cmd: { type: 'upgradeGear', shaftId: sh.id, n: 1 }, gain: Math.min(sh.miners * perMiner({ ...sh, gear: sh.gear + 1 }) / soilOf(x), cap) - Math.min(crew, cap) },
+        { cmd: { type: 'upgradeCart', shaftId: sh.id, n: 1 }, gain: Math.min(crew, cartRate({ ...sh, cart: sh.cart + 1 })) - Math.min(crew, cap) },
+      ].map((o) => ({ ...o, cost: quote(x, world, o.cmd).cost })).filter((o) => o.gain > 0 && Number.isFinite(o.cost));
+      if (!opts.length) { const o = { type: crew > cap ? 'upgradeCart' : 'hireMiners', shaftId: sh.id, n: 1 }; opts.push({ cmd: o, cost: quote(x, world, o).cost, gain: 1e-9 }); }
+      opts.sort((a, b) => b.gain / b.cost - a.gain / a.cost);
+      if (applyNow(x, world, opts[0].cmd, [])) break;
+      steps.push(opts[0].cmd);
+      spent += opts[0].cost;
+    }
   }
   // Crew and cart must grow together: the cart caps the crew, and a crew under the cart's cap wastes it.
   const balance = (id, pre) => {

@@ -9,24 +9,24 @@ export const T = {
   maxShafts: 30,
   startMiners: 3,                // the free first shaft starts with a few miners
   minePerMiner: 10,              // ore/min per miner at gear 1, shaft 1
-  shaftScale: 3.4,               // miners, gear and cart cost x3.4 per shaft index
-  richness: 1.55,                // ore per miner x1.55 per shaft index ("depth richness")
-  grade: 1.75,                   // ore value x1.75 per shaft index (deeper ore is purer; market volume is unaffected)
-  hire: { base: 10, growth: 1.075, max: 200 },          // miner n costs base x shaftScale^idx x growth^n
+  shaftScale: 6.8,               // miners, gear and cart cost x6.8 per shaft index (a shaft's ladder is as pricey as it is rich)
+  richness: 1.9,                 // ore per miner x1.9 per shaft index ("depth richness")
+  grade: 3.8,                    // ore value x3.8 per shaft index (deeper ore is purer; market volume is unaffected)
+  hire: { base: 20, growth: 1.11, max: 100 },          // miner n costs base x shaftScale^idx x growth^n
   // Gear: level 1.. (mining speed). Level >= hardness cuts that ore. Above `free` needs the mythicDrill license.
-  gear: { base: 25, growth: 1.13, add: 0.5, max: 300, free: 8, hardMax: 10 },
+  gear: { base: 60, growth: 1.25, add: 0.5, max: 300, free: 8, hardMax: 10 },
   // Cart: ore/min the cart hauls from the face to the shaft entrance. A shaft makes at most this much.
-  cart: { base: 40, growth: 1.13, add: 0.6, rate: 60, max: 300 },
+  cart: { base: 90, growth: 1.25, add: 0.5, rate: 60, max: 300 },
   // Gear and cart double at these levels (milestones), on top of their per-level gain.
   milestones: [25, 50, 100, 200, 300],
-  shaftBase: 6000, shaftGrowth: 10,   // shaft idx (>= 1) costs base x growth^(idx-1)
+  shaftBase: 3_000_000, shaftGrowth: 10,   // shaft idx (>= 1) costs base x growth^(idx-1)
   depthBands: [3, 7, 12],             // shaft index where middle, deep and deepest begin
   bands: ['shallow', 'middle', 'deep', 'deepest'],
   shaftBuffer: 40,                    // tunnel storage per shaft (ore)
 
   // Tunnels and ore pockets (pockets.js). A metre = a minute of a reference crew's output at that shaft.
   pk: {
-    refOre: 400,           // reference crew ore/min at shaft 1 (x richness per index): sets how long a vein lasts for a median player
+    refOre: 2700,           // reference crew ore/min at shaft 1 (x richness per index): sets how long a vein lasts for a median player
     minPerM: 1,            // minutes of reference output per metre
     share: [0.04, 0.22, 0.32, 0.42], // share of the tunnel inside veins by band (x richness factor of the site)
     shareMax: 0.7,
