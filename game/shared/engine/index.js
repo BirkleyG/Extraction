@@ -26,7 +26,7 @@
  *   hire {n} · buyShaft · redrill {shaftId} (exhausted veins only) · upgradeShaft {shaftId, kind:'cart'|'bunk', n}
  *   upgradeLift {n} · upgradeConveyor {n} · upgradeYard {n} · buyPad {n} · upgradeDrill
  *   buyShip {cls:'hauler'|'cruiser'|'freighter'} · upgradeShip {shipId, n} · setRoute {shipId, policy:'best'|'nearest'|'fixed', destId?}
- *   rename {target:'colony'|'shaft'|'ship', id, name} · tutorial {step}
+ *   rename {target:'colony'|'shaft'|'ship', id, name} · tutorial {step} · autoSpend {keep?: 0..0.9}
  *
  * Panels: mine, hire, shafts, carts, lift, ships, bunks, conveyor, yard, drill, routes, fleet, pads, market.
  * Licenses (day of month AND coin earned+grant): cruiser, freighter, mythicDrill.
@@ -40,9 +40,17 @@
  *               dest, readyAt, dockedAt, firstLoadAt, departAt, arriveAt, homeAt }],
  *     stats: { mined, lifted, loaded, sold, sales, launches, upgrades, spent, firstSaleAt },
  *     unlocked: { panels, licenses }, tutorial, nextId }
- * Event types: sale, sales (summary with data.ore/coin), salesSummary, launch, vein20, vein5, veinOut, buy, unlock, license.
+ * Event types: autoSpend, sale, sales (summary with data.ore/coin), salesSummary, launch, vein20, vein5, veinOut, buy, unlock, license.
  */
-export { ENGINE_VERSION, newColony, applyCommand, quote, catchUpGrant } from './commands.js';
+import { applyCommand as baseApply } from './commands.js';
+import { autoSpend } from './autospend.js';
+export { ENGINE_VERSION, newColony, quote, catchUpGrant } from './commands.js';
+
+// autoSpend {keep?} buys the best-value moves in order (keep = fraction of coin to hold back).
+export function applyCommand(colony, world, cmd, now) {
+  if (cmd && cmd.type === 'autoSpend') return autoSpend(colony, world, cmd, now);
+  return baseApply(colony, world, cmd, now);
+}
 export { advance } from './sim.js';
 export { rates, bottleneck, destinations, marketPrice, recordSales, bestMoves, candidateMoves, marketTable } from './analysis.js';
 export { unlocks, PANELS, TUTORIAL } from './unlocks.js';

@@ -270,3 +270,5 @@ body.rm .pop { animation: none; opacity: 0; }
 .brand .ver{display:block;font-family:var(--f-mono,monospace);font-size:13px;line-height:1;color:var(--muted,#b3a5d3);letter-spacing:0;margin-top:2px}
 
 .awaynext{margin:12px 0 4px;padding:8px 10px;border:2px solid var(--line,#3b2d5c);background:var(--panel2,#251b3e)}.awaynext small{display:block;font-size:11px;color:var(--muted,#b3a5d3);text-transform:uppercase;letter-spacing:.08em}
+
+.nextbar{display:block;height:6px;margin-top:4px;background:var(--panel2,#251b3e);border:1px solid var(--line,#3b2d5c)}.nextbar i{display:block;height:100%;background:var(--accent,#ff8a3d)}

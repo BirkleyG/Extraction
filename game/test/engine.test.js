@@ -31,6 +31,7 @@ function rich(c, w, coin = 1e12) {
   c = JSON.parse(JSON.stringify(c));
   c.coin = coin;
   c.earned = Math.max(c.earned, 1e9);
+  c.grant = Math.max(c.grant || 0, 1); // skip panel time gates in fixtures
   return E.advance(c, w, c.t).colony;
 }
 function run(c, w, cmd, now = c.t) {
@@ -331,13 +332,16 @@ test('veins: warnings at 20% and 5%, then exhaustion; miners move on', () => {
   // the 20% event fires when about 1600 of 2000 were mined
   const rate = 3 * E.TUNING.minePerMiner * Math.pow(E.TUNING.richness, 1) / MIN;
   assert.ok(Math.abs(events[0].at - (c.born + 1600 / rate)) < 2 * MIN, 'warning near the right time');
-  assert.equal(c.shafts[1].vein.left, 0);
-  assert.equal(c.shafts[1].miners, 0);
-  assert.equal(c.shafts[0].miners, 3);
-  const rs = E.rates(c, w).shafts[1];
-  assert.equal(rs.orePerMin, 0);
-  assert.match(rs.reason, /exhausted/);
-  assert.equal(rs.vein.pct, 0);
+  // Crews fall back to common ore instead of standing idle; a re-drill is offered.
+  assert.equal(c.shafts[1].spent, 'amber');
+  assert.equal(c.shafts[1].vein, null);
+  assert.equal(PLANET.ores.find((o) => o.id === c.shafts[1].ore).tier, 'common');
+  assert.ok(E.rates(c, w).shafts[1].orePerMin > 0, 'still producing');
+  assert.match(events[2].text, /switched to/);
+  assert.ok(E.quote(c, w, { type: 'redrill', shaftId: c.shafts[1].id }).cost > 0);
+  const re = run(c, w, { type: 'redrill', shaftId: c.shafts[1].id });
+  assert.notEqual(PLANET.ores.find((o) => o.id === re.shafts[1].ore).tier, 'common');
+  assert.equal(re.shafts[1].spent, undefined);
 });
 
 test('hardness: a vein harder than the drill produces nothing until upgraded', () => {
@@ -575,4 +579,18 @@ test('rates and quote are plain, finite numbers for the UI', () => {
   assert.equal(E.fmt(1234), '1.2K');
   assert.equal(E.fmt(20e6), '20M');
   assert.equal(E.fmt(1.5e15), '1.5Qa');
+});
+
+test('autoSpend buys the best moves in one command and respects the reserve', () => {
+  const w = newWorld();
+  let c = rich(fresh(0), w, 50_000);
+  const before = E.rates(c, w).coinPerMin;
+  const r = E.applyCommand(c, w, { type: 'autoSpend', keep: 0.2 }, c.t);
+  assert.equal(r.error, undefined);
+  assert.ok(r.colony.coin >= 50_000 * 0.2 - 1e-6, 'keeps the reserve');
+  assert.ok(r.colony.coin < 50_000, 'spent something');
+  assert.ok(E.rates(r.colony, w).coinPerMin > before, 'income went up');
+  assert.ok(r.events.some((e) => e.type === 'autoSpend'));
+  const broke = E.applyCommand({ ...r.colony, coin: 0 }, w, { type: 'autoSpend' }, r.colony.t);
+  assert.match(broke.error, /Nothing worth buying/);
 });

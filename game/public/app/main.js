@@ -80,6 +80,7 @@ function react(e) {
     case 'vein20': toast(esc(e.text), 'warn'); sfx.warn(); break;
     case 'vein5': toast(esc(e.text), 'bad'); sfx.warn(); break;
     case 'veinOut': toast(esc(e.text), 'bad', 5000); sfx.warn(); break;
+    case 'autoSpend': toast(esc(e.text), 'sale'); sfx.big && sfx.big(); break;
     case 'unlock': banner(E.PANELS.find((p) => p.id === e.data?.panel)?.label || e.text, PANEL_SUB[e.data?.panel] || ''); break;
     case 'license': banner(e.text.replace(/^The Guild grants you the /, ''), 'The Maker Guild grants you a new license', 'license'); break;
   }
@@ -159,7 +160,7 @@ function checkAway() {
   let next = null;
   try {
     const sug = E.bottleneck(S.colony, S.ew)?.suggestion;
-    if (sug && sug.cmd) next = { label: sug.label, cost: sug.cost, canAfford: S.colony.coin >= sug.cost, spend: () => A_send(sug.cmd) };
+    if (sug && sug.cmd) next = { label: sug.label, cost: sug.cost, canAfford: S.colony.coin >= sug.cost, spend: () => A_send({ type: 'autoSpend', keep: 0.1 }) };
   } catch {}
   ui.awaySheet({ ms: cur.t - prev.t, coin: cur.earned - prev.earned, sold: cur.sold - prev.sold, launches: cur.launches - prev.launches, sales: cur.sales - prev.sales, veins: Math.max(0, cur.out - prev.out), next });
 }

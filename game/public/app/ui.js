@@ -152,11 +152,11 @@ export function createUI(S, A) {
   }
   function shaftRows(s, r, inCard = false) {
     const u = S.unl, o = ore(s.ore);
-    const exhausted = s.vein && s.vein.left <= 0;
+    const exhausted = (s.vein && s.vein.left <= 0) || !!s.spent;
     let h = `<div class="shaft">${inCard ? '' : `<div class="sh-h"><b class="nm" data-rename="shaft" data-id="${s.id}" title="Rename">${esc(s.name)}</b> ${oreTag(o)} <span class="pill ${o?.tier === 'mythic' ? 'warn' : o?.tier === 'rare' ? 'sp' : 'mut'}">${o?.tier || ''}</span></div>`}
       <div class="sh-s"><span>${s.miners}/${r ? r.cap : '?'} miners</span><span>${fmt(r ? r.orePerMin : 0)} ore/min</span>${veinBar(s)}</div>
       ${r && !r.ok ? `<div class="why">${esc(r.reason)}</div>` : ''}`;
-    if (exhausted && has(u, 'shafts')) h += row({ type: 'redrill', shaftId: s.id }, 'Re-drill', 'Roll a fresh vein here', { btn: 'Drill' });
+    if (exhausted && has(u, 'shafts')) h += row({ type: 'redrill', shaftId: s.id }, 'Re-drill', s.spent ? `Rare vein spent; crews are mining ${esc(ore(s.ore)?.name || 'common ore')}. Drill for a new rare vein.` : 'Roll a fresh vein here', { btn: 'Drill' });
     else {
       if (has(u, 'carts')) h += row({ type: 'upgradeShaft', shaftId: s.id, kind: 'cart' }, `Carts <span class="lvl">Lv ${s.up.cart}</span>`, '', { btn: 'Upgrade' });
       if (has(u, 'bunks')) h += row({ type: 'upgradeShaft', shaftId: s.id, kind: 'bunk' }, `Bunkhouse <span class="lvl">Lv ${s.up.bunk}</span>`, '', { btn: 'Build' });
@@ -167,7 +167,7 @@ export function createUI(S, A) {
     const b = S.bneck;
     if (!b || S.unl.panels.length < 4) return '';
     const sg = b.suggestion;
-    return `<div class="advisor ${b.stage !== 'mine' ? 'hot' : ''}"><b>${b.stage !== 'mine' ? '! Bottleneck' : 'Foreman'}</b><p>${esc(b.message)}</p>${sg ? `<button class="buy sm" data-advice="1" ${sg.canAfford ? '' : 'disabled'}>${esc(sg.label)} · ${fmt(sg.cost)}</button>` : ''}</div>`;
+    return `<div class="advisor ${b.stage !== 'mine' ? 'hot' : ''}"><b>${b.stage !== 'mine' ? '! Bottleneck' : 'Foreman'}</b><p>${esc(b.message)}</p><div class="btnrow">${sg ? `<button class="buy sm" data-advice="1" ${sg.canAfford ? '' : 'disabled'}>${esc(sg.label)} · ${fmt(sg.cost)}</button>` : ''}<button class="buy sm alt" data-autospend="1" title="Buy the best upgrades in order, keeping 10% in reserve">Auto-spend</button></div></div>`;
   }
   function panelMine() {
     const c = S.colony, u = S.unl, R = S.rates;
@@ -175,6 +175,7 @@ export function createUI(S, A) {
     if (u.panels.length > 2) h += bulkBar();
     h += row({ type: 'hire' }, `Hire miner`, `${c.miners} miner${c.miners === 1 ? '' : 's'}${c.idle ? ` · <span class="warn">${c.idle} idle (no bunks)</span>` : ''}`, { cls: 'hero', btn: 'Hire', id: 'hireRow' });
     h += advisor();
+    if (has(S.unl, 'shafts') && S.unl.next.panel) h += `<p class="lede next">${nextUnlock()}</p>`;
     if (has(u, 'drill')) h += row({ type: 'upgradeDrill' }, `Drill <span class="lvl">Lv ${c.drill}</span>`, 'Harder ore needs a better drill', { btn: 'Upgrade' });
     h += '<h3>Shafts</h3>';
     c.shafts.forEach((s, i) => { h += shaftRows(s, R.shafts[i]); });
@@ -263,13 +264,16 @@ export function createUI(S, A) {
   }
   function nextUnlock() {
     const n = S.unl.next.panel;
-    return n ? `Keep earning: <b>${esc(n.label)}</b> unlocks soon.` : '';
+    if (!n) return '';
+    const pct = Math.max(0, Math.min(100, n.at ? (100 * n.have) / n.at : 100));
+    const wait = n.waitH > 0 ? ` · opens in ${n.waitH >= 1 ? Math.ceil(n.waitH) + 'h' : Math.ceil(n.waitH * 60) + 'm'}` : '';
+    return `Next: <b>${esc(n.label)}</b> at ${fmt(n.at)} earned (${fmt(n.have)})${wait}<span class="nextbar"><i style="width:${pct.toFixed(1)}%"></i></span>`;
   }
 
   function structKey() {
     const c = S.colony, u = S.unl;
     const base = [S.ui.tab, u.panels.join(','), u.licenses.join(','), S.ui.bulk];
-    if (S.ui.tab === 'mine') base.push(c.miners, c.idle, c.drill, c.shafts.map((s) => [s.id, s.name, s.ore, s.up.cart, s.up.bunk, s.miners, s.vein ? (s.vein.left <= 0 ? 'x' : Math.ceil(100 * s.vein.left / s.vein.total)) : ''].join(':')).join(';'), S.bneck ? S.bneck.message + (S.bneck.suggestion?.canAfford ? 1 : 0) : '', Math.floor(S.rates.minePerMin * 10));
+    if (S.ui.tab === 'mine') base.push(c.miners, c.idle, c.drill, c.shafts.map((s) => [s.id, s.name, s.ore, s.up.cart, s.up.bunk, s.miners, s.vein ? (s.vein.left <= 0 ? 'x' : Math.ceil(100 * s.vein.left / s.vein.total)) : ''].join(':')).join(';'), S.bneck ? S.bneck.message + (S.bneck.suggestion?.canAfford ? 1 : 0) : '', Math.floor(S.rates.minePerMin * 10), S.unl.next.panel ? Math.floor(20 * S.unl.next.panel.have / (S.unl.next.panel.at || 1)) + ':' + Math.ceil((S.unl.next.panel.waitH || 0) * 6) : '');
     if (S.ui.tab === 'surface') base.push(c.lift, c.conveyor, c.yardLvl, c.pads, Math.round(S.rates.minePerMin), Math.round(S.rates.yardLoss * 100));
     if (S.ui.tab === 'fleet') base.push(c.ships.map((s) => [s.id, s.name, s.lvl, s.policy, s.destId, s.state].join(':')).join(';'), S.unl.day, Math.floor(Math.log10(1 + c.earned) * 4));
     if (S.ui.tab === 'market') base.push(Math.floor(S.now() / 15000), S.ui.mktCls, c.shafts.length);
@@ -302,6 +306,8 @@ export function createUI(S, A) {
   document.addEventListener('click', (e) => {
     const m = e.target.closest('[data-mktcls]');
     if (m) { S.ui.mktCls = m.dataset.mktcls; sfx.tap(); render(true); return; }
+    const as = e.target.closest('[data-autospend]');
+    if (as) { A.send({ type: 'autoSpend', keep: 0.1 }, as); return; }
     const adv = e.target.closest('[data-advice]');
     if (adv && S.bneck?.suggestion) { A.send(S.bneck.suggestion.cmd, adv); return; }
     const rn = e.target.closest('[data-rename]');
@@ -474,7 +480,7 @@ export function createUI(S, A) {
       <p class="lede">Your crews kept digging. Here's what the colony did without you.</p>
       <div class="awaygrid">${rows.map(([k, v, c]) => `<div><small>${k}</small><b class="${c}">${v}</b></div>`).join('')}</div>
       ${s.next ? `<div class="awaynext"><small>Best next move</small><b>${esc(s.next.label)}</b> <span class="gold">${fmt(s.next.cost)}</span></div>` : ''}
-      <div class="btnrow">${s.next && s.next.canAfford ? `<button class="buy big" data-spend="1">Spend it: ${esc(s.next.label)}</button>` : ''}<button class="buy big ${s.next && s.next.canAfford ? 'ghost' : ''}" data-x="1">Collect &amp; carry on</button></div></div>`, 'awaysheet');
+      <div class="btnrow">${s.next && s.next.canAfford ? `<button class="buy big" data-spend="1" title="Buys the best upgrades in order, starting with ${esc(s.next.label)}">Auto-spend</button>` : ''}<button class="buy big ${s.next && s.next.canAfford ? 'ghost' : ''}" data-x="1">Collect &amp; carry on</button></div></div>`, 'awaysheet');
     const sp = el.querySelector('[data-spend]');
     if (sp) sp.addEventListener('click', () => { s.next.spend(); close(); });
     sfx.big();

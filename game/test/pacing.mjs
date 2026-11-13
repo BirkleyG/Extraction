@@ -104,7 +104,7 @@ function run({ quiet = false } = {}) {
     const end = (day + 1) * DAY;
     while (t < end) { t = Math.min(end, t + 30 * MIN); step(t); if (first20M == null && c.earned >= 2e7) first20M = t; }
     const r = E.rates(c, world);
-    rows.push({ day: day + 1, coin: c.coin, earned: c.earned, cpm: r.coinPerMin, shafts: c.shafts.length, ships: c.ships.length, miners: c.miners, drill: c.drill,
+    rows.push({ day: day + 1, coin: c.coin, earned: c.earned, cpm: r.coinPerMin, shafts: c.shafts.length, ships: c.ships.length, mix: ['hauler','cruiser','freighter'].map(k => c.ships.filter(s => s.cls === k).length).join('/'), miners: c.miners, drill: c.drill,
       bn: E.bottleneck(c, world).stage, exh: c.shafts.filter((s) => s.vein && s.vein.left <= 0).length });
   }
   out.push('');
@@ -112,6 +112,7 @@ function run({ quiet = false } = {}) {
   out.push('day  coin     earned   coin/min  shafts ships miners drill exhausted bottleneck');
   for (const r of rows) out.push(`${String(r.day).padStart(3)}  ${E.fmt(r.coin).padEnd(8)} ${E.fmt(r.earned).padEnd(8)} ${E.fmt(r.cpm).padEnd(9)} ${String(r.shafts).padStart(6)} ${String(r.ships).padStart(5)} ${String(r.miners).padStart(6)} ${String(r.drill).padStart(5)} ${String(r.exh).padStart(9)} ${r.bn}`);
   out.push(`first 20M earned: ${first20M == null ? 'never' : 'day ' + (first20M / DAY + 1).toFixed(2)}`);
+console.log('ship mix hauler/cruiser/freighter by day:', rows.filter((r) => [1, 3, 5, 10, 20, 30].includes(r.day)).map((r) => r.day + ':' + r.mix).join('  '));
   out.push(`colony JSON size: ${(JSON.stringify(c).length / 1024).toFixed(1)} KB · market: ${E.marketTable(world, t).map((m) => m.id + ' ' + m.index.toFixed(2)).join(', ')}`);
   out.push(`ran in ${((performance.now() - t0) / 1000).toFixed(1)}s`);
   if (!quiet) console.log(out.join('\n'));

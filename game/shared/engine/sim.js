@@ -144,7 +144,11 @@ export function advance(colony, world, now) {
       if (!v || v.warn >= 3) return;
       if (v.left <= 1e-6) {
         v.left = 0; v.warn = 3; changed = true;
-        emit('veinOut', `${s.name}: the ${oreName(I, s.ore)} vein is exhausted. Re-drill it or dig deeper.`, t, { shaftId: s.id });
+        // Crews fall back to the best common ore the drill can cut, so income dips instead of stopping.
+        const spent = s.ore;
+        const fb = I.ores.filter((o) => o.tier === 'common' && o.hardness <= c.drill).sort((a, b) => (b.value || 0) - (a.value || 0))[0];
+        if (fb) { s.ore = fb.id; s.vein = null; s.spent = spent; }
+        emit('veinOut', `${s.name}: the ${oreName(I, spent)} vein is exhausted.${fb ? ` Crews switched to ${oreName(I, fb.id)}.` : ''} Re-drill for a new rare vein.`, t, { shaftId: s.id });
       } else if (v.warn < 2 && v.left <= v.total * T.veinWarn[1]) {
         v.warn = 2; emit('vein5', `${s.name}: ${oreName(I, s.ore)} vein at 5%`, t, { shaftId: s.id, pct: 5 });
       } else if (v.warn < 1 && v.left <= v.total * T.veinWarn[0]) {
