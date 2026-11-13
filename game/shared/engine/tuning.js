@@ -16,9 +16,9 @@ export const T = {
   bunkBase: 60, bunkGrowth: 2.08,
   cartBase: 25, cartGrowth: 1.83, cartAdd: 0.3,  // ore per miner +30% of base per level
   upMax0: 10, upMaxPerDepth: 1,              // carts/bunks per shaft max out at 10 + depth
-  depthCost: 1.66,                             // per-shaft upgrade price x1.6 per depth
-  richness: 1.05,                             // ore per miner x1.05 per depth
-  grade: 1.6,                                 // ore value x1.6 per depth (deeper ore is purer)
+  depthCost: 1.66,                            // per-shaft upgrade price x1.66 per depth
+  richness: 1.25,                             // ore per miner x1.25 per depth
+  grade: 1.05,                                // ore value x1.05 per depth (deeper ore is purer)
   shaftBuffer: 40,                            // tunnel storage per shaft (ore)
   redrillFrac: 0.6,                           // re-drill an exhausted vein: 60% of a new shaft at that depth
 
@@ -32,7 +32,7 @@ export const T = {
   drillMax: 6,
 
   // Lift, conveyor, yard, pads
-  milestoneEvery: 10,                         // lift, conveyors and ship cargo double every 10 levels
+  milestoneEvery: 40,                         // lift, conveyors and ship cargo double every 40 levels
   liftBase: 25, liftMult: 1.19, liftCost: 25, liftGrowth: 1.46,
   convBase: 60, convMult: 1.19, convCost: 35, convGrowth: 1.46,  // per pad
   yardBase: 120, yardMult: 1.35, yardCost: 50, yardGrowth: 1.42,

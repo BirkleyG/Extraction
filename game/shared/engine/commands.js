@@ -59,11 +59,11 @@ export function newColony({ id, uid, name, species, planet, siteRegion, now, gra
   return c;
 }
 
-// Late joiners: coin to roughly catch a casual player (about a fifth of a greedy player's earnings by that day).
+// Late joiners: coin to roughly catch a casual player (about a fifth of a greedy pacing-bot player's earnings by that day).
 export function catchUpGrant(world, now) {
   const day = (num(now) - num(world.startedAt)) / DAY_MS;
   if (day < 0.5) return 0;
-  return Math.round(Math.min(1e13, 4e4 * Math.pow(day, 4.2)));
+  return Math.round(Math.min(1e13, 2e5 * Math.pow(day, 3.3)));
 }
 
 export const upMax = (s) => T.upMax0 + T.upMaxPerDepth * s.idx;

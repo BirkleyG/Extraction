@@ -420,7 +420,7 @@ test('route policies: best, nearest, fixed', () => {
   assert.ok(E.destinations(c, w, 'cruiser')[0].tripSecs < rows[0].tripSecs, 'cruisers are faster');
   // a cargo the far buyer pays 5x for goes far under 'best' (coin per minute of round trip)
   const y = JSON.parse(JSON.stringify(c));
-  y.ships[0] = { ...y.ships[0], state: 'loading', cargo: { star: 40 }, firstLoadAt: y.t - 60_000 };
+  y.ships[0] = { ...y.ships[0], state: 'loading', cargo: { star: 40 }, cargoG: { star: 40 }, firstLoadAt: y.t - 60_000 };
   const z = E.advance(y, w, y.t + 1000).colony;
   assert.equal(z.ships[0].dest, 'court');
 });

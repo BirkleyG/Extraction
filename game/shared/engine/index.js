@@ -18,6 +18,7 @@
  *   recordSales(world, sales, now) -> world
  *   unlocks(colony, world, now) -> { panels, licenses, tutorial: { step, id, hint }, next: { panel, license }, day }
  *
+ * Balance numbers live in tuning.js (exported as TUNING); tune with `node game/test/pacing.mjs`.
  * Extra exports: catchUpGrant(world, now), bestMoves(colony, world, { cmds?, limit }), candidateMoves,
  *   marketTable(world, now), fmt(n), PANELS, TUTORIAL, TUNING.
  *
@@ -33,9 +34,9 @@
  * Colony (plain JSON):
  *   { v, id, uid, name, species, siteRegion, planetId, seed, rng, t, born,
  *     coin, earned, grant, miners, idle, drill, lift, conveyor, yardLvl, pads,
- *     tunnel: { oreId: amt }, yard: { oreId: amt },
+ *     tunnel: { oreId: amt }, tunnelG, yard: { oreId: amt }, yardG,   (…G = grade units: amount x depth grade; value = G x price)
  *     shafts: [{ id, idx, name, ore, vein: null | { total, left, warn }, up: { bunk, cart }, miners }],
- *     ships: [{ id, name, cls, lvl, policy, destId, state: 'home'|'loading'|'out'|'back', cargo: { oreId: amt },
+ *     ships: [{ id, name, cls, lvl, policy, destId, state: 'home'|'loading'|'out'|'back', cargo: { oreId: amt }, cargoG,
  *               dest, readyAt, dockedAt, firstLoadAt, departAt, arriveAt, homeAt }],
  *     stats: { mined, lifted, loaded, sold, sales, launches, upgrades, spent, firstSaleAt },
  *     unlocked: { panels, licenses }, tutorial, nextId }

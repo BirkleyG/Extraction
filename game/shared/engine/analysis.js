@@ -122,8 +122,8 @@ export function bottleneck(colony, world) {
   const avgPrice = (amount, fromLow) => {
     // value of `amount` ore/min taken from the low-value end of the mined mix
     let left = amount, v = 0;
-    const order = fromLow ? [...I.byValue].reverse() : I.byValue;
-    for (const o of order) { const x = Math.min(r._ore[o], left); v += x * r._price[o]; left -= x; }
+    const order = fromLow ? [...r._order].reverse() : r._order;
+    for (const o of order) { const x = Math.min(r._ore[o], left); v += x * r._unit[o]; left -= x; }
     return v;
   };
   const stages = [];
@@ -134,7 +134,7 @@ export function bottleneck(colony, world) {
   if (r.conveyorPerMin < flow) { push('conveyor', flow - r.conveyorPerMin, avgPrice(flow - r.conveyorPerMin, true)); flow = r.conveyorPerMin; }
   if (r.shipPerMin < flow) { push('ships', flow - r.shipPerMin, avgPrice(flow - r.shipPerMin, true)); flow = r.shipPerMin; }
   if (c.idle > 0) {
-    const best = Math.max(0, ...r.shafts.filter((s) => s.ok).map((s) => s.perMiner * (r._price[I.idx[s.ore]] || 0)));
+    const best = Math.max(0, ...r.shafts.filter((s) => s.ok).map((s) => s.perMiner * s.grade * (r._price[I.idx[s.ore]] || 0)));
     push('idle', c.idle * T.minePerMiner, c.idle * best * 0.5, { miners: c.idle });
   }
   const blocked = r.shafts.filter((s) => !s.ok);
@@ -184,7 +184,7 @@ export function destinations(colony, world, shipClass = 'hauler') {
     let v = 0;
     I.ores.forEach((o, oi) => {
       price[o.id] = priceAt(world, I, oi, bi, now);
-      v += (mixTotal > 0 ? r._mix[oi] / mixTotal : 1 / I.n) * price[o.id];
+      v += (mixTotal > 0 ? r._mixG[oi] / mixTotal : 1 / I.n) * price[o.id];
     });
     const trip = tripSecs(b, shipClass);
     return { id: b.id, name: b.name, distance: b.distance, price, tripSecs: trip, coinPerMin: v * cap / (2 * trip / 60), best: false };
