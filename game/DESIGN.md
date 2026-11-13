@@ -88,3 +88,27 @@ Month lifecycle runs on the server: a minute timer takes the `world` lock, rolls
 
 - `npm test` runs everything under `game/test/`. Engine tests cover: determinism, advance step-invariance, offline catch-up, every command, no negative coin/ore, vein depletion warnings, market recovery.
 - Browser checks use Playwright (preinstalled; `require('playwright')`, `chromium.launch()`).
+
+## Phase 2 contract (prestige, hazards, galaxy changes, species)
+
+**World changes** (`world.changes`, written by the server: Maker deals and galactic events). Engine applies them in `marketPrice`:
+```js
+{ id, kind: 'demand'|'supply'|'global'|'buyer', oreId?, buyerId?, mult, by (uid|null), source: 'maker'|'event', title, reason, at, until? }
+```
+- `demand`: ore price × mult at every buyer. `supply`: more outside supply → price ÷ mult. `global`: all ores × mult. `buyer`: that buyer's prices × mult.
+- Changes with `until` expire (galactic events); Maker changes last the month. Multipliers stack multiplicatively; the engine clamps the combined effect to 0.2–5×.
+
+**Prestige** (engine commands):
+- `nuke { confirm: 'NUKE' }`: needs `runEarned` (coin earned since the last nuke, grant excluded) ≥ `T.nukeMin` (20M). Spectacle = runEarned^(1/7.5) × spectacle evolution bonus. Paid cargo on ships already flying is settled now; all ships, sites, buildings and coin are removed; the colony restarts as a fresh starter mine. Kept: `sp`, `evo`, `nukes`, `monthEarned` (total earned this month across runs), `lastNuke: { at, spectacle, runEarned, makerUsed: false }`, name, species, siteRegion, unlocked panels/licenses. Emits a `nuke` event.
+- `evolve { kind, n }`: spend SP. Kinds: `mine` (ore/min), `ship` (ship speed), `sell` (sale price), `spectacle` (next nuke's Spectacle). Rising costs; effects last the month through later nukes.
+
+**Hazards** (engine): deeper shafts are more dangerous. Per-shaft upgrades `lights` (prevent miner insanity) and `supports` (prevent cave-ins) via `upgradeShaft { kind }`; colony-wide `upgradeSafety { kind: 'ventilation'|'pumps'|'firebreaks' }` against gas, floods and fire. Hazard times are pre-rolled from the seeded RNG so `advance` stays step-invariant. Hazard events carry short story text (rescues, narrow escapes, last stands).
+
+**Server Phase 2 API**
+```
+POST /api/v2/maker   { action: 'open'|'argue'|'accept'|'leave', ask?: { kind, oreId?, buyerId?, direction: 'up'|'down' }, reason? }
+                     -> { session: { rounds, ask, offer?: { mult, title }, lines: [{ who: 'maker'|'you', text }], status } }
+POST /api/v2/species { description } -> { species }   // AI picks parts from the shared species library
+GET  /api/v2/bulletin -> { changes: [...active world changes with who/why...] }
+```
+Maker outcome: strength = 0.85 × spectacle score + 0.15 × negotiation quality (0–1, judged by the AI; heuristic fallback). The AI writes the Maker's lines only; the server decides accept / counter / refuse. One Maker session per nuke, up to 3 rounds.

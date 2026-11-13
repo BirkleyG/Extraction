@@ -181,6 +181,9 @@ export async function startServer(opts = {}) {
     res.status(out.error ? 422 : 200).json(out);
   }));
   app.get('/api/v2/board', need(async (req, res) => res.json(await v2.board())));
+  app.get('/api/v2/bulletin', need(async (req, res) => res.json(await v2.bulletin())));
+  app.post('/api/v2/maker', need(async (req, res, me) => res.json(await v2.maker(me, req.body))));
+  app.post('/api/v2/species', need(async (req, res, me) => res.json(await v2.species(me, req.body))));
   app.post('/api/v2/admin/end-month', need(async (req, res, me) => {
     if (!me.owner) throw fail(403, 'permission_denied', 'Owner only');
     res.json({ rolled: await v2.forceRoll() });
@@ -223,6 +226,7 @@ export async function startServer(opts = {}) {
   const timers = opts.noTimers ? [] : [
     setInterval(() => v2.rollIfDue().catch(e => console.error('rollover', e)), 60_000),
     setInterval(() => v2.sweep().catch(e => console.error('sweep', e)), 60_000),
+    setInterval(() => v2.maybeEvent().catch(e => console.error('event', e)), 60_000),
   ];
 
   const port = opts.port ?? Number(env.PORT || 3000);

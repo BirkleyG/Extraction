@@ -2,8 +2,10 @@
  * coach bubble, alerts, settings, ticker. Panels are rebuilt only when their structure changes; costs,
  * effects and affordability are refreshed in place every tick so buttons never vanish under a finger. */
 import { quote, destinations, marketTable, TUNING, PANELS } from '/shared/engine/index.js';
-import { $, $$, esc, fmt, dur, secs, ago, clamp, oreIcon, TIER_COL, DAY, store } from './util.js';
-import { prefs, setPref, sfx, bump, popAt, Ticker } from './juice.js';
+import { $, $$, esc, fmt, dur, secs, ago, clamp, oreIcon, TIER_COL, DAY, store, speciesIcon } from './util.js';
+import { prefs, setPref, sfx, bump, popAt, Ticker, banner } from './juice.js';
+import { createPrestige } from './prestige.js';
+import { createGalaxy } from './galaxy.js';
 import { api, net, signOut, fillModels } from './net.js';
 
 const TABS = [
@@ -11,11 +13,19 @@ const TABS = [
   { id: 'surface', label: 'Surface', show: (u) => has(u, 'lift', 'conveyor', 'yard', 'pads') },
   { id: 'fleet', label: 'Fleet', show: (u) => has(u, 'ships', 'fleet', 'routes') },
   { id: 'market', label: 'Market', show: (u) => has(u, 'routes', 'market') },
+  { id: 'safety', label: 'Safety', show: (u) => has(u, 'safety') },
+  { id: 'galaxy', label: 'Galaxy', show: (u, c, S) => has(u, 'prestige') || (S.bulletin && S.bulletin.changes.length > 0) },
+  { id: 'prestige', label: 'Prestige', show: (u) => has(u, 'prestige') },
   { id: 'ranks', label: 'Ranks', show: (u, c) => c.stats.sales > 0 },
 ];
+const BELL_MS = 48 * 3600_000;
+const hms = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)); return `${String(Math.floor(s / 3600)).padStart(2, '0')}:${String(Math.floor(s / 60) % 60).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; };
+const riskTxt = (perHour) => (perHour >= 1 ? `${perHour.toFixed(perHour < 10 ? 1 : 0)} mishaps/hour` : perHour * 24 >= 0.05 ? `${(perHour * 24).toFixed(1)} mishaps/day` : 'almost no risk');
+const HZ_LABEL = { gas: 'Toxic gas', flood: 'Floods', fire: 'Yard fires', quake: 'Earthquakes' };
+const SAFETY_ROWS = [['ventilation', 'Ventilation', 'gas', 'Clears toxic gas before it reaches the crews'], ['pumps', 'Pumps', 'flood', 'Keeps flooded tunnels from drowning shifts'], ['firebreaks', 'Firebreaks', 'fire', 'Stops yard fires from burning stockpiled ore']];
 const has = (u, ...p) => p.some((x) => u.panels.includes(x));
 const BULKS = [[1, '1x'], [10, '10x'], [100, '100x'], ['max', 'Max']];
-const BULKY = new Set(['hire', 'upgradeShaft', 'upgradeLift', 'upgradeConveyor', 'upgradeYard', 'buyPad', 'upgradeShip']);
+const BULKY = new Set(['hire', 'upgradeShaft', 'upgradeLift', 'upgradeConveyor', 'upgradeYard', 'buyPad', 'upgradeShip', 'evolve', 'upgradeSafety']);
 const SHIP_DESC = { hauler: 'All-rounder', cruiser: 'Small and fast', freighter: 'Slow and huge' };
 const stateText = (s, now, I) => {
   const dest = I.buyer(s.dest)?.name || 'a buyer';
@@ -29,11 +39,14 @@ export function createUI(S, A) {
   const coinT = new Ticker();
   let lastKey = '', lastTabsKey = '', seenTabs = new Set(store('msc2_seenTabs') || ['mine']);
   let card = null; // { kind, id }
+  let PR = null, GX = null; // prestige + galaxy, wired at the end
 
   // ------------------------------------------------------------ top bar
   $('#gear').onclick = () => { sfx.tap(); openSettings(); };
   $('#alertsBtn').onclick = () => { sfx.tap(); openCard({ kind: 'alerts' }); };
   $('#rankBtn').onclick = () => { if (tabsVisible().some((t) => t.id === 'ranks')) setTab('ranks'); };
+  $('#galaxyBtn').onclick = () => { sfx.tap(); setTab('galaxy'); };
+  $('#spStat').onclick = () => { if (tabsVisible().some((t) => t.id === 'prestige')) { sfx.tap(); setTab('prestige'); } };
   $('#zoomIn').onclick = () => A.mine.zoom(1);
   $('#zoomOut').onclick = () => A.mine.zoom(-1);
   $('#zoomHome').onclick = () => A.mine.home();
@@ -51,6 +64,17 @@ export function createUI(S, A) {
     const i = board.findIndex((b) => b.id === S.me.id);
     $('#rank').textContent = i >= 0 ? `#${i + 1}` : '–';
     $('#rankOf').textContent = `of ${board.length || 1}`;
+    const sp = $('#spStat');
+    if ((c.sp || 0) > 0 || (c.nukes || 0) > 0) { sp.hidden = false; $('#sp').textContent = fmt(c.sp || 0); } else sp.hidden = true;
+    // closing bell: the final 48 hours
+    const left = w.endsAt - now, bell = $('#bell');
+    if (left > 0 && left <= BELL_MS) {
+      bell.hidden = false;
+      document.body.classList.add('bellon');
+      bell.innerHTML = `<small>Closing bell</small><b>${hms(left)}</b>`;
+      const k = `msc2_bell_${w.month}`;
+      if (!store(k)) { store(k, 1); banner('The closing bell', 'Final 48 hours. The richest colony at the bell enters the Hall of Fame.', 'bell'); sfx.bell && sfx.bell(); }
+    } else { bell.hidden = true; document.body.classList.remove('bellon'); }
   }
   function rankList() {
     const rows = [...S.board.values()].filter((b) => b.month === S.world.month).map((b) => (b.id === S.me.id ? { ...b, coin: S.colony.coin, coinPerMin: S.rates.coinPerMin } : b));
@@ -59,12 +83,16 @@ export function createUI(S, A) {
   }
 
   // ------------------------------------------------------------ tabs
-  function tabsVisible() { return TABS.filter((t) => t.show(S.unl, S.colony)); }
+  function tabsVisible() { return TABS.filter((t) => t.show(S.unl, S.colony, S)); }
   function setTab(id) {
     S.ui.tab = id; seenTabs.add(id); store('msc2_seenTabs', [...seenTabs]);
     lastKey = ''; render(true);
     $('#tabbody').scrollTop = 0;
+    const tb = document.querySelector(`[data-tab="${id}"]`);
+    if (tb && tb.scrollIntoView) tb.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
     if (id === 'ranks') A.loadBoard();
+    if (id === 'galaxy') { GX.markSeen(); GX.refresh().then(() => render(true)); }
+    if (id === 'prestige') PR.loadMaker();
   }
   function renderTabs() {
     const vis = tabsVisible();
@@ -109,11 +137,13 @@ export function createUI(S, A) {
         continue;
       }
       const afford = q.canAfford;
+      const isSp = q.currency === 'sp', have = isSp ? (c.sp || 0) : c.coin;
       btn.disabled = !afford;
-      cEl.textContent = (el.dataset.bulk && q.n > 1 ? `×${q.n} ` : '') + fmt(q.cost);
+      btn.classList.toggle('spc', isSp);
+      cEl.textContent = (el.dataset.bulk && q.n > 1 ? `×${q.n} ` : '') + fmt(q.cost) + (isSp ? ' SP' : '');
       eEl.className = 'e';
-      eEl.textContent = afford ? q.effect : `${q.effect} · need ${fmt(q.cost - c.coin)} more`;
-      btn.style.setProperty('--p', afford ? 1 : clamp(c.coin / Math.max(1e-9, q.cost), 0, 1).toFixed(3));
+      eEl.textContent = afford ? q.effect : `${q.effect} · need ${fmt(q.cost - have)} more${isSp ? ' SP' : ''}`;
+      btn.style.setProperty('--p', afford ? 1 : clamp(have / Math.max(1e-9, q.cost), 0, 1).toFixed(3));
       const meh = afford && cmd.type === 'hire' && /no free bunk|bunks? free/.test(q.effect);
       btn.classList.toggle('ready', afford && !meh);
       btn.classList.toggle('meh', meh);
@@ -167,7 +197,7 @@ export function createUI(S, A) {
     const b = S.bneck;
     if (!b || S.unl.panels.length < 4) return '';
     const sg = b.suggestion;
-    return `<div class="advisor ${b.stage !== 'mine' ? 'hot' : ''}"><b>${b.stage !== 'mine' ? '! Bottleneck' : 'Foreman'}</b><p>${esc(b.message)}</p><div class="btnrow">${sg ? `<button class="buy sm" data-advice="1" ${sg.canAfford ? '' : 'disabled'}>${esc(sg.label)} · ${fmt(sg.cost)}</button>` : ''}<button class="buy sm alt" data-autospend="1" title="Buy the best upgrades in order, keeping 10% in reserve">Auto-spend</button></div></div>`;
+    return `<div class="advisor ${b.stage !== 'mine' ? 'hot' : ''}"><b>${b.stage !== 'mine' ? '! Bottleneck' : 'Foreman'}</b><p>${esc(b.message)}</p><div class="btnrow">${sg ? `<button class="buy sm" data-advice="1" ${sg.canAfford ? '' : 'disabled'}>${esc(sg.label)} · ${fmt(sg.cost)}</button>` : ''}</div></div>`;
   }
   function panelMine() {
     const c = S.colony, u = S.unl, R = S.rates;
@@ -250,7 +280,7 @@ export function createUI(S, A) {
     const board = rankList();
     let h = '<h3>This month</h3><div class="tablewrap"><table><tr><th>#</th><th>Colony</th><th class="n">Coin</th><th class="n">/min</th></tr>';
     board.forEach((b, i) => {
-      h += `<tr class="${b.id === S.me.id ? 'me' : ''}"><td>${i + 1}</td><td><i class="sw" style="background:${esc(b.species?.color || '#888')}"></i><b>${esc(b.name)}</b><br><small>${esc(b.player || '')}${b.species?.name ? ' · ' + esc(b.species.name) : ''}</small></td><td class="n gold">${fmt(b.coin)}${b.grant ? `<br><small class="muted" title="Late joiners get a catch-up grant">started with a ${fmt(b.grant)} grant</small>` : ''}</td><td class="n">${fmt(b.coinPerMin)}</td></tr>`;
+      h += `<tr class="${b.id === S.me.id ? 'me' : ''}"><td>${i + 1}</td><td class="who">${speciesIcon(b.species, 28)}<b>${esc(b.name)}</b><br><small>${esc(b.player || '')}${b.species?.name ? ' · ' + esc(b.species.name) : ''}</small></td><td class="n gold">${fmt(b.coin)}${b.grant ? `<br><small class="muted" title="Late joiners get a catch-up grant">started with a ${fmt(b.grant)} grant</small>` : ''}</td><td class="n">${fmt(b.coinPerMin)}</td></tr>`;
     });
     h += '</table></div>';
     const B = S.boardFull;
@@ -262,9 +292,36 @@ export function createUI(S, A) {
     }
     return h;
   }
+  function panelSafety() {
+    const c = S.colony, R = S.rates, Hz = R.hazards;
+    let h = `<div class="hzsum ${Hz.perHour > 0.5 ? 'hot' : ''}"><span class="skull" aria-hidden="true"></span><div><b>${riskTxt(Hz.perHour)}</b><br><small>${Hz.loss > 0.001 ? `costing about <span class="bad">${(Hz.loss * 100).toFixed(1)}%</span> of output (${fmt(Hz.lossPerMin)} coin/min)` : 'Your crews are safe for now.'}</small></div></div>`;
+    h += '<p class="lede">Deeper shafts are more dangerous. Lights keep miners sane in the dark; supports stop cave-ins. Halted shafts dig nothing until they are cleared.</p>';
+    h += bulkBar();
+    h += '<h3>Shafts</h3>';
+    let any = false;
+    c.shafts.forEach((s, i) => {
+      if (s.idx === 0) return;
+      any = true;
+      const r = R.shafts[i] || {};
+      const risk = r.risk || 0, halted = s.haltUntil && s.haltUntil > S.now();
+      h += `<div class="shaft safety"><div class="sh-h"><b>${esc(s.name)}</b> <small>depth ${s.idx + 1}</small> <span class="pill ${risk > 0.3 ? 'bad' : risk > 0.08 ? 'warn' : 'ok'}">${riskTxt(risk)}</span>${halted ? ` <span class="pill bad">halted ${dur(s.haltUntil - S.now())}</span>` : ''}</div>`;
+      h += row({ type: 'upgradeShaft', shaftId: s.id, kind: 'lights' }, `Lights <span class="lvl">Lv ${s.up.lights || 0}</span>`, 'Prevents miner insanity', { btn: 'Install' });
+      h += row({ type: 'upgradeShaft', shaftId: s.id, kind: 'supports' }, `Supports <span class="lvl">Lv ${s.up.supports || 0}</span>`, 'Prevents cave-ins', { btn: 'Brace' });
+      h += '</div>';
+    });
+    if (!any) h += '<p class="lede">Your home shaft is safe. Danger starts below it.</p>';
+    h += '<h3>Colony defenses</h3>';
+    for (const [kind, label, hz, desc] of SAFETY_ROWS) {
+      const rate = Hz.colony?.[hz] || 0;
+      h += row({ type: 'upgradeSafety', kind }, `${label} <span class="lvl">Lv ${c.safety?.[kind] || 0}</span>`, `${desc} · ${HZ_LABEL[hz]}: ${riskTxt(rate)}`, { btn: 'Build' });
+    }
+    if (Hz.colony?.quake) h += `<p class="lede small">Earthquakes: ${riskTxt(Hz.colony.quake)}. Supports in every shaft soften them.</p>`;
+    return h;
+  }
   function nextUnlock() {
     const n = S.unl.next.panel;
     if (!n) return '';
+    if (n.at == null) return `Next: <b>${esc(n.label)}</b> ${esc(n.hint || '')}`;
     const pct = Math.max(0, Math.min(100, n.at ? (100 * n.have) / n.at : 100));
     const wait = n.waitH > 0 ? ` · opens in ${n.waitH >= 1 ? Math.ceil(n.waitH) + 'h' : Math.ceil(n.waitH * 60) + 'm'}` : '';
     return `Next: <b>${esc(n.label)}</b> at ${fmt(n.at)} earned (${fmt(n.have)})${wait}<span class="nextbar"><i style="width:${pct.toFixed(1)}%"></i></span>`;
@@ -277,6 +334,9 @@ export function createUI(S, A) {
     if (S.ui.tab === 'surface') base.push(c.lift, c.conveyor, c.yardLvl, c.pads, Math.round(S.rates.minePerMin), Math.round(S.rates.yardLoss * 100));
     if (S.ui.tab === 'fleet') base.push(c.ships.map((s) => [s.id, s.name, s.lvl, s.policy, s.destId, s.state].join(':')).join(';'), S.unl.day, Math.floor(Math.log10(1 + c.earned) * 4));
     if (S.ui.tab === 'market') base.push(Math.floor(S.now() / 15000), S.ui.mktCls, c.shafts.length);
+    if (S.ui.tab === 'safety') base.push(c.shafts.map((s) => [s.id, s.name, s.up.lights || 0, s.up.supports || 0].join(':')).join(';'), JSON.stringify(c.safety || {}), Math.round(S.rates.hazards.perHour * 20), Math.floor(S.now() / 10000));
+    if (S.ui.tab === 'galaxy') base.push(GX.key());
+    if (S.ui.tab === 'prestige') base.push(PR.key());
     if (S.ui.tab === 'ranks') base.push([...S.board.values()].map((b) => b.id + Math.round(b.coin)).join(','), Math.floor(S.now() / 5000), S.boardFull ? 1 : 0);
     return base.join('|');
   }
@@ -288,7 +348,7 @@ export function createUI(S, A) {
       lastKey = key;
       const body = $('#tabbody');
       const st = body.scrollTop;
-      body.innerHTML = { mine: panelMine, surface: panelSurface, fleet: panelFleet, market: panelMarket, ranks: panelRanks }[S.ui.tab]();
+      body.innerHTML = { mine: panelMine, surface: panelSurface, fleet: panelFleet, market: panelMarket, ranks: panelRanks, safety: panelSafety, galaxy: () => GX.panel(), prestige: () => PR.panel() }[S.ui.tab]();
       body.scrollTop = st;
     }
     refreshRows();
@@ -306,8 +366,6 @@ export function createUI(S, A) {
   document.addEventListener('click', (e) => {
     const m = e.target.closest('[data-mktcls]');
     if (m) { S.ui.mktCls = m.dataset.mktcls; sfx.tap(); render(true); return; }
-    const as = e.target.closest('[data-autospend]');
-    if (as) { A.send({ type: 'autoSpend', keep: 0.1 }, as); return; }
     const adv = e.target.closest('[data-advice]');
     if (adv && S.bneck?.suggestion) { A.send(S.bneck.suggestion.cmd, adv); return; }
     const rn = e.target.closest('[data-rename]');
@@ -480,7 +538,7 @@ export function createUI(S, A) {
       <p class="lede">Your crews kept digging. Here's what the colony did without you.</p>
       <div class="awaygrid">${rows.map(([k, v, c]) => `<div><small>${k}</small><b class="${c}">${v}</b></div>`).join('')}</div>
       ${s.next ? `<div class="awaynext"><small>Best next move</small><b>${esc(s.next.label)}</b> <span class="gold">${fmt(s.next.cost)}</span></div>` : ''}
-      <div class="btnrow">${s.next && s.next.canAfford ? `<button class="buy big" data-spend="1" title="Buys the best upgrades in order, starting with ${esc(s.next.label)}">Auto-spend</button>` : ''}<button class="buy big ${s.next && s.next.canAfford ? 'ghost' : ''}" data-x="1">Collect &amp; carry on</button></div></div>`, 'awaysheet');
+      <div class="btnrow">${s.next && s.next.canAfford ? `<button class="buy big" data-spend="1">${esc(s.next.label)} · ${fmt(s.next.cost)}</button>` : ''}<button class="buy big ${s.next && s.next.canAfford ? 'ghost' : ''}" data-x="1">Collect &amp; carry on</button></div></div>`, 'awaysheet');
     const sp = el.querySelector('[data-spend]');
     if (sp) sp.addEventListener('click', () => { s.next.spend(); close(); });
     sfx.big();
@@ -511,8 +569,11 @@ export function createUI(S, A) {
     ticker();
   }
 
+  PR = createPrestige(S, A, { row, bulkBar, sheet, render: (f) => render(f) });
+  GX = createGalaxy(S);
+  A.galaxy = GX;
   return {
-    topbar, render, refreshRows, coach, slow, ticker, openCard, closeCard, awaySheet, setTab, sheet,
+    topbar, render, refreshRows, coach, slow, ticker, openCard, closeCard, awaySheet, setTab, sheet, row, bulkBar, galaxy: GX, prestige: PR,
     coinEl: () => $('#coin'),
     cardOpen: () => card,
   };

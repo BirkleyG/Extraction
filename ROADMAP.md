@@ -91,7 +91,7 @@ Stakes and rhythm
 - Month-end wipe: coin, SP, evolutions and galaxy changes reset; all-time stats and the Hall of Fame stay.
 - Richer AI planet generation: colors, look, topography, environment, moons, lore and story.
 - News ticker from the "colony chronicler."
-- Galactic events (wars, booms, recessions, discoveries, rituals) that shift demand.
+- Galactic events (wars, booms, recessions, discoveries, rituals) about once a week, each shifting demand for 1–3 days.
 
 Underground hazards (gives lights and supports a purpose)
 - Lights prevent miner insanity (miners attacking each other). Supports reduce cave-ins.
@@ -101,6 +101,18 @@ Underground hazards (gives lights and supports a purpose)
 > **Playtest:** Does someone nuke? Does the Maker conversation feel huge and strange? Does the leaderboard change hands in the last 48 hours?
 
 ---
+
+## Phase 2.5: Long shafts you can see (owner request, 2026-11-13)
+
+*Mining should match what's drawn in the rock.*
+
+- Each shaft is a long tunnel the crew digs sideways through the rock; its face advances as ore is mined, and the tunnel gets visibly longer over the month.
+- Ore pockets sit at fixed, visible positions in the rock (pre-rolled per site, richer in deeper shafts). The crew mines the endless common ore by default; when the face reaches a pocket, they mine that ore until the pocket is dug out, then return to common.
+- A pocket harder than the drill stops the face; the crew keeps mining common ore from the walls (income continues) and the shaft shows "needs drill N".
+- Replaces re-drilling: tunnels keep going and find the next pocket. Vein bars become "next pocket in N m" and "pocket remaining" readouts.
+- The mine view draws the same pockets the engine uses, so what you see is what you'll mine.
+
+> **Playtest:** Is it satisfying to watch a tunnel break into a rare pocket? Does it pull players to dig deeper and longer?
 
 ## Phase 3: Refineries and a real market (Stage 2)
 

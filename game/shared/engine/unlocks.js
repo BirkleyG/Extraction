@@ -25,6 +25,10 @@ export const PANELS = [
   { id: 'fleet', label: 'Fleet', at: 5_000, hours: 3, early: (c, I, r) => r().limit === 'ships' && got(c) >= 1_000 },
   { id: 'pads', label: 'Launch pads', at: 12_000, hours: 6, early: (c) => c.ships.length >= 2 },
   { id: 'market', label: 'Market', at: 25_000, hours: 12 },
+  // Safety opens with danger: a shaft at depth index 3+ or the first mishap.
+  { id: 'safety', label: 'Safety', at: Infinity, hint: 'opens when you dig shaft 4 or hit your first hazard', early: (c) => c.shafts.some((s) => s.idx >= 3) || num(c.stats?.hazards) > 0 },
+  // Prestige shows up well before the nuke is allowed, so players see it coming.
+  { id: 'prestige', label: 'Prestige', at: Infinity, hint: 'opens at 5M earned since your last nuke', early: (c) => num(c.runEarned) >= T.prestigePanelAt || num(c.nukes) > 0 || num(c.sp) > 0 },
 ];
 const ageH = (c) => (num(c.t) - num(c.born, c.t)) / 3_600_000;
 const waited = (c, p) => !p.hours || num(c.grant) > 0 || ageH(c) >= p.hours;
@@ -36,7 +40,9 @@ export function panelFor(cmd) {
   switch (cmd.type) {
     case 'hire': return 'hire';
     case 'buyShaft': case 'redrill': return 'shafts';
-    case 'upgradeShaft': return cmd.kind === 'bunk' ? 'bunks' : 'carts';
+    case 'upgradeShaft': return cmd.kind === 'bunk' ? 'bunks' : (cmd.kind === 'lights' || cmd.kind === 'supports') ? 'safety' : 'carts';
+    case 'upgradeSafety': return 'safety';
+    case 'nuke': case 'evolve': return 'prestige';
     case 'upgradeLift': return 'lift';
     case 'upgradeConveyor': return 'conveyor';
     case 'upgradeYard': return 'yard';
@@ -91,7 +97,7 @@ export function unlocks(colony, world, now) {
     tutorial: { step, id: TUTORIAL[step].id, hint: TUTORIAL[step].hint },
     next: {
       panel: nextPanel ? {
-        id: nextPanel.id, label: nextPanel.label, at: nextPanel.at, have: got(colony),
+        id: nextPanel.id, label: nextPanel.label, at: Number.isFinite(nextPanel.at) ? nextPanel.at : null, hint: nextPanel.hint || null, have: got(colony),
         waitH: waited(colony, nextPanel) ? 0 : Math.max(0, nextPanel.hours - ageH(colony)),
       } : null,
       license: nextLicense,

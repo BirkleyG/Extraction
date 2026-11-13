@@ -3,8 +3,9 @@ import { T } from './tuning.js';
 import { info, clone, num, pos, fmt } from './util.js';
 import {
   liftRate, convRate, yardCap, bunkCap, perMiner, tunnelCap, shipCap, tripSecs,
-  shaftStatus, pickDest, priceAt, marketIndex,
+  shaftStatus, pickDest, priceAt, marketIndex, evoMult, activeChanges, priceMult,
 } from './model.js';
+export { activeChanges, priceMult };
 import { applyNow, quote } from './commands.js';
 import { rates } from './rates.js';
 export { rates };
@@ -23,6 +24,13 @@ export function candidateMoves(c, world) {
     if (!shaftStatus(c, I, s).ok) continue;
     list.push({ type: 'upgradeShaft', shaftId: s.id, kind: 'cart' }, { type: 'upgradeShaft', shaftId: s.id, kind: 'bunk' });
   }
+  if ((c.unlocked?.panels || []).includes('safety')) {
+    for (const s of c.shafts) if (s.idx > 0 && s.miners > 0) {
+      if ((s.up.lights || 0) < T.shaftSafeMax) list.push({ type: 'upgradeShaft', shaftId: s.id, kind: 'lights' });
+      if ((s.up.supports || 0) < T.shaftSafeMax) list.push({ type: 'upgradeShaft', shaftId: s.id, kind: 'supports' });
+    }
+    for (const kind of ['ventilation', 'pumps', 'firebreaks']) list.push({ type: 'upgradeSafety', kind });
+  }
   return list.map(n1);
 }
 
@@ -32,7 +40,8 @@ export function moveLabel(c, cmd) {
     case 'hire': return 'Hire a miner';
     case 'buyShaft': return 'Dig a new shaft';
     case 'redrill': return `Re-drill ${sh()}`;
-    case 'upgradeShaft': return cmd.kind === 'bunk' ? `Add bunks to ${sh()}` : `Add carts to ${sh()}`;
+    case 'upgradeShaft': return { bunk: `Add bunks to ${sh()}`, lights: `Light up ${sh()}`, supports: `Shore up ${sh()}` }[cmd.kind] || `Add carts to ${sh()}`;
+    case 'upgradeSafety': return { ventilation: 'Improve ventilation', pumps: 'Install pumps', firebreaks: 'Build firebreaks' }[cmd.kind] || 'Improve safety';
     case 'upgradeLift': return 'Upgrade the lift';
     case 'upgradeConveyor': return 'Upgrade the conveyors';
     case 'upgradeYard': return 'Expand the yard';
@@ -46,10 +55,22 @@ export function moveLabel(c, cmd) {
 
 // Expand a command into the small bundle a player would really buy with it
 // (a new shaft is worth nothing without miners, a hard vein without the drill).
+// A copy deep enough for applyNow (which never touches ore maps, cargo or hazard clocks). Much faster than clone().
+export function planClone(c) {
+  return {
+    ...c,
+    shafts: c.shafts.map((s) => ({ ...s, up: { ...s.up } })),
+    ships: c.ships.map((s) => ({ ...s })),
+    stats: { ...c.stats },
+    unlocked: { panels: [...(c.unlocked?.panels || [])], licenses: [...(c.unlocked?.licenses || [])] },
+    safety: { ...c.safety }, evo: { ...c.evo },
+  };
+}
+
 function expand(c, world, cmd) {
   const I = info(world);
   const steps = [cmd];
-  const x = clone(c);
+  const x = planClone(c);
   x.coin = Infinity;
   if (applyNow(x, world, cmd, [])) return null;
   const fix = () => {
@@ -70,20 +91,8 @@ function expand(c, world, cmd) {
       fix();
     }
   }
-  return { steps, after: x };
-}
-
-function bundleCost(c, world, steps) {
-  const x = clone(c);
-  x.coin = Infinity;
-  let cost = 0;
-  for (const st of steps) {
-    const q = quote(x, world, st);
-    if (q.error || !Number.isFinite(q.cost)) return Infinity;
-    cost += q.cost;
-    applyNow(x, world, st, []);
-  }
-  return cost;
+  // every step is a paid purchase, so the bundle's cost is what it added to stats.spent
+  return { steps, after: x, cost: x.stats.spent - (c.stats?.spent || 0) };
 }
 
 // Evaluate commands by coin/min gained per coin spent. Uses steady-state rates.
@@ -94,7 +103,7 @@ export function bestMoves(colony, world, { cmds, limit = 5 } = {}) {
   for (const cmd of cmds || candidateMoves(colony, world)) {
     const e = expand(colony, world, cmd);
     if (!e) continue;
-    const cost = bundleCost(colony, world, e.steps);
+    const cost = e.cost;
     if (!(cost > 0) || !Number.isFinite(cost)) continue;
     const gain = rates(e.after, world).score - base;
     const extra = e.steps.length > 1 ? ` (+${e.steps.length - 1} more step${e.steps.length > 2 ? 's' : ''})` : '';
@@ -114,7 +123,9 @@ const STAGE_CMDS = {
   conveyor: ['upgradeConveyor', 'buyPad'],
   ships: ['buyShip', 'upgradeShip', 'buyPad'],
   yard: ['upgradeYard', 'buyShip'],
+  safety: ['upgradeSafety', 'upgradeShaft:lights', 'upgradeShaft:supports'],
 };
+const cmdKey = (m) => (m.type === 'upgradeShaft' && (m.kind === 'lights' || m.kind === 'supports') ? `upgradeShaft:${m.kind}` : m.type);
 
 export function bottleneck(colony, world) {
   const c = colony;
@@ -144,11 +155,14 @@ export function bottleneck(colony, world) {
     const o = I.ores[I.idx[s.ore]];
     push('blocked', 0, (o?.value || 0) * T.minePerMiner * 3 * 0.5, { shaft: s });
   }
+  if (r.hazards.lossPerMin > 0 && (c.unlocked?.panels || []).includes('safety')) {
+    push('safety', 0, r.hazards.lossPerMin, { perHour: r.hazards.perHour });
+  }
   stages.sort((a, b) => b.value - a.value);
   const top = stages[0] && stages[0].value > 1e-9 ? stages[0] : { stage: 'mine', ore: 0, value: 0 };
 
   const pick = (types) => {
-    const moves = bestMoves(c, world, { cmds: candidateMoves(c, world).filter((m) => types.includes(m.type)), limit: 0 }).filter((m) => m.gain > 1e-9);
+    const moves = bestMoves(c, world, { cmds: candidateMoves(c, world).filter((m) => types.includes(cmdKey(m)) || (m.type === 'upgradeShaft' && types.includes('upgradeShaft') && m.kind !== 'lights' && m.kind !== 'supports')), limit: 0 }).filter((m) => m.gain > 1e-9);
     const aff = moves.filter((m) => c.coin >= m.firstCost);
     if (aff.length) return aff[0];
     return moves.sort((a, b) => a.firstCost - b.firstCost)[0] || null;
@@ -165,6 +179,7 @@ export function bottleneck(colony, world) {
     idle: `${c.idle} miner${c.idle > 1 ? 's are' : ' is'} idle: no free bunks.`,
     blocked: top.shaft ? `${top.shaft.name} can't dig: ${top.shaft.reason.toLowerCase()}.` : '',
     mine: 'Everything keeps up. More ore means more coin.',
+    safety: `Mishaps underground cost about ${fmt(top.value)} coin/min (${(top.perHour || 0).toFixed(2)} per hour).`,
   }[top.stage];
   return {
     stage: top.stage, wastedPerMin: pos(top.value), wastedOrePerMin: pos(top.ore),
@@ -184,10 +199,10 @@ export function destinations(colony, world, shipClass = 'hauler') {
     const price = {};
     let v = 0;
     I.ores.forEach((o, oi) => {
-      price[o.id] = priceAt(world, I, oi, bi, now);
+      price[o.id] = priceAt(world, I, oi, bi, now) * evoMult(colony, 'sell');
       v += (mixTotal > 0 ? r._mixG[oi] / mixTotal : 1 / I.n) * price[o.id];
     });
-    const trip = tripSecs(b, shipClass);
+    const trip = tripSecs(b, shipClass, colony);
     return { id: b.id, name: b.name, distance: b.distance, price, tripSecs: trip, coinPerMin: v * cap / (2 * trip / 60), best: false };
   });
   let bi = 0;

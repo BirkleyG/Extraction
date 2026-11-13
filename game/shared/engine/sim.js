@@ -9,11 +9,15 @@ import { T } from './tuning.js';
 import { info, clone, num, pos, fmt } from './util.js';
 import {
   liftRate, convRate, yardCap, perMiner, tunnelCap, shipCap, tripSecs,
-  shaftStatus, assignMiners, pickDest, priceAt, grade,
+  shaftStatus, assignMiners, pickDest, priceAt, grade, evoMult, hazardRates, changeTimes,
 } from './model.js';
 import { syncUnlocks } from './unlocks.js';
+import { ensureHz, rollBudget, hzPick, hazardText } from './hazards.js';
 
 const MAX_EVENT_SALES = 12;
+const MAX_EVENT_HAZARDS = 12;
+const HOUR = 3_600_000;
+const DUE = 1e-9; // hazard budgets at or below this fire
 
 export function toArr(I, map) {
   const a = new Array(I.n).fill(0);
@@ -48,6 +52,7 @@ function takeByValue(I, src, srcG, amount) {
 
 export function advance(colony, world, now) {
   const c = clone(colony);
+  ensureHz(c);
   const events = [];
   const I = info(world);
   now = num(now, c.t);
@@ -63,14 +68,20 @@ export function advance(colony, world, now) {
   const cargo = c.ships.map((s) => toArr(I, s.cargo));
   const cargoG = c.ships.map((s) => toArr(I, s.cargoG));
   const flowRate = c.ships.map(() => -1); // last measured fill rate (ore/ms), -1 unknown
-  let rates = [], oreOf = [], gradeOf = [], lastScale = 1;
+  let rates = [], base = [], oreOf = [], gradeOf = [], lastScale = 1;
+  const mineK = evoMult(c, 'mine'), sellK = evoMult(c, 'sell');
+  let hzCount = 0, hzLost = 0;
 
+  let hr = null, hrCalm = null;
   const recompute = () => {
+    hr = null;
     assignMiners(c, world);
-    rates = c.shafts.map((s) => (shaftStatus(c, I, s).ok ? s.miners * perMiner(s.up.cart, s.idx) / 60000 : 0)); // ore per ms
+    base = c.shafts.map((s) => (shaftStatus(c, I, s).ok ? s.miners * perMiner(s.up.cart, s.idx) * mineK / 60000 : 0)); // ore per ms
     oreOf = c.shafts.map((s) => I.idx[s.ore]);
     gradeOf = c.shafts.map((s) => grade(s.idx));
   };
+  // Halted shafts (cave-ins, floods...) dig nothing until haltUntil.
+  const ratesAt = (t) => { rates = base.map((r, k) => (num(c.shafts[k].haltUntil, 0) > t ? 0 : r)); };
   recompute();
 
   const emit = (type, text, at, data) => events.push({ type, text, at, data });
@@ -92,8 +103,8 @@ export function advance(colony, world, now) {
           coin += cargoG[k][o] * priceAt(world, I, o, bi, s.arriveAt);
           soldArr[o] += cargo[k][o];
         }
-        coin = pos(coin);
-        c.coin += coin; c.earned += coin; soldCoin += coin; saleCount++;
+        coin = pos(coin * sellK);
+        c.coin += coin; c.earned += coin; c.runEarned += coin; c.monthEarned += coin; soldCoin += coin; saleCount++;
         c.stats.sold += sum(cargo[k]); c.stats.sales++;
         if (c.stats.firstSaleAt == null) c.stats.firstSaleAt = s.arriveAt;
         if (saleCount <= MAX_EVENT_SALES) {
@@ -102,7 +113,7 @@ export function advance(colony, world, now) {
         }
         cargo[k].fill(0); cargoG[k].fill(0);
         s.state = 'back';
-        s.homeAt = s.arriveAt + tripSecs(I.buyers[bi], s.cls) * 1000;
+        s.homeAt = s.arriveAt + tripSecs(I.buyers[bi], s.cls, c) * 1000;
       } else {
         s.state = 'home';
         s.readyAt = s.homeAt;
@@ -120,7 +131,7 @@ export function advance(colony, world, now) {
         s.state = 'out';
         s.dest = b.id;
         s.departAt = t;
-        s.arriveAt = t + tripSecs(b, s.cls) * 1000;
+        s.arriveAt = t + tripSecs(b, s.cls, c) * 1000;
         s.firstLoadAt = null;
         c.stats.launches++;
         if (c.stats.launches <= 3) emit('launch', `${s.name} launched for ${b.name}`, t, { shipId: s.id, destId: b.id });
@@ -156,13 +167,104 @@ export function advance(colony, world, now) {
       }
     });
     if (changed) recompute();
+    // hazards whose budget ran out
+    let hit = false;
+    c.shafts.forEach((s) => {
+      for (const kind of ['cave', 'mad']) if (s.hz[kind] <= DUE) { hazard(kind, s, t); s.hz[kind] = budget(); hit = true; }
+    });
+    for (const kind of ['gas', 'flood', 'fire', 'quake']) if (c.hz[kind] <= DUE) { hazard(kind, null, t); c.hz[kind] = budget(); hit = true; }
+    if (hit) recompute();
   };
+
+  function budget() { const [b, r] = rollBudget(c.hzRng); c.hzRng = r; return b; }
+  // Every mishap draws the same number of rolls whatever happens, so the seeded stream stays
+  // aligned even when tiny timing differences change an outcome (step invariance).
+  let rolls = [];
+  function rnd() { return rolls.length ? rolls.shift() : 0.5; }
+  const between = ([a, b]) => Math.round(a + (b - a) * rnd());
+  const halt = (s, t, mins) => { if (mins > 0) s.haltUntil = Math.max(num(s.haltUntil, 0), t + mins * 60_000); };
+  // Lose up to `want` miners from shaft s; the colony always keeps at least one miner.
+  const lose = (s, want) => {
+    const n = Math.max(0, Math.min(want, s ? s.miners : want, c.miners - 1));
+    c.miners -= n; if (s) s.miners -= n;
+    c.stats.lost = num(c.stats.lost) + n; hzLost += n;
+    return n;
+  };
+  const deepShaft = () => {
+    const deep = c.shafts.filter((s) => s.idx > 0);
+    if (!deep.length) return null;
+    let x = rnd() * deep.reduce((a, s) => a + s.idx, 0);
+    for (const s of deep) { x -= s.idx; if (x <= 0) return s; }
+    return deep[deep.length - 1];
+  };
+  function hazard(kind, s, t) {
+    rolls = [];
+    for (let i = 0; i < 6; i++) { const [u, r] = hzPick(c.hzRng); c.hzRng = r; rolls.push(u); }
+    const H = T.hz;
+    let lost = 0, haltMins = 0, saved = false, burned = 0;
+    let kindName = kind;
+    if (kind === 'cave') {
+      kindName = 'cavein';
+      haltMins = between(H.caveHalt);
+      const trapped = s.miners > 0 ? 1 + Math.floor(rnd() * 3) : 0;
+      saved = trapped > 0 && rnd() < H.rescue;
+      if (!saved) lost = lose(s, trapped);
+      halt(s, t, haltMins);
+    } else if (kind === 'mad') {
+      kindName = 'insanity';
+      haltMins = between(H.madHalt);
+      lost = lose(s, 1 + Math.floor(rnd() * 2));
+      halt(s, t, haltMins);
+    } else if (kind === 'gas' || kind === 'flood') {
+      s = deepShaft();
+      if (!s) return;
+      haltMins = between(kind === 'gas' ? H.gasHalt : H.floodHalt);
+      if (kind === 'gas' && rnd() < 0.3) lost = lose(s, 1);
+      halt(s, t, haltMins);
+    } else if (kind === 'fire') {
+      const f = H.fireBurn[0] + (H.fireBurn[1] - H.fireBurn[0]) * rnd();
+      for (let o = 0; o < I.n; o++) { burned += yd[o] * f; yd[o] *= 1 - f; ydG[o] *= 1 - f; }
+    } else if (kind === 'quake') {
+      haltMins = between(H.quakeHalt);
+      for (const x of c.shafts) if (x.idx > 0) halt(x, t, Math.round(haltMins * Math.pow(H.cut, num(x.up.supports))));
+      const worst = c.shafts.filter((x) => x.idx > 0 && !num(x.up.supports) && x.miners > 0).sort((a, b) => b.idx - a.idx)[0];
+      if (worst && rnd() < 0.4) { lost = lose(worst, 1); s = worst; }
+    }
+    c.stats.hazards = num(c.stats.hazards) + 1;
+    hzCount++;
+    if (hzCount <= MAX_EVENT_HAZARDS) {
+      const text = hazardText(kindName, { shaft: s ? s.name : 'the colony', lost, saved, haltMins, burned: fmt(burned) }, rnd());
+      const data = { kind: kindName, lost, haltMins };
+      if (s && kind !== 'fire') data.shaftId = s.id;
+      if (saved) data.rescued = true;
+      if (kind === 'fire') data.burned = burned;
+      emit('hazard', text, t, data);
+    }
+  }
 
   let t = c.t;
   let guard = 0;
   while (t < now && guard++ < 5e6) {
     process(t);
+    ratesAt(t);
     let te = Math.min(now, (Math.floor(t / T.gridMs) + 1) * T.gridMs);
+    // exact hazard events, halts ending, calm period ending, world changes starting/ending
+    const calmEnd = num(c.born, 0) + T.hz.calmMs;
+    if (!hr || hrCalm !== (t < calmEnd)) { hr = hazardRates(c, t); hrCalm = t < calmEnd; }
+    if (calmEnd > t && calmEnd < te) te = calmEnd;
+    c.shafts.forEach((s, k) => {
+      const h = num(s.haltUntil, 0);
+      if (h > t && h < te) te = h;
+      for (const kind of ['cave', 'mad']) {
+        const l = hr.shafts[k][kind];
+        if (l > 0) { const due = t + Math.max(1, s.hz[kind] / l * HOUR); if (due < te) te = due; }
+      }
+    });
+    for (const kind in hr.colony) {
+      const l = hr.colony[kind];
+      if (l > 0) { const due = t + Math.max(1, c.hz[kind] / l * HOUR); if (due < te) te = due; }
+    }
+    for (const x of changeTimes(world, t, te)) te = Math.min(te, x);
     // exact ship events
     c.ships.forEach((s) => {
       const due = s.state === 'out' ? s.arriveAt : s.state === 'back' ? s.homeAt
@@ -186,7 +288,13 @@ export function advance(colony, world, now) {
     });
     if (est < Infinity) te = Math.min(te, t + Math.max(1000, est));
     const dt = te - t;
-    if (dt > 0) lastScale = flow(dt, t);
+    if (dt > 0) {
+      lastScale = flow(dt, t);
+      // hazard clocks tick at this segment's rates
+      const h = dt / HOUR;
+      c.shafts.forEach((s, k) => { for (const kind of ['cave', 'mad']) if (hr.shafts[k][kind] > 0) s.hz[kind] = Math.max(0, s.hz[kind] - hr.shafts[k][kind] * h); });
+      for (const kind in hr.colony) if (hr.colony[kind] > 0) c.hz[kind] = Math.max(0, c.hz[kind] - hr.colony[kind] * h);
+    }
     t = te;
   }
   process(now);
@@ -200,7 +308,7 @@ export function advance(colony, world, now) {
     const Ppot = sum(pot);
     const B1 = sum(tun), K1 = tunnelCap(c);
     const B2 = sum(yd), K2 = yardCap(c.yardLvl);
-    const Lcap = liftRate(c.lift) * dt / 60000;
+    const Lcap = liftRate(c.lift) * mineK * dt / 60000;
     const Ccap = convRate(c.conveyor) * dt / 60000;
     const loading = [];
     c.ships.forEach((s, k) => { if (s.state === 'loading') loading.push(k); });
@@ -249,6 +357,9 @@ export function advance(colony, world, now) {
   c.t = now;
   if (saleCount > MAX_EVENT_SALES) {
     emit('salesSummary', `${saleCount - MAX_EVENT_SALES} more ship sales`, now, { count: saleCount - MAX_EVENT_SALES });
+  }
+  if (hzCount > MAX_EVENT_HAZARDS) {
+    emit('hazardSummary', `${hzCount - MAX_EVENT_HAZARDS} more mishaps underground while you were away`, now, { count: hzCount - MAX_EVENT_HAZARDS, lost: hzLost });
   }
   const sales = [];
   for (let o = 0; o < I.n; o++) if (soldArr[o] > 0) sales.push({ oreId: I.ores[o].id, amount: soldArr[o] });

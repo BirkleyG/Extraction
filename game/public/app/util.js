@@ -2,6 +2,7 @@
 import { fmt as engineFmt, TUNING } from '/shared/engine/index.js';
 import { oreSpriteSpec } from '/shared/planet/index.js';
 import { oreSprite, personSprite } from './pixel/index.js';
+import { speciesSprite, speciesBustURL } from './pixel/species.js';
 
 export const $ = (sel, root = document) => root.querySelector(sel);
 export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -67,9 +68,10 @@ export function speciesLook(species) {
   return { color: species?.color || '#ff8a3d', head: HEADS[h % HEADS.length], skin: SKINS[(h >> 4) % SKINS.length] };
 }
 export function minerImg(species, pose = 'walk', frame = 0) {
-  const L = speciesLook(species);
-  return personSprite({ role: 'miner', pose, frame, color: L.color, head: L.head === 'visor' ? 'dome' : L.head, skin: L.skin, tier: 1 });
+  return speciesSprite(species, pose, frame);
 }
+// Tiny head-and-shoulders portrait for lists (leaderboard, bulletin).
+export const speciesIcon = (species, size = 20) => `<img class="spic" src="${speciesBustURL(species)}" width="${size}" height="${Math.round(size * 0.9)}" alt="">`;
 
 export const TIER_COL = { common: '#c8d0d8', rare: '#7ad1ff', mythic: '#ff9f3d' };
 export const SPECIES_COLORS = ['#ff8a3d', '#ffd23f', '#5ee6a8', '#7ad1ff', '#b892ff', '#ff5ec4', '#ff5a6e', '#e8e4f2'];

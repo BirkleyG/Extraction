@@ -48,7 +48,7 @@ await sleep(600);
 await shot(A, '01-onboard-desktop');
 // pick the second region and a colour
 await A.page.click('#obRegions [data-r]:nth-child(2)');
-await A.page.click('.swatch:nth-child(4)');
+await A.page.click('#sbRoll');
 await A.page.click('#obGo');
 await A.page.waitForSelector('#app:not([hidden])');
 await sleep(800);

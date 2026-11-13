@@ -594,3 +594,263 @@ test('autoSpend buys the best moves in one command and respects the reserve', ()
   const broke = E.applyCommand({ ...r.colony, coin: 0 }, w, { type: 'autoSpend' }, r.colony.t);
   assert.match(broke.error, /Nothing worth buying/);
 });
+
+// ---------------------------------------------------------------- Phase 2: world changes
+test('world changes: demand, supply, global, buyer; stacking and clamp', () => {
+  const w = newWorld();
+  const base = (o, b) => E.marketPrice(w, o, b, 1000);
+  const ch = (x) => ({ id: 'x' + Math.random(), by: null, source: 'event', title: 't', reason: '', at: 0, ...x });
+  const w1 = { ...w, changes: [ch({ kind: 'demand', oreId: 'amber', mult: 2 })] };
+  assert.ok(Math.abs(E.marketPrice(w1, 'amber', 'forge', 1000) - 2 * base('amber', 'forge')) < 1e-9);
+  assert.equal(E.marketPrice(w1, 'gravel', 'forge', 1000), base('gravel', 'forge'));
+  const w2 = { ...w, changes: [ch({ kind: 'supply', oreId: 'gravel', mult: 2 })] };
+  assert.ok(Math.abs(E.marketPrice(w2, 'gravel', 'depot', 1000) - base('gravel', 'depot') / 2) < 1e-9);
+  const w3 = { ...w, changes: [ch({ kind: 'global', mult: 1.5 })] };
+  for (const o of ['gravel', 'jade']) assert.ok(Math.abs(E.marketPrice(w3, o, 'court', 1000) - 1.5 * base(o, 'court')) < 1e-9);
+  const w4 = { ...w, changes: [ch({ kind: 'buyer', buyerId: 'court', mult: 3 })] };
+  assert.ok(Math.abs(E.marketPrice(w4, 'ruby', 'court', 1000) - 3 * base('ruby', 'court')) < 1e-9);
+  assert.equal(E.marketPrice(w4, 'ruby', 'forge', 1000), base('ruby', 'forge'));
+  // stacking is multiplicative; the combined effect is clamped to 0.2..5
+  const w5 = { ...w, changes: [ch({ kind: 'global', mult: 1.5 }), ch({ kind: 'demand', oreId: 'amber', mult: 2 })] };
+  assert.ok(Math.abs(E.priceMult(w5, 'amber', 'forge', 1000) - 3) < 1e-12);
+  const hi = { ...w, changes: [ch({ kind: 'global', mult: 4 }), ch({ kind: 'buyer', buyerId: 'forge', mult: 4 })] };
+  assert.equal(E.priceMult(hi, 'amber', 'forge', 1000), 5);
+  const lo = { ...w, changes: [ch({ kind: 'supply', oreId: 'amber', mult: 4 }), ch({ kind: 'global', mult: 0.5 })] };
+  assert.equal(E.priceMult(lo, 'amber', 'forge', 1000), 0.2);
+  // expiry and start
+  const w6 = { ...w, changes: [ch({ kind: 'global', mult: 2, until: 5000 }), ch({ kind: 'global', mult: 3, at: 9000 })] };
+  assert.equal(E.activeChanges(w6, 1000).length, 1);
+  assert.equal(E.priceMult(w6, 'gravel', 'depot', 4999), 2);
+  assert.equal(E.priceMult(w6, 'gravel', 'depot', 5000), 1);
+  assert.equal(E.priceMult(w6, 'gravel', 'depot', 9000), 3);
+  // rates and destinations follow the changes
+  const c = midgame(w);
+  const wg = { ...w, changes: [ch({ kind: 'global', mult: 2 })] };
+  assert.ok(Math.abs(E.rates(c, wg).coinPerMin / E.rates(c, w).coinPerMin - 2) < 1e-6);
+  const d0 = E.destinations(c, w), d1 = E.destinations(c, wg);
+  assert.ok(Math.abs(d1[0].price.gravel - 2 * d0[0].price.gravel) < 1e-9);
+  // best route follows a buyer boom
+  const boom = { ...w, changes: [ch({ kind: 'buyer', buyerId: 'scrap', mult: 5 })] };
+  assert.equal(E.destinations(c, boom).find((d) => d.best).id, 'scrap');
+});
+
+test('world changes: sales pay the changed price; step invariance across an expiry', () => {
+  const w = newWorld();
+  const c = midgame(w);
+  const until = c.t + 6 * HOUR + 1234;
+  const wb = { ...w, changes: [{ id: 'boom', kind: 'global', mult: 2, by: null, source: 'event', title: 'Boom', reason: '', at: c.t, until }] };
+  const end = c.t + 12 * HOUR;
+  const plain = E.advance(c, w, end).colony;
+  const one = E.advance(c, wb, end).colony;
+  assert.ok(one.earned - c.earned > (plain.earned - c.earned) * 1.3, 'the boom paid more');
+  let many = c;
+  for (let t = c.t + MIN; t <= end; t += MIN) many = E.advance(many, wb, t).colony;
+  assert.ok(rel(one.coin, many.coin) < 0.005, `coin ${one.coin} vs ${many.coin}`);
+  assert.ok(rel(one.earned, many.earned) < 0.005);
+  // after expiry, prices are back to normal
+  assert.equal(E.priceMult(wb, 'gravel', 'depot', until), 1);
+});
+
+// ---------------------------------------------------------------- Phase 2: hazards
+function withHazards(k, fn) {
+  const hz = E.TUNING.hz, saved = { ...hz };
+  for (const key of ['cave', 'mad', 'gas', 'flood', 'fire', 'quake']) hz[key] *= k;
+  try { return fn(); } finally { Object.assign(hz, saved); }
+}
+// A deep, busy colony: 14 shafts (some deeper than the drill can cut, they still cave in).
+function deepColony(w) {
+  let c = midgame(w);
+  c.coin = 1e15;
+  for (let i = 0; i < 6; i++) c = run(c, w, { type: 'buyShaft' });
+  c = run(c, w, { type: 'hire', n: 'max' });
+  c.coin = 0;
+  return c;
+}
+const hazardsOf = (r) => r.events.filter((e) => e.type === 'hazard');
+
+test('hazards: deterministic, step-invariant across 3 days, never negative', () => withHazards(8, () => {
+  const w = newWorld();
+  const c = deepColony(w);
+  const end = c.t + 3 * DAY;
+  const a = E.advance(c, w, end), b = E.advance(c, w, end);
+  assert.deepEqual(a.colony, b.colony);
+  assert.deepEqual(a.events, b.events);
+  const one = a.colony;
+  assert.ok(one.stats.hazards >= 10, `hazards ${one.stats.hazards}`);
+  let many = c;
+  const seen = [];
+  for (let t = c.t + MIN; t <= end; t += MIN) { const r = E.advance(many, w, t); many = r.colony; seen.push(...hazardsOf(r)); }
+  let odd = c, t = c.t, s = 7;
+  while (t < end) { s = (s * 16807) % 2147483647; t = Math.min(end, t + 500 + (s % (3 * HOUR))); odd = E.advance(odd, w, t).colony; }
+  for (const x of [many, odd]) {
+    assert.equal(x.stats.hazards, one.stats.hazards, 'same number of mishaps');
+    assert.equal(x.stats.lost, one.stats.lost, 'same miners lost');
+    assert.equal(x.miners, one.miners);
+    assert.ok(rel(one.coin, x.coin) < 0.005, `coin ${one.coin} vs ${x.coin}`);
+  }
+  assert.equal(seen.length, one.stats.hazards);
+  for (const e of seen) {
+    assert.ok(['cavein', 'insanity', 'gas', 'flood', 'fire', 'quake'].includes(e.data.kind));
+    assert.ok(typeof e.text === 'string' && e.text.length > 10 && !/[{}]/.test(e.text), e.text);
+    assert.ok(e.data.lost >= 0 && e.data.haltMins >= 0);
+  }
+  assert.ok(new Set(seen.map((e) => e.text)).size >= 5, 'stories vary');
+  assertSane(one, 'hazards');
+  assert.ok(one.miners >= 1);
+  assert.ok(one.shafts.every((s) => s.miners >= 0));
+}));
+
+test('hazards: lights, supports and colony safety lower losses', () => withHazards(8, () => {
+  const w = newWorld();
+  const c = deepColony(w);
+  let safe = JSON.parse(JSON.stringify(c));
+  safe.coin = 1e15;
+  for (const s of safe.shafts) if (s.idx > 0) {
+    safe = run(safe, w, { type: 'upgradeShaft', shaftId: s.id, kind: 'lights', n: 'max' });
+    safe = run(safe, w, { type: 'upgradeShaft', shaftId: s.id, kind: 'supports', n: 'max' });
+  }
+  for (const kind of ['ventilation', 'pumps', 'firebreaks']) safe = run(safe, w, { type: 'upgradeSafety', kind, n: 3 });
+  safe.coin = 0;
+  const end = c.t + 3 * DAY;
+  const raw = E.advance(c, w, end).colony, prot = E.advance(safe, w, end).colony;
+  assert.ok(prot.stats.hazards < raw.stats.hazards / 3, `${prot.stats.hazards} vs ${raw.stats.hazards}`);
+  assert.ok(prot.stats.lost < raw.stats.lost, `${prot.stats.lost} vs ${raw.stats.lost}`);
+  assert.ok(prot.stats.mined > raw.stats.mined, 'protected shafts dig more');
+  // risk numbers for the UI
+  const r0 = E.rates(c, w), r1 = E.rates(safe, w);
+  assert.equal(r0.shafts[0].risk, 0, 'the home shaft is safe');
+  assert.ok(r0.shafts.every((s) => s.risk >= 0 && s.risk <= 1));
+  assert.ok(r1.shafts[5].risk < r0.shafts[5].risk);
+  assert.ok(r1.hazards.loss < r0.hazards.loss);
+  // safety moves are planned like any other upgrade
+  assert.ok(E.candidateMoves(c, w).some((m) => m.kind === 'supports'));
+  assert.ok(E.quote(c, w, { type: 'upgradeShaft', shaftId: c.shafts[3].id, kind: 'lights' }).cost > 0);
+  assert.match(E.quote(c, w, { type: 'upgradeShaft', shaftId: c.shafts[0].id, kind: 'lights' }).error, /safe/);
+  assert.match(E.quote(c, w, { type: 'upgradeSafety', kind: 'moat' }).error, /Unknown/);
+}));
+
+test('hazards: calm first 30 minutes; the safety panel opens with depth', () => withHazards(50, () => {
+  const w = newWorld();
+  let c = deepColony(w); // born at 0, built at t = 0
+  const calm = E.advance(c, w, 29 * MIN);
+  assert.equal(hazardsOf(calm).length, 0, 'no hazards in the first 30 minutes');
+  const later = E.advance(c, w, 3 * HOUR);
+  const hz = hazardsOf(later);
+  assert.ok(hz.length > 0);
+  assert.ok(hz.every((e) => e.at >= 30 * MIN));
+  assert.ok(later.colony.unlocked.panels.includes('safety'));
+  const f = fresh(0);
+  assert.ok(!E.unlocks(f, w, 0).panels.includes('safety'));
+  const quiet = E.advance(rich(f, w), w, 2 * DAY);
+  assert.equal(quiet.colony.stats.hazards, 0, 'a lone home shaft is never in danger');
+}));
+
+// ---------------------------------------------------------------- Phase 2: prestige
+function readyToNuke(w, runEarned = 3e7) {
+  const c = midgame(w);
+  c.runEarned = runEarned; c.monthEarned = runEarned + 5e6;
+  return E.advance(c, w, c.t).colony;
+}
+
+test('nuke: threshold, confirmation, quote', () => {
+  const w = newWorld();
+  const low = readyToNuke(w, 1e7);
+  assert.ok(low.unlocked.panels.includes('prestige'), 'prestige panel shows up before the nuke is allowed');
+  assert.match(E.quote(low, w, { type: 'nuke' }).error, /20M/);
+  assert.match(E.applyCommand(low, w, { type: 'nuke', confirm: 'NUKE' }, low.t).error, /20M/);
+  const c = readyToNuke(w);
+  const q = E.quote(c, w, { type: 'nuke' });
+  assert.equal(q.error, undefined);
+  assert.ok(q.canAfford);
+  assert.ok(Math.abs(q.spectacle - Math.pow(3e7, 1 / 7.5)) < 1e-9);
+  assert.match(E.applyCommand(c, w, { type: 'nuke' }, c.t).error, /NUKE/);
+  assert.match(E.applyCommand(c, w, { type: 'nuke', confirm: 'nuke please' }, c.t).error, /NUKE/);
+  const f = fresh(0);
+  assert.match(E.quote(f, w, { type: 'nuke' }).error, /unlocked/i);
+});
+
+test('nuke: settles ships in flight, resets the colony, keeps SP, evolutions, name and panels', () => {
+  const w = newWorld();
+  let c = readyToNuke(w);
+  c.sp = 4; c.evo = { mine: 1, ship: 0, sell: 1, spectacle: 2 };
+  // one ship in flight with paid cargo, one loading (its cargo is lost)
+  c.ships[0] = { ...c.ships[0], state: 'out', dest: 'forge', cargo: { amber: 100 }, cargoG: { amber: 105 }, departAt: c.t, arriveAt: c.t + 30_000 };
+  c.ships[1] = { ...c.ships[1], state: 'loading', cargo: { gravel: 50 }, cargoG: { gravel: 50 } };
+  const panels = [...c.unlocked.panels], licenses = [...c.unlocked.licenses];
+  const run0 = c.runEarned, month0 = c.monthEarned;
+  const r = E.applyCommand(c, w, { type: 'nuke', confirm: 'NUKE' }, c.t);
+  assert.equal(r.error, undefined);
+  const x = r.colony;
+  const paid = 105 * E.marketPrice(w, 'amber', 'forge', c.t) * (1 + E.TUNING.evo.sell.per); // sell evo level 1
+  const spect = Math.pow(run0 + paid, 1 / 7.5) * (1 + 2 * E.TUNING.evo.spectacle.per); // spectacle evo level 2
+  const ev = r.events.find((e) => e.type === 'nuke');
+  assert.ok(ev && ev.text.length > 10);
+  assert.ok(Math.abs(ev.data.spectacle - spect) < 1e-9);
+  assert.ok(Math.abs(ev.data.runEarned - (run0 + paid)) < 1e-6);
+  assert.ok(Math.abs(x.sp - (4 + spect)) < 1e-9);
+  assert.equal(ev.data.sp, x.sp);
+  assert.deepEqual(r.sales, [{ oreId: 'amber', amount: 100 }]);
+  assert.ok(Math.abs(x.monthEarned - (month0 + paid)) < 1e-6);
+  assert.equal(x.runEarned, 0);
+  assert.equal(x.earned, 0);
+  assert.equal(x.coin, E.TUNING.startCoin);
+  assert.equal(x.shafts.length, 1);
+  assert.equal(x.ships.length, 1);
+  assert.equal(x.miners, 3, "the Guild sends a relief crew");
+  assert.equal(x.lift, 0);
+  assert.deepEqual(x.evo, { mine: 1, ship: 0, sell: 1, spectacle: 2 });
+  assert.equal(x.nukes, 1);
+  assert.equal(x.name, 'Test'); assert.equal(x.species, 'Mole'); assert.equal(x.siteRegion, 'r1');
+  assert.deepEqual(x.lastNuke, { at: c.t, spectacle: spect, runEarned: run0 + paid, makerUsed: false });
+  for (const p of panels) assert.ok(x.unlocked.panels.includes(p), `keeps panel ${p}`);
+  for (const l of licenses) assert.ok(x.unlocked.licenses.includes(l));
+  assert.equal(x.v, E.ENGINE_VERSION);
+  assertSane(x, 'nuked');
+  // the fresh colony plays on
+  const y = x; // the relief crew is already digging
+  assert.ok(E.advance(y, w, y.t + HOUR).colony.earned > 0);
+  // and can't nuke again right away
+  assert.match(E.quote(x, w, { type: 'nuke' }).error, /20M/);
+});
+
+test('evolve: SP costs, effects on rates, prices and speed', () => {
+  const w = newWorld();
+  const c = readyToNuke(w);
+  const q = E.quote(c, w, { type: 'evolve', kind: 'sell' });
+  assert.equal(q.currency, 'sp');
+  assert.equal(q.cost, E.TUNING.evo.sell.cost);
+  assert.equal(q.canAfford, false);
+  const r0 = E.applyCommand(c, w, { type: 'evolve', kind: 'sell' }, c.t);
+  assert.match(r0.error, /SP/);
+  assert.equal(r0.colony.evo.sell, 0);
+  const T = E.TUNING.evo;
+  const rich2 = { ...c, sp: 100 };
+  const q3 = E.quote(rich2, w, { type: 'evolve', kind: 'mine', n: 3 });
+  assert.ok(Math.abs(q3.cost - T.mine.cost * (1 + T.mine.growth + T.mine.growth ** 2)) < 1e-9, 'costs rise geometrically');
+  assert.ok(E.quote(rich2, w, { type: 'evolve', kind: 'mine', n: 'max' }).n >= 2);
+  assert.match(E.quote(rich2, w, { type: 'evolve', kind: 'luck' }).error, /Unknown/);
+  let x = rich2;
+  for (const kind of ['mine', 'ship', 'sell']) {
+    const r = E.applyCommand(x, w, { type: 'evolve', kind }, x.t);
+    assert.equal(r.error, undefined);
+    assert.ok(r.events.some((e) => e.type === 'evolve' && e.data.kind === kind));
+    x = r.colony;
+  }
+  assert.ok(Math.abs(x.sp - (100 - 3 * T.mine.cost)) < 1e-9);
+  assert.equal(x.coin, c.coin, 'evolutions cost SP, not coin');
+  const a = E.rates(c, w), b = E.rates(x, w);
+  assert.ok(Math.abs(b.minePerMin / a.minePerMin - (1 + T.mine.per)) < 1e-9);
+  assert.ok(Math.abs(b.liftPerMin / a.liftPerMin - (1 + T.mine.per)) < 1e-9);
+  assert.ok(Math.abs(b.ships[0].tripSecs * (1 + T.ship.per) - a.ships[0].tripSecs) < 1e-6);
+  assert.ok(b.coinPerMin > a.coinPerMin * (1 + T.sell.per) * 0.999);
+  const d0 = E.destinations(c, w), d1 = E.destinations(x, w);
+  assert.ok(Math.abs(d1[0].price.gravel / d0[0].price.gravel - (1 + T.sell.per)) < 1e-9);
+  // a sale pays the evolved price
+  let s = run(fresh(0), w, { type: 'hire' }, 0);
+  s.evo = { mine: 0, ship: 0, sell: 2, spectacle: 0 };
+  let t = 0, out = null;
+  while (!out && t < 5 * MIN) { t += 1000; s = E.advance(s, w, t).colony; if (s.ships[0].state === 'out') out = s.ships[0]; }
+  const sale = E.advance(s, w, out.arriveAt).events.find((e) => e.type === 'sale');
+  const expect = Object.entries(out.cargoG).reduce((acc, [o, n]) => acc + n * E.marketPrice(w, o, out.dest, out.arriveAt), 0) * (1 + 2 * T.sell.per);
+  assert.ok(Math.abs(sale.data.coin - expect) < 1e-9);
+});
