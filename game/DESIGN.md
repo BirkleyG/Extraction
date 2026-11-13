@@ -112,3 +112,31 @@ POST /api/v2/species { description } -> { species }   // AI picks parts from the
 GET  /api/v2/bulletin -> { changes: [...active world changes with who/why...] }
 ```
 Maker outcome: strength = 0.85 × spectacle score + 0.15 × negotiation quality (0–1, judged by the AI; heuristic fallback). The AI writes the Maker's lines only; the server decides accept / counter / refuse. One Maker session per nuke, up to 3 rounds.
+
+## Phase 3 contract (refineries, buyer parties, ledger, charts)
+
+**Buyer parties** (`world.parties`, built by the server at month start; pure generator in `game/shared/market/parties.js`):
+```js
+{ id, name, type: 'industrial'|'military'|'research'|'traders'|'political'|'fringe', blurb, personality,
+  wants: { [oreId]: weight 0..1 },     // what they buy refined goods of
+  demand: number,                      // units/min they'd buy at their reference price on day 1 (grows with the month)
+  ref: number,                         // reference price multiple of the ore's refined base value (0.8..1.6)
+  sigma: number,                       // price elasticity (1.5 traders/industrial .. 4 fringe); higher = more price-sensitive
+  cap: number }                        // hidden maximum: they never pay above ref × cap (1.2..2.5)
+```
+About 24 per month, 4 of each type. Names, blurbs and personalities come from the AI (fallback word banks). Numbers are seeded and never trusted from the AI.
+
+**Demand curve** (engine, hidden from players): party k buys refined `ore` at ask p (as a multiple of that product's base value) at
+`q_k(p) = demand_k × growth(day) × wants_k[ore] × (p / ref_k)^(-sigma_k)` when `p ≤ ref_k × cap_k`, else 0.
+Total sales/min = min(stock flow, Σ_k q_k). The player chooses p with a markup slider and discovers the curve through results. World changes of kind `buyer` (id = party id) and `demand`/`global` also scale these curves.
+
+**Refineries** (engine): one licence (`refinery`, day ≥ 4 and 20M earned).
+- `buildRefinery { site: 'planet'|'orbital' }`. On-planet: cheap, fed straight from the yard by its own belt, smaller. Orbital: expensive, bigger and better yield, fed by ships routed to it (a destination with a short trip). A colony may own one of each.
+- `upgradeRefinery { site, kind: 'throughput'|'yield'|'storage'|'docks', n }`. Docks reserve pads/slots for your ships at the orbital refinery.
+- `setRefine { site, oreId, on: bool, markup: 0.5..3 }`: per-ore buy panel. Refine this ore yes/no, and the asking price as a markup on the product's base value.
+- Refined product value: about 3–5× the raw ore value per refined unit, times yield. Refined goods are sold from refinery storage to parties continuously per the demand curve (no ships needed). Unsold goods fill storage, and when storage is full the refinery stops taking raw ore.
+- `rates()` adds `refinery: { [site]: { inPerMin, outPerMin, soldPerMin, coinPerMin, stock, cap, byOre: { [oreId]: { ask, soldPerMin, coinPerMin, vsRaw } } } }`.
+
+**Ledger** (engine): `colony.ledger = { month: { in: { raw, refined, nukeCargo, grant }, out: { miners, shafts, lift, ships, refinery, safety, ... } }, run: {...} }`. Every coin in or out is tagged.
+
+**History for charts** (server): an hourly snapshot per colony in `hist2/<uid>` (`[[t, coin, coinPerMin, rank], ...]`, max 744 points), and per-ore market price index history in `phist2/current`. `GET /api/v2/history` → `{ me: [...], prices: { [oreId]: [[t, index], ...] }, board: [{id, points}] }`.
