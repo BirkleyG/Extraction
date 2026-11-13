@@ -43,7 +43,8 @@ export function createEvents({ ai, currentModel, getWorld, saveWorld, addFeed, c
   async function maybeEvent() {
     const t = clock();
     const world = await getWorld();
-    if (!world.nextEventAt) { world.nextEventAt = t + Math.round(between(3 * 24, 5 * 24) * HOUR); // first event 3-5 days in await saveWorld(world); return null; }
+    // The first event comes 3-5 days into the month.
+    if (!world.nextEventAt) { world.nextEventAt = t + Math.round(between(3 * 24, 5 * 24) * HOUR); await saveWorld(world); return null; }
     if (t < world.nextEventAt || t >= world.endsAt) return null;
     const ev = makeEvent(world, t);
     const model = ai && await currentModel();
