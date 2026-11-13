@@ -120,7 +120,7 @@ Underground hazards (gives lights and supports a purpose)
 
 Mine
 - Shafts are AdVenture-Capitalist-style categories: very expensive, each with its **own miners** (no transfers), **gear** (mining speed and the hardest ore it can cut) and **cart** (hauls ore from the face to the shaft entrance). You start with shaft 1.
-- Buying a shaft offers 2–3 **dig directions** with different (fuzzy) ore prospects, so you choose better or worse ore.
+- Buying a shaft offers exactly 2 **dig directions** with different (fuzzy) ore prospects, so you choose better or worse ore.
 - The lift has three upgrades: **speed** (trips per minute), **capacity** (per bucket) and **buckets** (how many run at once).
 - No recommended buys anywhere. The bottleneck diagnosis stays as plain information.
 

@@ -169,7 +169,7 @@ Sites keep a minimum spacing. `planetFromAI` keeps AI flavor (names, colors, ter
 shaft: { id, idx, name, dir, band: 'shallow'|'middle'|'deep'|'deepest',
          miners, gear, cart, face, pk[], ... }        // keeps pockets from Phase 2.5, plus hazard fields
 ```
-- `surveyShaft` (via `quote({type:'buyShaft'})` or a dedicated export `shaftOptions(colony, world)`) returns 2–3 direction options for the next shaft: `{ dir, label, prospects: { [oreId]: 'none'|'low'|'fair'|'good' } (fuzzy), cost }`. Each option has its own pocket seed and site-richness weighting, so some are better than others.
+- `surveyShaft` (via `quote({type:'buyShaft'})` or a dedicated export `shaftOptions(colony, world)`) returns exactly 2 direction options for the next shaft (e.g. left or right of the main tunnel): `{ dir, label, prospects: { [oreId]: 'none'|'low'|'fair'|'good' } (fuzzy), cost }`. Each option has its own pocket seed and site-richness weighting, so some are better than others.
 - `buyShaft { dir }`. Costs are monumental and rise steeply (tune so a strong player opens about 6–12 shafts in a month). Each new shaft starts with 0 miners, gear 1 and cart 1.
 - Per-shaft commands: `hireMiners { shaftId, n }` (cost rises per shaft and scales with depth), `upgradeGear { shaftId, n }` (mining speed + hardness), `upgradeCart { shaftId, n }` (ore/min the cart can haul from face to entrance; the shaft is capped by its cart).
 - Production per shaft = miners × perMiner(gear) × depth richness × (1 / soil), then capped by the cart. Ore mined = the common of the site, or the current pocket's ore. Pocket odds and sizes rise with depth band and site richness, and use only ores present at the site. Mythic appears only in the deepest band at mythic sites.
