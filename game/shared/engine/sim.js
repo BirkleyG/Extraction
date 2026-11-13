@@ -303,7 +303,7 @@ export function advance(colony, world, now) {
     const Ppot = sum(pot);
     const B1 = sum(tun), K1 = tunnelCap(c);
     const B2 = sum(yd), K2 = yardCap(c.yardLvl);
-    const Lcap = liftRate(c.lift) * dt / 60000;
+    const Lcap = liftRate(c.lift) * mineK * dt / 60000;
     const Ccap = convRate(c.conveyor) * dt / 60000;
     const loading = [];
     c.ships.forEach((s, k) => { if (s.state === 'loading') loading.push(k); });

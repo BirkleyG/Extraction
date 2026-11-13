@@ -205,7 +205,7 @@ function plan(c, world, cmd, now, quoting = false) {
     }
     case 'upgradeLift': {
       const p = levelPlan(c, c.lift, MAX_LVL, T.liftCost, T.liftGrowth, n);
-      const a = liftRate(c.lift), b = liftRate(c.lift + p.k);
+      const mk = evoMult(c, 'mine'), a = liftRate(c.lift) * mk, b = liftRate(c.lift + p.k) * mk;
       return { ...p, n: p.k, effect: `${capPct(b / a)} lift (${fmt(a)} → ${fmt(b)}/min)${ms(c.lift, p.k)}`, apply: (x) => { x.lift += p.k; } };
     }
     case 'upgradeConveyor': {

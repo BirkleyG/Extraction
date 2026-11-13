@@ -11,17 +11,26 @@ export const bunkCap = (lvl) => T.bunkCap0 + T.bunkCapPer * lvl;
 export const perMiner = (cart, idx = 0) => T.minePerMiner * (1 + T.cartAdd * cart) * Math.pow(T.richness, idx);
 export const grade = (idx) => Math.pow(T.grade, idx);
 export const tunnelCap = (c) => T.shaftBuffer * Math.max(1, c.shafts.length);
-export const shipCap = (ship) => (T.ship[ship.cls] || T.ship.hauler).cap * Math.pow(T.shipCapMult, ship.lvl || 0) * milestone(ship.lvl || 0);
+const capMemo = new Map();
+export const shipCap = (ship) => {
+  const key = (ship.cls || '') + (ship.lvl || 0);
+  let v = capMemo.get(key);
+  if (v === undefined) {
+    v = (T.ship[ship.cls] || T.ship.hauler).cap * Math.pow(T.shipCapMult, ship.lvl || 0) * milestone(ship.lvl || 0);
+    if (capMemo.size < 5000) capMemo.set(key, v);
+  }
+  return v;
+};
 export const shipSpeed = (cls) => (T.ship[cls] || T.ship.hauler).speed;
 export const tripSecs = (buyer, cls, c) => T.tripSecs[buyer.distance] / (shipSpeed(cls) * (c ? evoMult(c, 'ship') : 1));
 
-// Evolutions: mine/ship/sell compound per level; spectacle is additive.
+// Evolutions: each level adds `per` to a multiplier (mine: ore/min, ship: speed, sell: price, spectacle: next nuke).
 export const evoLvl = (c, kind) => Math.max(0, Math.floor(num(c?.evo?.[kind], 0)));
 export function evoMult(c, kind) {
   const e = T.evo[kind];
   if (!e) return 1;
   const L = evoLvl(c, kind);
-  return kind === 'spectacle' ? 1 + e.per * L : Math.pow(1 + e.per, L);
+  return 1 + e.per * L;
 }
 export const spectacleOf = (c, runEarned) => Math.pow(Math.max(0, num(runEarned, 0)), T.spectaclePow) * evoMult(c, 'spectacle');
 

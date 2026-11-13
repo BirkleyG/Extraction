@@ -91,12 +91,13 @@ export const T = {
   nukeMin: 20_000_000,            // runEarned needed to nuke
   spectaclePow: 1 / 7.5,
   prestigePanelAt: 5_000_000,
-  // Evolutions (bought with SP, last the month). Effect compounds: (1 + per)^level.
+  // Evolutions (bought with SP, last the month). Effect per level is additive: x(1 + per * level).
+  // Steep costs: the first levels are cheap and big, later ones are a long-term bet.
   evo: {
-    mine:      { per: 0.20, cost: 2, growth: 1.55, label: 'Mine speed' },
-    ship:      { per: 0.12, cost: 2, growth: 1.55, label: 'Ship speed' },
-    sell:      { per: 0.08, cost: 2, growth: 1.55, label: 'Sale price' },
-    spectacle: { per: 0.10, cost: 3, growth: 1.7,  label: 'Spectacle' },  // additive: x(1 + per*level)
+    mine:      { per: 0.25, cost: 2.5, growth: 3, label: 'Mine speed' },   // miners and the lift
+    ship:      { per: 0.20, cost: 2.5, growth: 3, label: 'Ship speed' },
+    sell:      { per: 0.20, cost: 2.5, growth: 3, label: 'Sale price' },
+    spectacle: { per: 0.10, cost: 3, growth: 3, label: 'Spectacle' },
   },
   evoMax: 60,
 };

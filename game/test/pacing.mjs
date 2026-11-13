@@ -25,6 +25,7 @@ export const PLANET = {
 };
 
 const MIN = 60_000, HOUR = 3_600_000, DAY = 86_400_000;
+const HOARD_FROM = 27; // the bot stops spending on this day so month-end coin compares income, not savings timing
 
 // Greedy: buy the move with the best coin/min per coin; if it is not affordable yet,
 // buy an affordable one that is at least half as good, else wait.
@@ -141,7 +142,7 @@ function run({ quiet = false, strategy = 'none' } = {}) {
           continue;
         }
       }
-      if (day < 28) c = spend(c, world, t).c; // closing bell: everyone hoards the last two days
+      if (day < HOARD_FROM - 1) c = spend(c, world, t).c; // closing bell: the bot hoards the last days
     }
     const end = (day + 1) * DAY;
     while (t < end) { t = Math.min(end, t + 30 * MIN); step(t); if (first20M == null && c.earned >= 2e7) first20M = t; }
@@ -182,11 +183,11 @@ async function strategies() {
   const all = [base, ...(await Promise.all(jobs))];
   const name = (s) => (s === 'none' ? 'no nuke' : s === 'first' ? 'first chance' : 'day ' + s);
   const at = (r, d) => E.fmt(r.rows[d - 1].month);
-  console.log('\n== (c) Prestige: month-end coin (bot hoards days 29-30) ==');
-  console.log('strategy      nuke day  spectacle  evo m/s/p      coin@30   earned@10 earned@20 earned@30  vs no nuke');
+  console.log(`\n== (c) Prestige: month-end coin (bot hoards from day ${HOARD_FROM}) ==`);
+  console.log('strategy      nuke day  spectacle  evo m/s/p      coin@30   earned@10 earned@20 earned@30  d21-30    coin vs no nuke');
   for (const r of all) {
     const ev = r.evo ? `${r.evo.mine}/${r.evo.ship}/${r.evo.sell}` : '-';
-    console.log(`${name(r.strategy).padEnd(13)} ${(r.nukedAt == null ? '-' : (r.nukedAt / DAY + 1).toFixed(2)).padEnd(9)} ${(r.nukeInfo ? r.nukeInfo.spectacle.toFixed(1) : '-').padEnd(10)} ${ev.padEnd(14)} ${E.fmt(r.coin).padEnd(9)} ${at(r, 10).padEnd(9)} ${at(r, 20).padEnd(9)} ${at(r, 30).padEnd(10)} ${(r.coin / base.coin).toFixed(2)}x`);
+    console.log(`${name(r.strategy).padEnd(13)} ${(r.nukedAt == null ? '-' : (r.nukedAt / DAY + 1).toFixed(2)).padEnd(9)} ${(r.nukeInfo ? r.nukeInfo.spectacle.toFixed(1) : '-').padEnd(10)} ${ev.padEnd(14)} ${E.fmt(r.coin).padEnd(9)} ${at(r, 10).padEnd(9)} ${at(r, 20).padEnd(9)} ${at(r, 30).padEnd(10)} ${E.fmt(r.rows[29].month - r.rows[19].month).padEnd(9)} ${(r.coin / base.coin).toFixed(2)}x`);
   }
   console.log(`strategies ran in ${((performance.now() - t0) / 1000).toFixed(1)}s (parallel)`);
 }

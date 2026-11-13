@@ -48,7 +48,7 @@ export function rates(colony, world) {
     };
   });
   const mine = ore.reduce((a, b) => a + b, 0);
-  const lift = liftRate(c.lift);
+  const lift = liftRate(c.lift) * mineK;
   const convPad = convRate(c.conveyor);
   const conveyor = convPad * c.pads;
   const supply = Math.min(mine, lift);
