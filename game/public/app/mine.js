@@ -2,7 +2,7 @@
  * and one gallery per shaft underground. Everything moves from rates() and ship timings; nothing here
  * decides outcomes. Pixel art is drawn into a small buffer at 1 world unit = 1 pixel and upscaled by an
  * integer factor (the zoom), then crisp labels are drawn on top at screen resolution. */
-import { drawScene, drawWeather, pen, drawOre, drawShip, drawPile, shipSprite } from './pixel/index.js';
+import { drawScene, drawWeather, pen, drawOre, drawShip, drawPile, shipSprite, oreSprite } from './pixel/index.js';
 import { oreSpriteSpec, color } from '/shared/planet/index.js';
 import { minerImg, clamp, fmt, hash } from './util.js';
 import { prefs } from './juice.js';
@@ -10,69 +10,145 @@ import { prefs } from './juice.js';
 export const L = { LV: 34, G0: 8, GH: 24, GX0: 8, GLEN: 168, YARD_X: 26, CONV_X0: 38, PAD_X0: 76, PAD_W: 68, LAYER_H: 136 };
 export const galleryTop = (k) => L.G0 + k * L.LV;
 export const padX = (i) => L.PAD_X0 + i * L.PAD_W + L.PAD_W / 2;
-const MAXZ = 6;
 
 const specCache = new Map();
 const specOf = (ore) => { let s = specCache.get(ore.id + ore.color); if (!s) { s = oreSpriteSpec(ore); specCache.set(ore.id + ore.color, s); } return s; };
 const shipLvl = (lvl) => Math.min(9, Math.floor((lvl || 0) / 4));
 
+const RECEDE = 44; // art px the rock face can recede as ore is mined
+const ZMAX = 10;
+const ease = (x) => { x = clamp(x, 0, 1); return x * x * (3 - 2 * x); };
+const lerp = (a, b, k) => a + (b - a) * k;
+const gcol = (f) => (f >= 0.85 ? '#ff5a6e' : f >= 0.6 ? '#ffb347' : '#5ee6a8');
+const mmss = (s) => { s = Math.max(0, Math.round(s)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+const sum = (m) => { let s = 0; for (const k in m || {}) s += m[k] || 0; return s; };
+
 export function createMine(canvas, get, hooks = {}) {
   const g = canvas.getContext('2d');
   const buf = document.createElement('canvas');
   const bg = buf.getContext('2d');
-  let dpr = 1, z = 3, P = 3; // z: css px per art px; P: device px per art px
+  let dpr = 1, z = 3, zt = 3, Sc = 3; // z: css px per art px (smooth, fractional); Sc = z * dpr
   const cam = { x: -40, y: -80, homed: false };
-  let pops = [], hits = [], dust = [];
-  let lastLaunch = new Map();
+  let anchor = null, goal = null; // zoom anchor (keeps a world point under the cursor) and glide target
+  let vel = { x: 0, y: 0 }, trail = []; // pan momentum
+  const parts = []; // particles (chips, sparks, falling ore, dust)
+  const SH = new Map(); // per-shaft visual state
+  const SHIP = new Map(); // per-ship smoothed sprite position
+  const padMap = new Map(), lastPad = new Map();
+  const keys = new Set();
+  let hits = [], pops = [], lastLaunch = new Map(), lastT = 0, prevUp = false, flowShown = new Map();
+  const maxParts = () => (prefs.reduced ? 40 : 240);
+  const emit = (p) => { if (parts.length < maxParts()) parts.push(p); };
 
+  // ---------------------------------------------------------------- camera
+  const cssW = () => canvas.width / dpr, cssH = () => canvas.height / dpr;
+  function bounds() {
+    const st = get();
+    const c = st && st.colony;
+    const n = c ? c.shafts.length : 1;
+    const pads = c ? Math.max(c.pads, 1) : 1;
+    return { x0: -90, x1: Math.max(L.GX0 + L.GLEN + 40, L.PAD_X0 + pads * L.PAD_W + 280), y0: -150, y1: galleryTop(n + 1) + 30 };
+  }
+  const fitZ = () => { const b = bounds(); return Math.min(cssW() / (b.x1 - b.x0), cssH() / (b.y1 - b.y0)); };
+  const zMin = () => Math.max(0.3, Math.min(fitZ(), 1.5) * 0.9);
+  function clampXY(x, y, S) {
+    const b = bounds(), vw = canvas.width / S, vh = canvas.height / S;
+    return {
+      x: vw >= b.x1 - b.x0 ? b.x0 - (vw - (b.x1 - b.x0)) / 2 : clamp(x, b.x0, b.x1 - vw),
+      y: vh >= b.y1 - b.y0 ? b.y0 : clamp(y, b.y0, b.y1 - vh),
+    };
+  }
+  function clampCam() { const p = clampXY(cam.x, cam.y, Sc); cam.x = p.x; cam.y = p.y; }
+  function homeView() {
+    const c = get()?.colony;
+    const span = L.PAD_X0 + Math.max(1, c ? c.pads : 1) * L.PAD_W + 70;
+    let zz = clamp(cssW() / span, 1.8, 4);
+    if (cssH() < 260) zz = Math.min(zz, 2);
+    const vw = cssW() / zz, vh = cssH() / zz;
+    return { z: zz, x: vw > span ? -50 - (vw - span) / 2 : -50, y: -vh * 0.46 };
+  }
+  function fitView() {
+    const b = bounds(), zz = clamp(fitZ() * 0.96, zMin(), ZMAX);
+    const vw = cssW() / zz;
+    return { z: zz, x: b.x0 + ((b.x1 - b.x0) - vw) / 2, y: b.y0 };
+  }
+  function setView(v, smooth) {
+    vel.x = vel.y = 0; anchor = null;
+    if (smooth && !prefs.reduced) { zt = v.z; goal = clampXY(v.x, v.y, v.z * dpr); return; }
+    z = zt = v.z; Sc = z * dpr; cam.x = v.x; cam.y = v.y; goal = null; clampCam();
+  }
   function resize() {
     const r = canvas.getBoundingClientRect();
     dpr = Math.min(2, window.devicePixelRatio || 1);
     canvas.width = Math.max(1, Math.round(r.width * dpr));
     canvas.height = Math.max(1, Math.round(r.height * dpr));
-    if (!cam.homed) home();
-    setZoom(z);
+    if (!cam.homed) { setView(homeView()); cam.homed = true; }
+    z = zt = clamp(z, zMin(), ZMAX); Sc = z * dpr; clampCam();
   }
-  function setZoom(nz, ax, ay) {
-    const old = P;
-    z = clamp(Math.round(nz), 1, MAXZ);
-    P = Math.max(1, Math.round(z * dpr));
-    if (ax != null && old !== P) {
-      // keep the world point under the cursor still
-      const wx = cam.x + ax / old, wy = cam.y + ay / old;
-      cam.x = wx - ax / P; cam.y = wy - ay / P;
+  // zoom toward a device-pixel point (ax, ay)
+  function zoomTo(nz, ax, ay) {
+    nz = clamp(nz, zMin(), ZMAX);
+    goal = null;
+    anchor = { ax, ay, wx: cam.x + ax / Sc, wy: cam.y + ay / Sc };
+    zt = nz;
+    if (prefs.reduced) stepCamera(1);
+  }
+  function stepCamera(dt) {
+    const k = prefs.reduced ? 1 : 1 - Math.exp(-dt * 14);
+    if (z !== zt) {
+      z = Math.abs(zt - z) < zt * 0.002 ? zt : z + (zt - z) * k;
+      Sc = z * dpr;
+      if (anchor) { cam.x = anchor.wx - anchor.ax / Sc; cam.y = anchor.wy - anchor.ay / Sc; }
+    } else if (anchor) anchor = null;
+    if (goal) {
+      cam.x += (goal.x - cam.x) * k; cam.y += (goal.y - cam.y) * k;
+      if (Math.abs(goal.x - cam.x) + Math.abs(goal.y - cam.y) < 0.2 && z === zt) { cam.x = goal.x; cam.y = goal.y; goal = null; }
+    }
+    // keyboard pan
+    if (keys.size) {
+      const sp = 520 / z * dt;
+      const dx = (keys.has('right') ? 1 : 0) - (keys.has('left') ? 1 : 0), dy = (keys.has('down') ? 1 : 0) - (keys.has('up') ? 1 : 0);
+      if (dx || dy) { cam.x += dx * sp; cam.y += dy * sp; goal = null; anchor = null; vel.x = vel.y = 0; }
+    }
+    if (vel.x || vel.y) {
+      cam.x += vel.x * dt; cam.y += vel.y * dt;
+      const d = Math.exp(-dt * 3.4); vel.x *= d; vel.y *= d;
+      if (Math.hypot(vel.x, vel.y) < 3) vel.x = vel.y = 0;
     }
     clampCam();
   }
-  function viewW() { return canvas.width / P; }
-  function viewH() { return canvas.height / P; }
-  function home() {
-    const r = canvas.getBoundingClientRect();
-    dpr = Math.min(2, window.devicePixelRatio || 1);
-    z = clamp(Math.floor(r.width / 220), 2, 4);
-    if (r.height < 260) z = 2;
-    P = Math.max(1, Math.round(z * dpr));
-    const vw = canvas.width / P;
-    cam.x = Math.min(-30, (L.GX0 + L.GLEN + 20 - vw) / 2 - 10);
-    if (vw > 330) cam.x = -60;
-    cam.y = -viewH() * 0.38;
-    cam.homed = true;
-    clampCam();
+
+  // ---------------------------------------------------------------- shared per-frame helpers
+  function stepShaft(s, r, inf, dt) {
+    let o = SH.get(s.id);
+    if (!o) { o = { mined: 0, fr: null, f: inf.f, full: false, cph: (hash(s.id) % 100) / 100 * 0.2, last: {}, flash: 0, tossT: 0 }; SH.set(s.id, o); }
+    o.full = inf.f >= 0.97 || (o.full && inf.f > 0.88);
+    o.f += (inf.f - o.f) * Math.min(1, dt * 3);
+    const run = inf.active && !o.full;
+    o.run = run;
+    if (run) o.mined += r.orePerMin / 60 * dt;
+    const vp = s.vein ? 1 - clamp(s.vein.left / Math.max(1, s.vein.total), 0, 1) : 0;
+    const lp = 1 - Math.exp(-o.mined / (s.vein ? 500 : 250));
+    const tv = RECEDE * clamp(s.vein ? vp * 0.75 + lp * 0.25 : lp, 0, 1);
+    o.fr = o.fr == null ? tv : o.fr + (tv - o.fr) * Math.min(1, dt * 0.6);
+    // cart cycle: speed follows real rate; parks when idle or when the tunnel is full
+    const T = clamp(9 - Math.log2(1 + (r ? r.orePerMin : 0) / 10), 3, 9);
+    if (run) {
+      const ph0 = o.cph; o.cph += dt / T;
+      if (o.full && ph0 < 0.55 && o.cph >= 0.55) o.cph = 0.55;
+      if (o.cph >= 1) o.cph -= 1;
+    } else if (o.full) {
+      if (o.cph < 0.55) o.cph = Math.min(0.55, o.cph + dt / 6); else if (o.cph >= 0.55 && o.cph < 0.63) o.cph = 0.55;
+      else { o.cph += dt / 6; if (o.cph >= 1) o.cph = 0; }
+    } else if (o.cph >= 0.2) { o.cph += dt / 6; if (o.cph >= 1) o.cph = 0; } else o.cph = 0;
+    o.mt = T;
   }
-  function bounds() {
-    const st = get();
-    const c = st && st.colony;
-    const n = c ? c.shafts.length : 1;
-    const slots = c ? Math.max(c.pads, 1) + Math.max(0, c.ships.length - c.pads) : 1;
-    return { x0: -90, x1: Math.max(L.GX0 + L.GLEN + 40, L.PAD_X0 + slots * L.PAD_W + 40), y0: -220, y1: galleryTop(n + 1) + 30 };
+  function cartAt(ph, xa, xb) {
+    if (ph < 0.2) return { x: xb, fill: ph / 0.2 };
+    if (ph < 0.55) return { x: xb - (xb - xa) * ((ph - 0.2) / 0.35), fill: 1 };
+    if (ph < 0.63) return { x: xa, fill: 1 - (ph - 0.55) / 0.08, dump: true };
+    return { x: xa + (xb - xa) * ((ph - 0.63) / 0.37), fill: 0 };
   }
-  function clampCam() {
-    const b = bounds(), vw = viewW(), vh = viewH();
-    cam.x = vw >= b.x1 - b.x0 ? b.x0 - (vw - (b.x1 - b.x0)) / 2 : clamp(cam.x, b.x0, b.x1 - vw);
-    cam.y = vh >= b.y1 - b.y0 ? b.y0 : clamp(cam.y, b.y0, b.y1 - vh);
-  }
-  // world -> css px relative to the canvas
-  const toCss = (wx, wy) => ({ x: (wx - Math.round(cam.x)) * P / dpr, y: (wy - Math.round(cam.y)) * P / dpr });
 
   // ---------------------------------------------------------------- drawing
   function frame() {
@@ -80,25 +156,44 @@ export function createMine(canvas, get, hooks = {}) {
     if (!st || !st.colony || !canvas.width) return;
     const { planet, region, colony: c, rates: R, bneck, now, unl } = st;
     const t = performance.now() / 1000;
-    const bw = Math.ceil(canvas.width / P), bh = Math.ceil(canvas.height / P);
+    const dt = clamp(t - (lastT || t), 0, 0.1); lastT = t;
+    stepCamera(dt);
+    const bw = Math.ceil(canvas.width / Sc) + 2, bh = Math.ceil(canvas.height / Sc) + 2;
     if (buf.width !== bw || buf.height !== bh) { buf.width = bw; buf.height = bh; }
-    const view = { x: Math.round(cam.x), y: Math.round(cam.y), scale: 1, w: bw, h: bh };
+    const view = { x: Math.floor(cam.x), y: Math.floor(cam.y), scale: 1, w: bw, h: bh };
     drawScene(bg, planet, region, view, t, { layerH: L.LAYER_H, weather: false });
     const Pn = pen(bg, view);
     const ores = Object.fromEntries(planet.ores.map((o) => [o.id, o]));
     const look = st.look;
     hits = [];
 
-    // --- underground
+    // --- derived flow state
     const n = c.shafts.length;
+    const tunTot = sum(c.tunnel), capT = Math.max(1, R.tunnelCap || 1);
+    const yardAmt = sum(c.yard), yardCap = Math.max(1, R.yardCap || 1), yardF = clamp(yardAmt / yardCap, 0, 1);
+    const wOre = {};
+    c.shafts.forEach((s, i) => { const r = R.shafts[i]; wOre[s.ore] = (wOre[s.ore] || 0) + (r && r.ok ? r.orePerMin : 0) + 0.01 * (s.miners || 0) + 0.001; });
+    const infos = c.shafts.map((s, i) => {
+      const r = R.shafts[i];
+      const w = (r && r.ok ? r.orePerMin : 0) + 0.01 * (s.miners || 0) + 0.001;
+      const f = clamp(((c.tunnel[s.ore] || 0) * w / wOre[s.ore]) / (capT / n), 0, 1);
+      const halted = !!(s.haltUntil && s.haltUntil > now);
+      const inf = { r, f, halted, haltSecs: halted ? (s.haltUntil - now) / 1000 : 0, active: !halted && !!(r && r.ok && r.orePerMin > 0 && !(s.vein && s.vein.left <= 0)) };
+      stepShaft(s, r || { orePerMin: 0 }, inf, dt);
+      inf.o = SH.get(s.id);
+      return inf;
+    });
+    const tunF = clamp(tunTot / capT, 0, 1);
+
+    // --- underground
     const bottom = galleryTop(Math.max(0, n - 1)) + L.GH + 3;
-    // lift shaft column
     Pn.rect(-8, 0, 16, bottom, '#0d0814');
     Pn.rect(-8, 0, 2, bottom, '#5a3e26'); Pn.rect(6, 0, 2, bottom, '#5a3e26');
     for (let y = 4; y < bottom; y += 10) Pn.rect(-6, y, 12, 1, '#2a1c14');
     const mineFlow = Math.min(R.minePerMin, R.liftPerMin);
-    for (let k = 0; k < n; k++) drawGallery(Pn, bg, view, c, c.shafts[k], R.shafts[k], ores, t, look);
-    // next shaft placeholder
+    for (let k = 0; k < n; k++) drawGallery(Pn, view, c.shafts[k], infos[k], ores, t, look, dt);
+    // pile of ore waiting at the lift bottom
+    if (tunTot > 0.5) drawMound(Pn, -0.5, bottom - 6, 2 + 9 * Math.sqrt(tunF), 6.5, topOreColor(c.tunnel, ores), tunF >= 0.97 && Math.floor(t * 3) % 2 ? '#ff5a6e' : null);
     if (unl.panels.includes('shafts') && n < 30) {
       const y0 = galleryTop(n), x0 = L.GX0, x1 = L.GX0 + L.GLEN;
       const dash = Math.floor(t * 8) % 6;
@@ -106,72 +201,103 @@ export function createMine(canvas, get, hooks = {}) {
       for (let y = y0; y < y0 + L.GH; y += 6) { Pn.rect(x1 - 1, y, 1, 3, 'rgba(255,210,63,0.7)'); }
       hits.push({ kind: 'dig', x0, x1, y0, y1: y0 + L.GH });
     }
-    // lift cage
+
+    // --- lift cage: carries ore up and tips it down the chute into the yard
     const depthY = galleryTop(Math.max(0, deepestActive(c, R))) + L.GH - 3;
     const liftV = mineFlow > 0 ? clamp(25 + Math.sqrt(R.liftPerMin) * 6, 25, 160) : 0;
-    let cageY = -2;
+    let cageY = -2, goingUp = false;
     if (liftV > 0) {
       const span = depthY + 2, period = 2 * span / liftV;
       const ph = (t % period) / period;
       cageY = ph < 0.5 ? depthY - ph * 2 * span : -2 + (ph - 0.5) * 2 * span;
+      goingUp = ph < 0.5;
     }
-    const goingUp = liftV > 0 && ((t % (2 * (depthY + 2) / liftV)) / (2 * (depthY + 2) / liftV)) < 0.5;
-    // --- surface
+    if (prevUp && !goingUp && liftV > 0 && yardAmt < yardCap * 0.995) {
+      const cn = prefs.reduced ? 1 : 3, oc = topOreColor(c.tunnel, ores);
+      for (let i = 0; i < cn; i++) emit({ x: 7 + i, y: -16, vx: 14 + i * 3, vy: -4, g: 90, t0: t + i * 0.12, life: 1, sz: 2, col: oc });
+    }
+    prevUp = goingUp;
     drawWinch(Pn, t);
     Pn.line(0, -44, 0, cageY - 12, '#2a2a33', 1);
-    drawCage(Pn, cageY, goingUp ? topOreColor(c.tunnel, ores) : null);
+    drawCage(Pn, cageY, goingUp ? topOreColor(c.tunnel, ores) : null, clamp(0.45 + tunF * 0.55, 0.45, 1));
     drawHeadframe(Pn, t, liftV);
-    // yard
-    const yardAmt = sum(c.yard);
+    Pn.line(8, -17, 19, -8, '#5a5a66', 2); // tip chute
+
+    // --- yard: the pile grows with colony.yard / yardCap
     Pn.rect(L.YARD_X - 14, -1, 28, 1, '#3a2a20');
-    for (let x = L.YARD_X - 14; x <= L.YARD_X + 14; x += 7) Pn.rect(x, -5, 1, 5, '#6a4a2a');
-    Pn.rect(L.YARD_X - 14, -4, 29, 1, '#6a4a2a');
-    if (yardAmt > 0.5) drawPile(bg, view, L.YARD_X, 0, yardAmt * 4, topOreColor(c.yard, ores), 22);
-    if (R.yardCap && yardAmt > R.yardCap * 0.9 && Math.floor(t * 3) % 2) Pn.rect(L.YARD_X - 2, -30, 4, 4, '#ff5a6e');
-    // conveyor + pads
-    const loading = c.ships.filter((s) => s.state === 'loading');
-    const flowing = yardAmt > 0.01 && loading.length > 0;
-    const convEnd = L.PAD_X0 + Math.max(1, c.pads) * L.PAD_W - 8;
-    drawConveyor(Pn, L.CONV_X0, convEnd, t, flowing ? clamp(10 + R.conveyorPerPad * 0.15, 10, 50) : 0, flowing ? topOreColor(c.yard, ores) : null);
+    const yardCol = yardF >= 0.85 ? (Math.floor(t * 3) % 2 ? '#ff5a6e' : '#a8404e') : '#6a4a2a';
+    for (let x = L.YARD_X - 14; x <= L.YARD_X + 14; x += 7) Pn.rect(x, -5, 1, 5, yardCol);
+    Pn.rect(L.YARD_X - 14, -4, 29, 1, yardCol);
+    if (yardAmt > 0.5) {
+      const h = 3 + 21 * Math.sqrt(yardF);
+      const hg = drawPile(bg, view, L.YARD_X, 0, Math.pow((h - 3) / 1.3, 2), yardF >= 0.9 ? mixRed(topOreColor(c.yard, ores), 0.35) : topOreColor(c.yard, ores), 24);
+      // other ores speckled onto the pile
+      const comp = composition(c.yard, ores);
+      for (let i = 0; i < Math.min(8, hg); i++) { const q = comp[(i * 5 + 1) % comp.length]; if (q) Pn.rect(L.YARD_X - 5 + ((i * 7) % 11), -3 - ((i * 3) % Math.max(1, hg - 3)), 1, 1, q.col); }
+    }
+    const gx = L.YARD_X - 14;
+    Pn.rect(gx - 1, 2, 31, 4, '#0d0814'); Pn.rect(gx, 3, 29, 2, '#2a2040');
+    Pn.rect(gx, 3, Math.round(29 * yardF), 2, gcol(yardF));
+    if (yardF >= 0.85 && Math.floor(t * 3) % 2) Pn.rect(L.YARD_X - 2, -34, 4, 4, '#ff5a6e');
+
+    // --- pads, ships, belt
+    const lay = layoutShips(c, R, now, t, dt);
     for (let i = 0; i < c.pads; i++) drawPad(Pn, padX(i), t, i);
-    // ships
-    drawShips(bg, view, Pn, c, now, t, loading);
-    // dust
+    for (const d of lay.draw) drawShipK(bg, view, Pn, d, t);
+    const convEnd = L.PAD_X0 + Math.max(1, c.pads) * L.PAD_W - 8;
+    const flowing = yardAmt > 0.01 && lay.loading.length > 0;
+    const beltV = clamp(8 + 5 * Math.log2(1 + (R.conveyorPerMin || 0) / 20), 8, 48);
+    drawConveyor(Pn, L.CONV_X0, convEnd, t, flowing ? beltV : 0);
+    drawLoading(Pn, view, c, R, lay, ores, t, flowing, beltV);
+    for (let i = 0; i < c.pads; i++) hits.length; // (pads are tapped through the 'ships' region)
+
+    // --- particles
+    stepParts(Pn, bg, t, dt);
     if (!prefs.reduced) {
-      dust = dust.filter((d) => t - d.t0 < 1.2);
-      for (const d of dust) { const a = 1 - (t - d.t0) / 1.2; bg.globalAlpha = a * 0.7; Pn.rect(d.x + d.vx * (t - d.t0), d.y - 6 * (t - d.t0), 2, 2, '#d8c8b0'); }
-      bg.globalAlpha = 1;
       drawWeather(bg, planet, region, view, t);
     }
 
     // --- upscale
-    g.imageSmoothingEnabled = false;
-    g.drawImage(buf, 0, 0, bw * P, bh * P);
+    g.imageSmoothingEnabled = Sc < 1;
+    g.drawImage(buf, 0, 0, bw, bh, -Math.round((cam.x - view.x) * Sc), -Math.round((cam.y - view.y) * Sc), Math.round(bw * Sc), Math.round(bh * Sc));
 
     // --- crisp overlay (device px)
-    const S = (wx, wy) => ({ x: (wx - view.x) * P, y: (wy - view.y) * P });
+    const S = (wx, wy) => ({ x: (wx - cam.x) * Sc, y: (wy - cam.y) * Sc });
     const fs = Math.round(clamp(3.4 * z, 9, 13) * dpr);
     g.textBaseline = 'top';
-    if (z >= 2) {
+    if (z >= 1.5) {
       label(g, S(0, -64), 'LIFT', fs, 'center');
-      label(g, S(L.YARD_X, -32), 'YARD', fs, 'center');
-      label(g, S(padX(0), -50), c.pads > 1 ? 'LAUNCH PADS' : 'LAUNCH PAD', fs, 'center');
-    }
-    for (let k = 0; k < n; k++) badge(g, S, c.shafts[k], R.shafts[k], fs, ores);
+      label(g, S(L.YARD_X, -34), `YARD ${fmt(yardAmt)}/${fmt(yardCap)}`, fs, 'center', yardF >= 0.85 ? '#ff7a8a' : null);
+      if (yardF >= 0.97) label(g, S(L.YARD_X, -34 - (fs / Sc) - 5), 'FULL', fs, 'center', '#ff5a6e');
+      label(g, S(padX(0) + 20, 3), c.pads > 1 ? 'LAUNCH PADS' : 'LAUNCH PAD', fs, 'center');
+    } else label(g, S(L.YARD_X, -34), `YARD ${Math.round(yardF * 100)}%`, fs, 'center', yardF >= 0.85 ? '#ff7a8a' : null);
+    if (tunTot > 0.5 && z >= 1) label(g, S(0, bottom + 2), `LIFT BASE ${fmt(tunTot)}${tunF >= 0.97 ? ' FULL' : ''}`, fs, 'center', tunF >= 0.97 ? '#ff7a8a' : null);
+    const gap = L.LV * Sc;
+    for (let k = 0; k < n; k++) badge(g, S, c.shafts[k], infos[k], fs, ores, gap, t);
     if (unl.panels.includes('shafts') && n < 30) {
       const p = S(L.GX0 + 6, galleryTop(n) + 7);
       g.font = `${fs}px Silkscreen, monospace`;
       g.fillStyle = 'rgba(255,210,63,0.95)';
       g.fillText(`+ DIG SHAFT ${n + 1}` + (st.digCost != null ? `  ·  ${fmt(st.digCost)}` : ''), p.x, p.y);
     }
-    // cargo bars over loading ships
-    loading.forEach((s, i) => {
-      const cap = R.ships.find((x) => x.id === s.id)?.cap || 1;
-      const p = S(padX(i) - 14, -44 - (s.cls === 'freighter' ? 6 : 0));
-      const w = 28 * P, f = clamp(sum(s.cargo) / cap, 0, 1);
-      g.fillStyle = 'rgba(10,6,16,0.8)'; g.fillRect(p.x - dpr, p.y - dpr, w + 2 * dpr, 4 * dpr + 2 * dpr);
-      g.fillStyle = '#5ee6a8'; g.fillRect(p.x, p.y, w * f, 4 * dpr);
-    });
+    // cargo gauges over docked ships
+    for (const d of lay.docked) {
+      const cap = R.ships.find((x) => x.id === d.s.id)?.cap || 1, amt = sum(d.s.cargo), f = clamp(amt / cap, 0, 1);
+      const bwid = 40 * Sc, bhgt = clamp(3.2 * Sc, 6 * dpr, 12 * dpr);
+      const p = S(d.x - 20, d.y - d.sp.ay - 8);
+      const txt = f >= 0.995 ? 'FULL - LAUNCH' : `LOADING ${Math.round(f * 100)}%`;
+      g.font = `${fs}px Silkscreen, monospace`;
+      g.fillStyle = 'rgba(10,6,16,0.82)'; g.fillRect(p.x - 2 * dpr, p.y - fs - 4 * dpr, Math.max(bwid, g.measureText(txt).width + 8 * dpr) + 4 * dpr, fs + bhgt + 8 * dpr);
+      g.fillStyle = f >= 0.995 && Math.floor(t * 4) % 2 ? '#ffffff' : '#f4edff'; g.fillText(txt, p.x + 2 * dpr, p.y - fs - 1 * dpr);
+      g.fillStyle = '#2a2040'; g.fillRect(p.x, p.y + 1 * dpr, bwid, bhgt);
+      g.fillStyle = f >= 0.95 ? '#5ee6a8' : '#ffd23f'; g.fillRect(p.x, p.y + 1 * dpr, bwid * f, bhgt);
+    }
+    // waiting line
+    if (lay.holdN > 0) {
+      const p = S(padX(0) - 20, -76);
+      label(g, p, `WAITING FOR PAD${lay.holdN > 3 ? ` +${lay.holdN - 3}` : ''}`, fs, 'left');
+    }
+    fleetStrip(g, lay.flight, fs, t);
     // floating numbers
     pops = pops.filter((p) => t - p.t0 < 1.6);
     for (const p of pops) {
@@ -197,121 +323,267 @@ export function createMine(canvas, get, hooks = {}) {
     }
     if (hooks.after) hooks.after(toCss);
   }
+  // world -> css px relative to the canvas
+  const toCss = (wx, wy) => ({ x: (wx - cam.x) * Sc / dpr, y: (wy - cam.y) * Sc / dpr });
 
-  function drawGallery(Pn, bg, view, c, s, r, ores, t, look) {
+  // particles: chips, ore sparkles, falling ore, dust
+  function stepParts(Pn, bg, t, dt) {
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const p = parts[i], a = t - p.t0;
+      if (a < 0) continue;
+      if (a > p.life) { parts.splice(i, 1); continue; }
+      p.x += p.vx * dt; p.y += p.vy * dt; p.vy += (p.g || 0) * dt;
+      if (p.floor != null && p.y > p.floor) { p.y = p.floor; p.vy = 0; p.vx *= 0.5; }
+      const fade = 1 - a / p.life;
+      bg.globalAlpha = p.spark ? (Math.floor(a * 30) % 2 ? 1 : 0.6) * Math.min(1, fade * 2) : Math.min(1, fade * 2.2) * (p.alpha || 1);
+      Pn.rect(p.x, p.y, p.sz || 1, p.sz || 1, p.col);
+    }
+    bg.globalAlpha = 1;
+  }
+
+  function drawGallery(Pn, view, s, inf, ores, t, look, dt) {
     const k = s.idx, y0 = galleryTop(k), y1 = y0 + L.GH, x0 = L.GX0, x1 = L.GX0 + L.GLEN;
-    if (y1 < view.y - 4 || y0 > view.y + view.h + 4) { hits.push({ kind: 'shaft', id: s.id, x0: x0 - 10, x1, y0, y1 }); return; }
+    hits.push({ kind: 'shaft', id: s.id, x0: x0 - 10, x1, y0, y1 });
+    if (y1 < view.y - 4 || y0 > view.y + view.h + 4) return;
+    const r = inf.r, o = inf.o;
     const ore = ores[s.ore];
     const exhausted = s.vein && s.vein.left <= 0;
     const ok = r ? r.ok : true;
     const H = hash(s.id);
+    const xf = Math.round(x1 - 16 - (RECEDE - o.fr));
     // carve
     Pn.rect(-6, y0 + 4, x0 + 8, L.GH - 4, '#1b1226');
     Pn.rect(x0, y0 - 1, L.GLEN + 1, L.GH + 2, '#120a18');
     Pn.rect(x0, y0, L.GLEN, L.GH, '#21162e');
     for (let i = 0; i < 14; i++) { const hx = x0 + ((H >> (i % 16)) * 7 + i * 37) % L.GLEN; const hy = y0 + 2 + (i * 5 + (H >> 3)) % (L.GH - 8); Pn.rect(hx, hy, 2, 1, '#2c1f3a'); }
-    // floor + rails
+    // floor + rails (the tunnel is as long as the face has been driven)
     Pn.rect(x0, y1 - 3, L.GLEN, 3, '#3b2b2a');
-    for (let x = x0 + 2; x < x1 - 16; x += 4) Pn.rect(x, y1 - 3, 2, 1, '#5a3e26');
-    Pn.rect(x0, y1 - 4, L.GLEN - 16, 1, '#9aa0aa');
+    for (let x = x0 + 2; x < xf - 2; x += 4) Pn.rect(x, y1 - 3, 2, 1, '#5a3e26');
+    Pn.rect(x0, y1 - 4, xf - x0 - 2, 1, '#9aa0aa');
     // supports + lamps
-    for (let x = x0 + 24; x < x1 - 20; x += 34) {
+    for (let x = x0 + 40; x < xf - 14; x += 34) {
       Pn.rect(x, y0, 2, L.GH - 3, '#6a4a2a'); Pn.rect(x - 3, y0, 8, 2, '#7a5634');
       const fl = prefs.reduced ? 0.25 : 0.2 + 0.08 * Math.sin(t * 9 + x);
       bg.globalAlpha = fl; Pn.disc(x + 1, y0 + 4, 6, '#ffd27a'); bg.globalAlpha = 1;
       Pn.rect(x + 1, y0 + 3, 1, 2, '#ffe9a8');
     }
-    // ore face
-    const faceCol = color.shade('#3a2a44', -0.1);
-    Pn.rect(x1 - 16, y0, 16, L.GH, faceCol);
-    for (let y = y0; y < y1; y += 3) Pn.rect(x1 - 17 - ((y * 7 + H) % 3), y, 2, 3, faceCol);
+    // rock face
+    const faceCol = '#33263f';
+    const shake = o.flash > 0 && t - o.flash < 0.08 ? 1 : 0;
+    Pn.rect(xf + shake, y0, x1 - xf - shake, L.GH, faceCol);
+    for (let y = y0; y < y1; y += 3) Pn.rect(xf - 1 - ((y * 7 + H) % 3) + shake, y, 2, 3, faceCol);
+    for (let i = 0; i < 10; i++) Pn.rect(xf + 3 + ((H >> i) * 11 + i * 17) % Math.max(4, x1 - xf - 6), y0 + 1 + (i * 7 + (H >> 2)) % (L.GH - 3), 2, 1, '#3f3050');
     if (ore && !exhausted) {
       const sp = specOf(ore);
       const pct = s.vein ? s.vein.left / Math.max(1, s.vein.total) : 1;
       const cnt = s.vein ? Math.max(1, Math.ceil(pct * 4)) : 4;
-      const spots = [[x1 - 8, y0 + 6, 11], [x1 - 7, y0 + 17, 10], [x1 - 15, y0 + 12, 9], [x1 - 14, y0 + 20, 7]];
-      for (let i = 0; i < cnt; i++) drawOre(bg, view, sp, spots[i][0], spots[i][1], spots[i][2], t);
-      // flecks in the walls
-      for (let i = 0; i < 5; i++) { const fx = x0 + 12 + ((H >> i) * 13 + i * 31) % (L.GLEN - 40); Pn.rect(fx, i % 2 ? y0 + 1 : y1 - 6, 2, 1, ore.color); }
+      const spots = [[xf + 8, y0 + 6, 11], [xf + 9, y0 + 17, 10], [xf + 3, y0 + 12, 9], [xf + 4, y0 + 20, 7]];
+      for (let i = 0; i < cnt; i++) drawOre(bg, view, sp, spots[i][0] + shake, spots[i][1], spots[i][2], t);
+      for (let i = 0; i < 6; i++) Pn.rect(xf + 5 + ((H >> i) * 9 + i * 13) % Math.max(4, x1 - xf - 8), y0 + 2 + (i * 5 + (H >> 4)) % (L.GH - 5), 2, 1, ore.color);
     } else if (exhausted) {
-      for (let i = 0; i < 6; i++) Pn.rect(x1 - 14 + (i * 5) % 12, y1 - 4 - (i % 3) * 3, 4, 3, '#5a5260');
+      for (let i = 0; i < 6; i++) Pn.rect(xf + 2 + (i * 5) % 12, y1 - 4 - (i % 3) * 3, 4, 3, '#5a5260');
     }
-    // cart
-    const miners = s.miners || 0;
-    const shown = Math.min(miners, 6);
-    const stop = x1 - 26 - shown * 11;
-    if (ok && r && r.orePerMin > 0) {
-      const T = clamp(9 - Math.log2(1 + r.orePerMin / 10), 3, 9);
-      const ph = ((t / T) + (H % 100) / 100) % 1;
-      const xa = x0 + 4, xb = Math.max(xa + 10, stop);
-      let cx, loaded;
-      if (ph < 0.42) { cx = xb - (xb - xa) * (ph / 0.42); loaded = true; } else if (ph < 0.5) { cx = xa; loaded = false; } else if (ph < 0.92) { cx = xa + (xb - xa) * ((ph - 0.5) / 0.42); loaded = false; } else { cx = xb; loaded = true; }
-      drawCart(Pn, cx, y1 - 4, loaded && ore ? ore.color : null);
-    } else drawCart(Pn, x0 + 6, y1 - 4, null);
-    // miners
+    // tunnel buffer: ore piled at the lift end of the gallery
+    const f = o.f;
+    if (f > 0.02) drawMound(Pn, x0 + 9, y1 - 3, 2 + 12 * f, 8 + 4 * f, ore ? ore.color : '#8a7a6a', o.full && Math.floor(t * 3) % 2 ? '#ff5a6e' : null);
+    if (o.full) { bg.globalAlpha = 0.12 + (Math.floor(t * 3) % 2) * 0.1; Pn.rect(x0, y0, 30, L.GH, '#ff3a4e'); bg.globalAlpha = 1; }
+    // cart: fills at the face, rolls to the lift, tips
+    const miners = s.miners || 0, shown = Math.min(miners, 5);
+    const xa = x0 + 26, xb = Math.max(xa + 14, xf - 16 - shown * 11);
+    const cartCol = ore ? ore.color : null;
+    const ct = cartAt(o.cph, xa, xb);
+    drawCart(Pn, ct.x, y1 - 4, cartCol, ct.fill);
+    if (ct.dump && o.run !== undefined && ore && !prefs.reduced && Math.random() < dt * 14) emit({ x: ct.x - 5, y: y1 - 11, vx: -10 - Math.random() * 6, vy: -4, g: 140, t0: t, life: 0.5, sz: 2, col: ore.color, floor: y1 - 6 });
+    // miners: swing rate follows this shaft's real ore rate; idle ones stand still
+    const rate = r ? r.orePerMin : 0;
+    const hz = 0.9 + 1.5 * clamp(Math.log10(1 + rate) / 3, 0, 1);
     for (let i = 0; i < shown; i++) {
-      const mx = x1 - 26 - i * 11;
-      const fr = ok ? Math.floor(t * 5 + i * 0.7 + (H % 7)) % 3 : 0;
-      Pn.sprite(minerImg(look, ok ? 'swing' : 'walk', fr), mx, y1 - 3, 12, 24);
-      if (ok && fr === 1 && ore && !prefs.reduced) { Pn.rect(mx + 9, y1 - 11, 1, 1, ore.color); Pn.rect(mx + 11, y1 - 13, 1, 1, '#ffffff'); }
-    }
-    if (!ok) { bg.globalAlpha = 0.35; Pn.rect(x0, y0, L.GLEN, L.GH, '#000000'); bg.globalAlpha = 1; }
-    hits.push({ kind: 'shaft', id: s.id, x0: x0 - 10, x1, y0, y1 });
-  }
-
-  function badge(g, S, s, r, fs, ores) {
-    const y0 = galleryTop(s.idx);
-    const p = S(L.GX0 + 4, y0 + 2);
-    if (p.y > canvas.height || p.y < -40) return;
-    const ore = ores[s.ore];
-    g.font = `${fs}px Silkscreen, monospace`;
-    const line1 = `${s.name.toUpperCase()}`;
-    const line2 = r && !r.ok ? r.reason.toUpperCase() : `${s.miners}/${r ? r.cap : '?'} MINERS  C${s.up.cart} B${s.up.bunk}`;
-    const w = Math.max(g.measureText(line1).width, g.measureText(line2).width) + 10 * dpr;
-    const h = fs * 2 + 10 * dpr + (s.vein ? 6 * dpr : 0);
-    g.fillStyle = 'rgba(12,7,20,0.72)'; g.fillRect(p.x, p.y, w, h);
-    g.fillStyle = ore ? ore.color : '#fff'; g.fillRect(p.x, p.y, 2 * dpr, h);
-    g.fillStyle = '#f4edff'; g.fillText(line1, p.x + 6 * dpr, p.y + 3 * dpr);
-    g.fillStyle = r && !r.ok ? '#ff5a6e' : '#b3a5d3'; g.fillText(line2, p.x + 6 * dpr, p.y + fs + 5 * dpr);
-    if (s.vein) {
-      const pct = s.vein.left / Math.max(1, s.vein.total);
-      const bw = w - 12 * dpr, by = p.y + fs * 2 + 8 * dpr;
-      g.fillStyle = '#2a2040'; g.fillRect(p.x + 6 * dpr, by, bw, 3 * dpr);
-      g.fillStyle = pct <= 0 ? '#5a5260' : pct <= 0.05 ? '#ff5a6e' : pct <= 0.2 ? '#ffb347' : '#5ee6a8';
-      g.fillRect(p.x + 6 * dpr, by, bw * clamp(pct, 0, 1), 3 * dpr);
-    }
-  }
-
-  function drawShips(bg, view, Pn, c, now, t, loading) {
-    const padOf = new Map();
-    loading.slice().sort((a, b) => (a.dockedAt || 0) - (b.dockedAt || 0)).forEach((s, i) => padOf.set(s.id, i));
-    let park = 0;
-    const freePads = [];
-    for (let i = 0; i < c.pads; i++) if (![...padOf.values()].includes(i)) freePads.push(i);
-    c.ships.forEach((s) => {
-      const lv = shipLvl(s.lvl);
-      if (s.state === 'loading') { drawShip(bg, view, s.cls, lv, padX(padOf.get(s.id) ?? 0), -2, t, false); return; }
-      if (s.state === 'home') {
-        const x = freePads.length ? padX(freePads.shift()) : padX(c.pads) + 10 + park++ * 60;
-        drawShip(bg, view, s.cls, lv, x, -2, t, false); return;
+      const mx = xf - 10 - i * 11;
+      let fr = 0;
+      if (o.run) {
+        const ph = t * hz + i * 0.37 + (H % 7) / 7;
+        fr = Math.floor((ph % 1) * 3);
+        const lastFr = o.last[i];
+        if (fr === 1 && lastFr !== 1) impact(o, s, ore, mx, y1, i, xf, ct, xb, t);
+        o.last[i] = fr;
       }
-      const spot = padX(c.ships.indexOf(s) % Math.max(1, c.pads));
-      if (s.state === 'out' && s.departAt != null) {
+      Pn.sprite(minerImg(look, o.run ? 'swing' : 'walk', fr), mx, y1 - 3, 12, 24);
+    }
+    // rock/ore flash at the face
+    if (t - o.flash < 0.1) { Pn.rect(xf - 2, y1 - 13, 3, 3, '#ffffff'); Pn.rect(xf - 4, y1 - 12, 7, 1, '#ffe9a8'); }
+    if (inf.halted) { bg.globalAlpha = 0.18 + (Math.floor(t * 2) % 2) * 0.1; Pn.rect(x0, y0, L.GLEN, L.GH, '#ff9a2a'); bg.globalAlpha = 1; for (let x = xf - 40; x < xf; x += 6) Pn.rect(x, y1 - 6 - (x % 4), 3, 3, '#5a5260'); }
+    if (!ok) { bg.globalAlpha = 0.35; Pn.rect(x0, y0, L.GLEN, L.GH, '#000000'); bg.globalAlpha = 1; }
+  }
+  function impact(o, s, ore, mx, y1, i, xf, ct, xb, t) {
+    if (i === 0 || i === 1) o.flash = t;
+    const n = prefs.reduced ? 1 : 3;
+    const tipx = Math.min(mx + 10, xf - 1), tipy = y1 - 12;
+    for (let q = 0; q < n; q++) emit({ x: tipx, y: tipy, vx: -8 - Math.random() * 26, vy: -22 - Math.random() * 26, g: 130, t0: t, life: 0.55 + Math.random() * 0.2, sz: Math.random() < 0.4 ? 2 : 1, col: ['#6a5a7a', '#8a7a9a', '#4a3a58'][q % 3], floor: y1 - 4 });
+    if (ore) {
+      emit({ x: tipx, y: tipy - 1, vx: -4 - Math.random() * 14, vy: -26 - Math.random() * 20, g: 100, t0: t, life: 0.6, sz: 1, col: '#ffffff', spark: true });
+      // an ore chunk lobbed toward the cart while it waits at the face
+      if (ct.x === xb && ct.fill < 1 && !prefs.reduced) {
+        const T = 0.5, tx = xb + (Math.random() - 0.5) * 4, ty = y1 - 10;
+        emit({ x: tipx, y: tipy, vx: (tx - tipx) / T, vy: (ty - tipy - 0.5 * 150 * T * T) / T, g: 150, t0: t, life: T, sz: 2, col: ore.color });
+      } else emit({ x: tipx, y: tipy, vx: -6 - Math.random() * 8, vy: -14, g: 150, t0: t, life: 0.5, sz: 2, col: ore.color, floor: y1 - 5 });
+    }
+  }
+
+  function badge(g, S, s, inf, fs, ores, gap, t) {
+    const y0 = galleryTop(s.idx), r = inf.r, o = inf.o;
+    const p = S(L.GX0 + 4, y0 + 2);
+    if (p.y > canvas.height || p.y < -80) return;
+    if (gap < fs + 9 * dpr) { g.fillStyle = o.full ? '#ff5a6e' : (ores[s.ore] ? ores[s.ore].color : '#fff'); g.fillRect(p.x, p.y, 3 * dpr, Math.max(3 * dpr, gap * 0.5)); return; }
+    const ore = ores[s.ore];
+    const full = o.full;
+    const idle = !full && !inf.halted && r && r.ok && !inf.active;
+    const line1 = s.name.toUpperCase();
+    const line2 = inf.halted ? `CAVE-IN - HALTED ${mmss(inf.haltSecs)}` : r && !r.ok ? r.reason.toUpperCase() : full ? 'TUNNEL FULL - BACKED UP' : idle ? (s.vein && s.vein.left <= 0 ? 'VEIN EXHAUSTED' : 'IDLE - NO MINERS') : `${s.miners}/${r ? r.cap : '?'} MINERS  C${s.up.cart} B${s.up.bunk}`;
+    const col2 = inf.halted || (r && !r.ok) || full ? '#ff5a6e' : idle ? '#ffb347' : '#b3a5d3';
+    const pct = Math.round(o.f * 100);
+    const tag = full ? 'FULL' : '';
+    g.font = `${fs}px Silkscreen, monospace`;
+    const tall = fs * 3 + 14 * dpr + (s.vein ? 5 * dpr : 0);
+    const compact = gap < tall + 4 * dpr;
+    const w = Math.max(g.measureText(line1).width + (tag ? g.measureText(tag).width + 10 * dpr : 0), compact ? 0 : g.measureText(line2).width, fs * 9) + 12 * dpr;
+    const barH = Math.max(fs * 0.9, 7 * dpr);
+    const h = compact ? fs + barH + 9 * dpr : fs * 2 + barH + 13 * dpr + (s.vein ? 5 * dpr : 0);
+    g.fillStyle = 'rgba(12,7,20,0.78)'; g.fillRect(p.x, p.y, w, h);
+    g.fillStyle = full ? '#ff5a6e' : ore ? ore.color : '#fff'; g.fillRect(p.x, p.y, 2 * dpr, h);
+    g.fillStyle = '#f4edff'; g.fillText(line1, p.x + 6 * dpr, p.y + 3 * dpr);
+    if (tag) { g.fillStyle = Math.floor(t * 3) % 2 ? '#ff5a6e' : '#ffb0ba'; g.textAlign = 'right'; g.fillText(tag, p.x + w - 4 * dpr, p.y + 3 * dpr); g.textAlign = 'left'; }
+    let y = p.y + fs + 5 * dpr;
+    if (!compact) { g.fillStyle = col2; g.fillText(line2, p.x + 6 * dpr, y); y += fs + 3 * dpr; }
+    // tunnel buffer gauge
+    const bx = p.x + 6 * dpr, bw = w - 12 * dpr;
+    g.fillStyle = '#2a2040'; g.fillRect(bx, y, bw, barH);
+    g.fillStyle = gcol(o.f); g.fillRect(bx, y, bw * clamp(o.f, 0, 1), barH);
+    g.fillStyle = 'rgba(12,7,20,0.9)'; g.font = `${Math.round(fs * 0.8)}px Silkscreen, monospace`;
+    g.fillStyle = o.f > 0.5 ? '#140c1c' : '#f4edff';
+    g.fillText(compact && (r && !r.ok || idle) ? (r && !r.ok ? r.reason.toUpperCase().slice(0, 14) : 'IDLE') : `TUNNEL ${pct}%`, bx + 3 * dpr, y + (barH - fs * 0.8) / 2);
+    g.font = `${fs}px Silkscreen, monospace`;
+    if (s.vein && !compact) {
+      const vp = s.vein.left / Math.max(1, s.vein.total), by = y + barH + 2 * dpr;
+      g.fillStyle = '#2a2040'; g.fillRect(bx, by, bw, 3 * dpr);
+      g.fillStyle = vp <= 0 ? '#5a5260' : vp <= 0.05 ? '#ff5a6e' : vp <= 0.2 ? '#ffb347' : '#5ee6a8';
+      g.fillRect(bx, by, bw * clamp(vp, 0, 1), 3 * dpr);
+    }
+  }
+
+  // ---------------------------------------------------------------- ships
+  function layoutShips(c, R, now, t, dt) {
+    const byId = new Map(c.ships.map((s) => [s.id, s]));
+    const used = new Set();
+    for (const [id, p] of [...padMap]) {
+      const s = byId.get(id);
+      if (!s || s.state !== 'loading' || p >= c.pads) padMap.delete(id); else used.add(p);
+    }
+    const need = c.ships.filter((s) => s.state === 'loading' && !padMap.has(s.id)).sort((a, b) => (a.dockedAt || 0) - (b.dockedAt || 0));
+    for (const s of need) { let p = 0; while (used.has(p) && p < c.pads) p++; if (p < c.pads) { padMap.set(s.id, p); used.add(p); lastPad.set(s.id, p); } }
+    const X0 = padX(0) + 30, X1 = padX(Math.max(1, c.pads) - 1) + 240;
+    const draw = [], docked = [], loading = [], flight = [];
+    const holds = c.ships.filter((s) => s.state === 'home').sort((a, b) => (a.readyAt || 0) - (b.readyAt || 0));
+    const nameOf = (s) => { const q = R.ships.find((x) => x.id === s.id); return { cap: q ? q.cap : 1, dest: q && q.dest ? String(q.dest) : '' }; };
+    let lane = 0;
+    const T_A = 3.5, T_D = 4;
+    c.ships.forEach((s) => {
+      const lv = shipLvl(s.lvl), sp = shipSprite(s.cls, lv);
+      let tg = null;
+      if (s.state === 'loading' && padMap.has(s.id)) {
+        const pad = padMap.get(s.id);
+        tg = { x: padX(pad), y: -2, k: 1, flip: false, flame: false, pad };
+        const d = { s, x: tg.x, y: -2, sp };
+        docked.push(d); loading.push({ s, pad, sp, x: tg.x });
+      } else if (s.state === 'home' || (s.state === 'loading' && !padMap.has(s.id))) {
+        const h = holds.indexOf(s);
+        if (h < 0 || h >= 3) { SHIP.delete(s.id); return; }
+        tg = { x: padX(0) - 4 + h * 46, y: -64 + (prefs.reduced ? 0 : Math.sin(t * 1.6 + h) * 1.5), k: 0.55, flip: false, flame: false };
+      } else if (s.state === 'out' && s.departAt != null) {
         const el = (now - s.departAt) / 1000;
-        if (el < 0 || el > 7) return;
-        if (!lastLaunch.has(s.id + s.departAt)) {
-          lastLaunch.set(s.id + s.departAt, 1);
-          if (lastLaunch.size > 50) lastLaunch.delete(lastLaunch.keys().next().value);
-          for (let i = 0; i < 10; i++) dust.push({ x: spot + (i - 5) * 4, y: -2, vx: (i - 5) * 3, t0: t });
+        const dn = nameOf(s);
+        const tripOut = Math.max(1, (s.arriveAt - s.departAt) / 1000);
+        const eta = (s.arriveAt - now) / 1000;
+        flight.push({ s, dir: 'out', eta, dest: dn.dest });
+        if (el < 0) return;
+        const ln = lane++ % 3, laneY = -92 - ln * 10;
+        const pad = lastPad.get(s.id) ?? 0;
+        if (!lastLaunch.has(s.id + ':' + s.departAt)) {
+          lastLaunch.set(s.id + ':' + s.departAt, 1);
+          if (lastLaunch.size > 60) lastLaunch.delete(lastLaunch.keys().next().value);
+          if (el < 3 && !prefs.reduced) for (let i = 0; i < 12; i++) emit({ x: padX(pad) + (i - 6) * 4, y: -2, vx: (i - 6) * 4, vy: -6, g: 0, t0: t, life: 1.2, sz: 2, col: '#d8c8b0', alpha: 0.7 });
         }
-        drawShip(bg, view, s.cls, lv, spot + el * el * 3, -2 - el * el * 9, t, true);
+        if (el < T_A) { const a = ease(el / T_A), a2 = a * a; tg = { x: lerp(padX(pad), X0, a2), y: lerp(-2, laneY, a), k: lerp(1, 0.38, a), flip: false, flame: true }; }
+        else tg = { x: lerp(X0, X1, clamp(el / tripOut, 0, 1)), y: laneY, k: 0.38, flip: false, flame: el < T_A + 1.2, trail: true };
       } else if (s.state === 'back' && s.homeAt != null) {
         const rem = (s.homeAt - now) / 1000;
-        if (rem < 0 || rem > 5) return;
-        const x = padX(c.pads) + 10 + park * 60;
-        drawShip(bg, view, s.cls, lv, x - rem * 6, -2 - rem * rem * 10, t, true, true);
-      }
+        const dn = nameOf(s);
+        flight.push({ s, dir: 'back', eta: rem, dest: dn.dest });
+        if (rem < 0) return;
+        const ln = lane++ % 3, laneY = -92 - ln * 10;
+        const backLen = Math.max(1, (s.homeAt - s.arriveAt) / 1000);
+        const hx = padX(0) - 4 + Math.min(2, holds.length) * 46;
+        if (rem < T_D) { const a = ease(1 - rem / T_D); tg = { x: lerp(X0, hx, a), y: lerp(laneY, -64, a), k: lerp(0.38, 0.55, a), flip: a < 0.5, flame: true }; }
+        else tg = { x: lerp(X1, X0, clamp(1 - rem / backLen, 0, 1)), y: laneY, k: 0.38, flip: true, flame: false, trail: true };
+      } else { SHIP.delete(s.id); return; }
+      let v = SHIP.get(s.id);
+      if (!v) { v = { x: tg.x, y: tg.y, k: tg.k }; SHIP.set(s.id, v); }
+      const kk = prefs.reduced ? 1 : 1 - Math.exp(-dt * 7);
+      const far = Math.hypot(tg.x - v.x, tg.y - v.y) > 140;
+      if (far) { v.x = tg.x; v.y = tg.y; v.k = tg.k; } else { v.x += (tg.x - v.x) * kk; v.y += (tg.y - v.y) * kk; v.k += (tg.k - v.k) * kk; }
+      const moving = Math.hypot(tg.x - v.x, tg.y - v.y) > 3;
+      draw.push({ s, cls: s.cls, lv, sp, x: v.x, y: v.y, k: v.k, flip: tg.flip, flame: tg.flame || moving, trail: tg.trail });
+      const dd = docked.find((q) => q.s === s); if (dd) { dd.x = v.x; dd.y = v.y; }
     });
+    flight.sort((a, b) => a.eta - b.eta);
+    return { draw, docked, loading, flight, holdN: holds.length };
+  }
+
+  function drawShipK(bg, view, Pn, d, t) {
+    const { sp, k, x, y, flip } = d;
+    if (d.trail && !prefs.reduced) { for (let i = 1; i <= 5; i++) { bg.globalAlpha = 0.35 - i * 0.06; Pn.rect(x + (flip ? 1 : -1) * (sp.ax * k + i * 3.5), y - sp.ay * k * 0.42, 2, 1, '#cfd6ee'); } bg.globalAlpha = 1; }
+    if (d.flame) {
+      const f = Math.floor(t * 30) % 2, dd = flip ? 1 : -1;
+      for (const [ex, ey] of sp.exhaust) {
+        const wx = flip ? x + (sp.ax - ex) * k : x - (sp.ax - ex) * k, wy = y - (sp.ay - ey) * k;
+        Pn.rect(wx + dd * 4 * k - 2 * k, wy - 2 * k, 4 * k, 4 * k, '#ffb347'); Pn.rect(wx + dd * (8 + f * 2) * k - k, wy - k, 3 * k, 3 * k, '#ff8a3d'); Pn.rect(wx + dd * (11 + f * 3) * k, wy, 2 * k, 2 * k, '#ffe066');
+      }
+    }
+    Pn.sprite(sp.cv, x, y, sp.ax, sp.ay, flip, k);
+  }
+
+  // belt chunks -> loading arm -> hatch, per docked ship; speed follows the conveyor rate
+  function drawLoading(Pn, view, c, R, lay, ores, t, flowing, beltV) {
+    const comp = composition(c.yard, ores);
+    const spacing = clamp(16 - 2 * Math.log2(1 + (R.conveyorPerPad || 0) / 10), 8, 16);
+    const reds = prefs.reduced ? 1.6 : 1;
+    for (const d of lay.loading) {
+      const { sp, x: px } = d, s = d.s;
+      const xr = Math.max(L.CONV_X0 + 8, px - Math.min(sp.ax, 34) - 6), topY = -2 - sp.ay - 7, hx = px - sp.ax * 0.1, hy = -2 - sp.ay * 0.6;
+      // gantry arm
+      Pn.rect(xr - 1, topY, 3, -topY - 9, '#4a4a58'); Pn.rect(xr - 1, topY, 3, 1, '#8a8a9a');
+      Pn.rect(xr - 1, topY - 1, hx - xr + 4, 3, '#4a4a58'); Pn.rect(xr - 1, topY - 1, hx - xr + 4, 1, '#8a8a9a');
+      Pn.rect(hx - 2, topY + 2, 5, 2, '#6a6a7a'); Pn.rect(hx - 1, topY + 4, 3, Math.max(1, hy - topY - 4), '#3a3a46');
+      const cap = (R.ships.find((q) => q.id === s.id) || {}).cap || 1;
+      const act = flowing && sum(s.cargo) < cap * 0.995;
+      if (!act) continue;
+      const pts = [[L.YARD_X + 8, -15], [L.CONV_X0 + 2, -11.5], [xr, -11.5], [xr, topY + 1], [hx, topY + 1], [hx, hy]];
+      const cum = [0]; for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+      const Lp = cum[cum.length - 1], nn = Math.max(2, Math.floor(Lp / (spacing * reds))), loop = nn * spacing * reds;
+      const idx = lay.loading.indexOf(d);
+      for (let q = 0; q < nn; q++) {
+        const raw = t * beltV + q * spacing * reds + idx * 4;
+        const sPos = ((raw % loop) + loop) % loop, cyc = Math.floor(raw / loop);
+        if (sPos > Lp) continue;
+        let seg = 1; while (seg < cum.length - 1 && cum[seg] < sPos) seg++;
+        const u = (sPos - cum[seg - 1]) / Math.max(0.001, cum[seg] - cum[seg - 1]);
+        const cx = lerp(pts[seg - 1][0], pts[seg][0], u), cy = lerp(pts[seg - 1][1], pts[seg][1], u);
+        const pick = comp.length ? comp[pickIdx(comp, hash(`${q}:${cyc}:${idx}`) % 1000 / 1000)] : null;
+        const im = pick ? oreSprite(pick.spec, 6) : null;
+        if (!im) continue;
+        const endFade = Lp - sPos < 6 ? (Lp - sPos) / 6 : 1;
+        Pn.sprite(im, cx, cy, 3, 3, false, 0.85, endFade);
+      }
+    }
   }
 
   function deepestActive(c, R) {
@@ -320,12 +592,37 @@ export function createMine(canvas, get, hooks = {}) {
     return d;
   }
 
+  function fleetStrip(g, flight, fs, t) {
+    if (!flight.length) return;
+    const rows = flight.slice(0, 3), more = flight.length - rows.length;
+    const rh = fs + 6 * dpr, pad = 6 * dpr;
+    g.font = `${fs}px Silkscreen, monospace`;
+    const txt = (f) => `${f.s.name.toUpperCase().slice(0, 9)} ${f.dest ? f.dest.toUpperCase().slice(0, 7) + ' ' : ''}${mmss(f.eta)}`;
+    const head = `IN FLIGHT ${flight.length}`;
+    let w = g.measureText(head).width;
+    for (const f of rows) w = Math.max(w, g.measureText(txt(f)).width + fs);
+    w += pad * 2;
+    const h = rh * (rows.length + 1 + (more > 0 ? 1 : 0)) + pad;
+    const x = canvas.width - w - 54 * dpr, y = 8 * dpr;
+    g.fillStyle = 'rgba(12,7,20,0.8)'; g.fillRect(x, y, w, h);
+    g.fillStyle = '#ffd23f'; g.fillRect(x, y, 2 * dpr, h);
+    g.fillStyle = '#b3a5d3'; g.fillText(head, x + pad + 2 * dpr, y + 3 * dpr);
+    rows.forEach((f, i) => {
+      const yy = y + rh * (i + 1) + 3 * dpr, out = f.dir === 'out';
+      g.fillStyle = out ? '#ffd23f' : '#5ee6a8';
+      const a = Math.max(2, Math.round(fs * 0.5));
+      if (out) { g.fillRect(x + pad + 2 * dpr, yy + a, a, a); g.fillRect(x + pad + 2 * dpr + a / 2 - 1, yy, 2, a); } else { g.fillRect(x + pad + 2 * dpr, yy, a, a); g.fillRect(x + pad + 2 * dpr + a / 2 - 1, yy + a, 2, a); }
+      g.fillStyle = '#f4edff'; g.fillText(txt(f), x + pad + 2 * dpr + a + 4 * dpr, yy);
+    });
+    if (more > 0) { g.fillStyle = '#b3a5d3'; g.fillText(`+${more} MORE`, x + pad + 2 * dpr, y + rh * (rows.length + 1) + 3 * dpr); }
+  }
+
   function markerPos(b, c) {
     switch (b.stage) {
       case 'lift': return { x: 0, y: -80 };
-      case 'yard': return { x: L.YARD_X, y: -36 };
+      case 'yard': return { x: L.YARD_X, y: -40 };
       case 'conveyor': return { x: (L.CONV_X0 + padX(0)) / 2, y: -26 };
-      case 'ships': return { x: padX(0), y: -58 };
+      case 'ships': return { x: padX(0), y: -70 };
       case 'blocked': { const s = c.shafts.find((x) => x.id === b.shaft?.id) || c.shafts.find((x) => x.vein && x.vein.left <= 0) || c.shafts[0]; return { x: L.GX0 + L.GLEN - 30, y: galleryTop(s ? s.idx : 0) + 2 }; }
       default: return { x: L.GX0 + L.GLEN - 30, y: galleryTop(0) + 2 };
     }
@@ -334,30 +631,44 @@ export function createMine(canvas, get, hooks = {}) {
   // ---------------------------------------------------------------- input
   const ptrs = new Map();
   let drag = null, pinch = null;
+  const rect = () => canvas.getBoundingClientRect();
   canvas.addEventListener('pointerdown', (e) => {
     canvas.setPointerCapture(e.pointerId);
     ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    vel.x = vel.y = 0; goal = null; anchor = null; trail = [];
     if (ptrs.size === 1) drag = { x: e.clientX, y: e.clientY, cx: cam.x, cy: cam.y, moved: false };
-    if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; pinch = { d: Math.hypot(a.x - b.x, a.y - b.y) }; drag = null; }
+    if (ptrs.size === 2) {
+      const [a, b] = [...ptrs.values()], r = rect();
+      const mx = ((a.x + b.x) / 2 - r.left) * dpr, my = ((a.y + b.y) / 2 - r.top) * dpr;
+      pinch = { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, z0: z, wx: cam.x + mx / Sc, wy: cam.y + my / Sc };
+      drag = null;
+    }
   });
   canvas.addEventListener('pointermove', (e) => {
     if (!ptrs.has(e.pointerId)) return;
     ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (pinch && ptrs.size === 2) {
-      const [a, b] = [...ptrs.values()];
-      const d = Math.hypot(a.x - b.x, a.y - b.y);
-      const r = canvas.getBoundingClientRect();
-      const ax = ((a.x + b.x) / 2 - r.left) * dpr, ay = ((a.y + b.y) / 2 - r.top) * dpr;
-      if (d / pinch.d > 1.3) { setZoom(z + 1, ax, ay); pinch.d = d; } else if (d / pinch.d < 0.77) { setZoom(z - 1, ax, ay); pinch.d = d; }
+      const [a, b] = [...ptrs.values()], r = rect();
+      const d = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+      const mx = ((a.x + b.x) / 2 - r.left) * dpr, my = ((a.y + b.y) / 2 - r.top) * dpr;
+      z = zt = clamp(pinch.z0 * d / pinch.d, zMin(), ZMAX); Sc = z * dpr;
+      cam.x = pinch.wx - mx / Sc; cam.y = pinch.wy - my / Sc; clampCam();
       return;
     }
     if (!drag) return;
     const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
     if (Math.abs(dx) + Math.abs(dy) > 6) { drag.moved = true; canvas.classList.add('drag'); }
-    if (drag.moved) { cam.x = drag.cx - dx * dpr / P; cam.y = drag.cy - dy * dpr / P; clampCam(); }
+    if (drag.moved) {
+      cam.x = drag.cx - dx * dpr / Sc; cam.y = drag.cy - dy * dpr / Sc; clampCam();
+      const tn = performance.now(); trail.push({ t: tn, x: cam.x, y: cam.y }); while (trail.length > 2 && tn - trail[0].t > 120) trail.shift();
+    }
   });
   const up = (e) => {
     const wasTap = drag && !drag.moved && ptrs.size === 1;
+    if (drag && drag.moved && ptrs.size === 1 && !prefs.reduced && trail.length > 1) {
+      const a = trail[0], b = trail[trail.length - 1], dtm = (b.t - a.t) / 1000;
+      if (dtm > 0.01 && performance.now() - b.t < 80) { vel.x = (b.x - a.x) / dtm; vel.y = (b.y - a.y) / dtm; const m = Math.hypot(vel.x, vel.y), cap = 1500 / z; if (m > cap) { vel.x *= cap / m; vel.y *= cap / m; } }
+    }
     ptrs.delete(e.pointerId);
     if (ptrs.size < 2) pinch = null;
     canvas.classList.remove('drag');
@@ -368,18 +679,33 @@ export function createMine(canvas, get, hooks = {}) {
   canvas.addEventListener('pointercancel', (e) => { ptrs.delete(e.pointerId); drag = null; pinch = null; });
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
-    const r = canvas.getBoundingClientRect();
-    if (e.ctrlKey || Math.abs(e.deltaY) > Math.abs(e.deltaX) * 0.6) {
-      acc += e.deltaY;
-      if (Math.abs(acc) > 60) { setZoom(z + (acc < 0 ? 1 : -1), (e.clientX - r.left) * dpr, (e.clientY - r.top) * dpr); acc = 0; }
-    } else { cam.x += e.deltaX * dpr / P; clampCam(); }
+    const r = rect(), ax = (e.clientX - r.left) * dpr, ay = (e.clientY - r.top) * dpr;
+    const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * 100 : e.deltaY;
+    vel.x = vel.y = 0;
+    if (e.shiftKey && !e.ctrlKey) { cam.x += (e.deltaX || dy) * dpr / Sc; goal = null; clampCam(); return; }
+    zoomTo(zt * Math.exp(-clamp(dy, -240, 240) * (e.ctrlKey ? 0.012 : 0.0016)), ax, ay);
   }, { passive: false });
-  let acc = 0;
+  canvas.addEventListener('dblclick', (e) => {
+    const r = rect();
+    zoomTo(zt * 2, (e.clientX - r.left) * dpr, (e.clientY - r.top) * dpr);
+  });
+  const KEYMAP = { ArrowLeft: 'left', a: 'left', A: 'left', ArrowRight: 'right', d: 'right', D: 'right', ArrowUp: 'up', w: 'up', W: 'up', ArrowDown: 'down', s: 'down', S: 'down' };
+  const typing = () => { const a = document.activeElement; return a && (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || a.isContentEditable); };
+  window.addEventListener('keydown', (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey || typing() || !canvas.offsetParent) return;
+    const dir = KEYMAP[e.key];
+    if (dir) { keys.add(dir); e.preventDefault(); return; }
+    if (e.key === '+' || e.key === '=') { zoomTo(zt * 1.35, canvas.width / 2, canvas.height / 2); e.preventDefault(); }
+    else if (e.key === '-' || e.key === '_') { zoomTo(zt / 1.35, canvas.width / 2, canvas.height / 2); e.preventDefault(); }
+    else if (e.key === '0') { setView(fitView(), true); e.preventDefault(); }
+  });
+  window.addEventListener('keyup', (e) => { const d = KEYMAP[e.key]; if (d) keys.delete(d); });
+  window.addEventListener('blur', () => keys.clear());
 
   function tap(e) {
-    const r = canvas.getBoundingClientRect();
+    const r = rect();
     const sx = (e.clientX - r.left) * dpr, sy = (e.clientY - r.top) * dpr;
-    const wx = Math.round(cam.x) + sx / P, wy = Math.round(cam.y) + sy / P;
+    const wx = cam.x + sx / Sc, wy = cam.y + sy / Sc;
     for (const h of hits) {
       if (h.kind === 'bneck' && sx >= h.sx0 && sx <= h.sx1 && sy >= h.sy0 && sy <= h.sy1) return hooks.onTap?.('bneck', null, e);
     }
@@ -388,9 +714,8 @@ export function createMine(canvas, get, hooks = {}) {
       if (wx >= h.x0 && wx <= h.x1 && wy >= h.y0 - 3 && wy <= h.y1 + 3) return hooks.onTap?.(h.kind, h.id, e);
     }
     if (wy < 2 && wy > -70 && Math.abs(wx) < 16) return hooks.onTap?.('lift', null, e);
-    if (wy < 2 && wy > -40 && Math.abs(wx - L.YARD_X) < 14) return hooks.onTap?.('yard', null, e);
-    if (wy < 2 && wy > -60 && wx > L.PAD_X0 - 6) return hooks.onTap?.('ships', null, e);
-    if (wy < 2 && wy > -20 && wx > L.CONV_X0 - 4) return hooks.onTap?.('conveyor', null, e);
+    if (wy < 8 && wy > -40 && Math.abs(wx - L.YARD_X) < 14) return hooks.onTap?.('yard', null, e);
+    if (wy < 2 && wy > -125 && wx > L.PAD_X0 - 6) return hooks.onTap?.(wy > -20 && wy < -2 ? 'conveyor' : 'ships', null, e);
     hooks.onTap?.('none', null, e);
   }
 
@@ -398,43 +723,69 @@ export function createMine(canvas, get, hooks = {}) {
   resize();
 
   return {
-    frame, resize, home: () => { cam.homed = false; resize(); },
-    zoom: (d) => setZoom(z + d, canvas.width / 2, canvas.height / 2),
+    frame, resize, home: () => setView(homeView(), true),
+    fit: () => setView(fitView(), true),
+    zoom: (d) => zoomTo(zt * Math.pow(1.4, d), canvas.width / 2, canvas.height / 2),
     pop(wx, wy, text, col = '#ffd23f') { pops.push({ x: wx, y: wy, text, color: col, t0: performance.now() / 1000 }); if (pops.length > 30) pops.shift(); },
-    focusShaft(idx) { cam.y = galleryTop(idx) - viewH() * 0.4; clampCam(); },
+    focusShaft(idx) { goal = null; cam.y = galleryTop(idx) - cssH() / z * 0.4; clampCam(); },
     toCss, padX, galleryTop,
     worldOf: (stage, c) => ({ lift: { x: 0, y: -48 }, yard: { x: L.YARD_X, y: -14 }, pads: { x: padX(0), y: -40 }, sky: { x: padX(0), y: -90 }, shaft: { x: L.GX0 + 60, y: galleryTop(0) + 12 } }[stage]),
   };
 }
 
 // ---------------------------------------------------------------- pieces
-const sum = (m) => { let s = 0; for (const k in m || {}) s += m[k] || 0; return s; };
 function topOreColor(m, ores) {
   let best = null, bv = 0;
   for (const k in m || {}) if (m[k] > bv && ores[k]) { bv = m[k]; best = ores[k]; }
   return best ? best.color : '#8a7a6a';
 }
-function label(g, p, text, fs, align) {
+// ore mix of a stock: [{ col, spec, w }] with cumulative weights in w
+function composition(m, ores) {
+  const out = []; let tot = 0;
+  for (const k in m || {}) if (m[k] > 0.01 && ores[k]) { tot += m[k]; out.push({ col: ores[k].color, spec: specOf(ores[k]), w: tot }); }
+  for (const q of out) q.w /= tot || 1;
+  return out;
+}
+const pickIdx = (comp, u) => { for (let i = 0; i < comp.length; i++) if (u <= comp[i].w) return i; return comp.length - 1; };
+function mixRed(col, k) { return color.mix ? color.mix(col, '#ff3a4e', k) : col; }
+function drawMound(P, cx, baseY, h, hw, col, flash) {
+  const H = Math.round(h);
+  for (let q = 0; q < H; q++) {
+    const w = Math.max(1, hw * Math.sqrt(1 - q / (H + 1)));
+    P.rect(cx - w, baseY - q - 1, w * 2, 1, q % 4 === 0 ? color.shade(col, -0.25) : q % 4 === 2 ? color.shade(col, 0.12) : col);
+  }
+  if (flash) P.rect(cx - hw, baseY - H - 1, hw * 2, 1, flash);
+}
+function label(g, p, text, fs, align, col) {
   g.font = `${fs}px Silkscreen, monospace`;
   g.textAlign = align;
-  g.fillStyle = 'rgba(12,7,20,0.55)';
-  const w = g.measureText(text).width;
-  g.fillRect(p.x - w / 2 - 4, p.y - 2, w + 8, fs + 4);
-  g.fillStyle = 'rgba(244,237,255,0.85)';
+  const w = g.measureText(text).width, ox = align === 'center' ? w / 2 : align === 'right' ? w : 0;
+  g.fillStyle = 'rgba(12,7,20,0.65)';
+  g.fillRect(p.x - ox - 4, p.y - 2, w + 8, fs + 4);
+  g.fillStyle = col || 'rgba(244,237,255,0.9)';
   g.fillText(text, p.x, p.y);
   g.textAlign = 'left';
 }
-function drawCart(P, x, floorY, load) {
+function drawCart(P, x, floorY, load, fill = 1) {
   P.rect(x - 5, floorY - 6, 11, 5, '#6a5a4a'); P.rect(x - 5, floorY - 6, 11, 1, '#8a7a6a'); P.rect(x - 5, floorY - 2, 11, 1, '#4a3a2a');
-  if (load) { P.rect(x - 4, floorY - 8, 9, 2, load); P.rect(x - 2, floorY - 9, 4, 1, load); }
+  if (load && fill > 0.05) {
+    P.rect(x - 4, floorY - 7 - (fill > 0.4 ? 1 : 0), 9, 1 + (fill > 0.4 ? 1 : 0), load);
+    if (fill > 0.7) P.rect(x - 2, floorY - 9, 4, 1, load);
+    if (fill > 0.3) P.rect(x - 3, floorY - 7, 7, 1, load);
+  }
   P.rect(x - 4, floorY - 1, 2, 2, '#1a1a22'); P.rect(x + 3, floorY - 1, 2, 2, '#1a1a22');
 }
-function drawCage(P, y, load) {
+function drawCage(P, y, load, lvl = 1) {
   P.rect(-6, y - 13, 12, 13, '#7a8494'); P.rect(-5, y - 12, 10, 11, '#2a2a36');
   for (let x = -4; x <= 4; x += 3) P.rect(x, y - 12, 1, 11, '#5a6474');
   P.rect(-6, y - 13, 12, 1, '#aab4c4'); P.rect(-6, y - 1, 12, 1, '#4a5464');
-  if (load) { P.rect(-4, y - 5, 8, 4, load); P.rect(-2, y - 7, 4, 2, load); }
+  if (load) {
+    P.rect(-4, y - 5, 8, 4, load); P.rect(-2, y - 7, 4, 2, load);
+    if (lvl > 0.7) { P.rect(-3, y - 9, 6, 2, load); P.rect(-1, y - 10, 2, 1, load); }
+    P.rect(-3, y - 4, 1, 1, '#ffffff'); P.rect(2, y - 6, 1, 1, '#ffffff');
+  }
 }
+
 function drawHeadframe(P, t, v) {
   const wood = '#7a5634', dk = '#4a3220';
   P.line(-13, 0, -2, -46, wood, 2); P.line(13, 0, 2, -46, wood, 2);
@@ -455,12 +806,11 @@ function drawWinch(P, t) {
   P.rect(-37, -11, 5, 4, Math.floor(t * 0.7) % 4 ? '#ffd27a' : '#e8b860'); P.rect(-28, -9, 5, 9, '#2a1c14');
   P.line(-20, -12, 0, -48, '#2a2a33', 1);
 }
-function drawConveyor(P, x0, x1, t, v, load) {
+function drawConveyor(P, x0, x1, t, v) {
   for (let x = x0 + 4; x < x1; x += 14) P.rect(x, -6, 2, 6, '#3a3a46');
   P.rect(x0, -9, x1 - x0, 3, '#2a2a36'); P.rect(x0, -9, x1 - x0, 1, '#5a5a6a');
   const off = v > 0 ? (t * v) % 6 : 0;
   for (let x = x0 + off; x < x1 - 2; x += 6) P.rect(x, -7, 2, 1, '#14101c');
-  if (load) { const o2 = (t * v) % 12; for (let x = x0 + o2; x < x1 - 4; x += 12) P.rect(x, -11, 3, 2, load); }
   P.disc(x0, -7, 2, '#5a5a6a'); P.disc(x1, -7, 2, '#5a5a6a');
 }
 function drawPad(P, cx, t, i) {
