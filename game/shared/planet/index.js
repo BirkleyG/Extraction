@@ -10,15 +10,19 @@
  * planet = { id, seed, name, theme, themeId, mood, motifs, tagline, story, sky: [top, horizon], stars, surface,
  *   moons: [{ color, size (radius in art pixels, 4-18), x, y (0..1 of the sky box) }],
  *   layers: [5 { name, color }] shallow -> deep,
- *   regions: [5-7 { id, name, terrain, biomes: [3 hex], blurb, weather, x, y (0..1000 map) }],
+ *   regions: [12-18 { id, name, terrain, biomes: [3 hex], blurb, weather, x, y (0..1000 map), neighbors: [ids],
+ *     common: oreId, soil 0.75-1.35, tough: bool, temperature -1..1 }]  (numbers come from layout.js, seeded),
+ *   sites: [~3-6 per region { id, regionId, name, x, y, soil, richness: {oreId: 0-1}, veinSize: {oreId: 0.6-1.6}, start, score }],
  *   ores: [7 { id, name, tier, hardness, depthMin, baseValue, color, palette, shape, use, useId, description }],
- *   buyers: [4 { id, name, blurb, distance: 'near'|'mid'|'far', likes: { [oreId]: 0.8-1.4 } }], ai: bool } */
+ *   buyers: [4 { id, name, blurb, distance: 'near'|'mid'|'far', units, offPlanet, leave, likes: { [oreId]: 0.8-1.4 } }], ai: bool } */
 import { hash, rng, clamp, pick, shuffle, hsl, hexOr, mix, shade, adjust, toHsl, cleanText, slug, num } from './util.js';
 import { TERRAINS, TERRAIN_IDS, WEATHER, WEATHER_IDS, inferTerrain } from './terrains.js';
 import { THEMES, THEME_IDS } from './themes.js';
+import { applyLayout, regionCountFor, regionNeighbors, MIN_SITE_GAP } from './layout.js';
 import { SHAPES, TIERS, USES, USE_IDS, TIER_RULES, improviseOres, cleanOre, oreSpriteSpec, orePalette } from './ores.js';
 
 export { TERRAINS, TERRAIN_IDS, WEATHER, WEATHER_IDS, inferTerrain, THEMES, THEME_IDS, SHAPES, TIERS, USES, USE_IDS, TIER_RULES, oreSpriteSpec, orePalette };
+export { applyLayout, regionCountFor, regionNeighbors, MIN_SITE_GAP };
 export * as color from './util.js';
 
 export const MAPW = 1000;
@@ -40,12 +44,6 @@ const BUYERS = [
 ];
 
 /* ---------- pieces ---------- */
-function placeSeeds(R, count) {
-  const pts = []; let guard = 0;
-  while (pts.length < count && guard++ < 4000) { const x = 110 + R() * 780; const y = 110 + R() * 780; if (pts.every((q) => Math.hypot(q.x - x, q.y - y) > 255 - count * 8)) pts.push({ x: Math.round(x), y: Math.round(y) }); }
-  while (pts.length < count) pts.push({ x: Math.round(110 + R() * 780), y: Math.round(110 + R() * 780) });
-  return pts;
-}
 function themeSky(R, theme) {
   const h1 = theme.hue[0] + R() * (theme.hue[1] - theme.hue[0]); const h0 = h1 + (R() < 0.5 ? -1 : 1) * (30 + R() * 60);
   return [hsl(h0, 0.5 + R() * 0.2, 0.08 + R() * 0.08), hsl(h1, 0.6 + R() * 0.3, 0.5 + R() * 0.18)];
@@ -79,7 +77,13 @@ function makeBuyers(R, theme, ores) {
   const themed = theme ? theme.buyers.map(([name, blurb]) => [name, blurb, shuffle(R, USE_IDS).slice(0, 3)]) : [];
   const pool = themed.concat(shuffle(R, BUYERS)).slice(0, 4);
   const dists = shuffle(R, ['near', 'mid', 'far', pick(R, DISTANCES)]);
-  return pool.map(([name, blurb, focus], i) => ({ id: `b${i}`, name, blurb, distance: dists[i], likes: likesFor(R, focus, ores) }));
+  return pool.map(([name, blurb, focus], i) => ({ id: `b${i}`, name, blurb, distance: dists[i], ...tripFor(R, dists[i]), likes: likesFor(R, focus, ores) }));
+}
+/* trip length in units. near = on the planet (1-8); mid 10-30 and far 31-60 are off-planet, which also costs 8 to leave the surface */
+const UNIT_BANDS = { near: [1, 8], mid: [10, 30], far: [31, 60] };
+function tripFor(R, distance) {
+  const [a, b] = UNIT_BANDS[distance] || UNIT_BANDS.mid;
+  return { units: a + Math.floor(R() * (b - a + 1)), offPlanet: distance !== 'near', leave: distance !== 'near' ? 8 : 0 };
 }
 function likesFor(R, focus, ores) {
   const likes = {};
@@ -113,16 +117,17 @@ function buildFromTheme(R, seed, theme) {
   const sky = themeSky(R, theme);
   const surface = hsl(toHsl(sky[1])[0] + (R() < 0.5 ? -1 : 1) * (25 + R() * 45), 0.22 + R() * 0.16, 0.3 + R() * 0.1);
   const ores = improviseOres(R, theme);
-  const count = 5 + Math.floor(R() * 3);
-  const terrains = shuffle(R, theme.terrains).slice(0, count);
-  const seeds = placeSeeds(R, count); const usedNames = new Set();
-  const regions = terrains.map((t, i) => makeRegion(R, i, t, surface, theme.adj, seeds[i], usedNames));
+  const count = regionCountFor(seed);
+  const terrains = shuffle(R, theme.terrains).concat(shuffle(R, TERRAIN_IDS.filter((t) => !theme.terrains.includes(t)))).slice(0, count);
+  const usedNames = new Set();
+  const regions = terrains.map((t, i) => makeRegion(R, i, t, surface, theme.adj, { x: 0, y: 0 }, usedNames));
+  const sites = applyLayout(seed, regions, ores);
   const name = pick(R, theme.names);
   const story = [theme.story[0], ...shuffle(R, theme.story.slice(1, 3)), theme.story[3]].join(' ');
   return {
     id: `p${hash(`${seed}:id`).toString(36)}`, seed, name, theme: theme.concept, themeId: theme.id, mood: theme.mood, motifs: theme.motifs.slice(),
     tagline: pick(R, theme.tag), story, sky, stars: R() < 0.5 ? '#ffffff' : shade(sky[1], 0.7), surface,
-    moons: makeMoons(R, sky, 1 + Math.floor(R() * 3)), layers: makeLayers(R, surface, theme.adj), regions, ores,
+    moons: makeMoons(R, sky, 1 + Math.floor(R() * 3)), layers: makeLayers(R, surface, theme.adj), regions, sites, ores,
     buyers: makeBuyers(R, theme, ores), ai: false,
   };
 }
@@ -149,11 +154,11 @@ ${historyBlock(history)}
 
 STEP 3. Ores. Exactly 7: 2 common, 4 rare, 1 mythic. Invent each ore from the theme AND a galactic use for it (hull plating, hull insulation, warp coils, reactor fuel, medicine, luxury jewelry, weapons, computing cores, terraforming, shields, navigation, coolant, propellant, time clocks, artificial gravity, ship AI...). Example: on a candy world "Gumdrop Quartz, used in starship hull insulation". The ore's colours and crystal shape should follow from its theme and use. Each ore gets a clearly different colour.
 Shapes: ${SHAPES.join(', ')}.
-Tier rules: common hardness 1-2, depthMin 0, baseValue 1-3. rare hardness 2-4, depthMin 2-12, baseValue 8-60, rising together. mythic hardness 5, depthMin 16-20, baseValue 300-600.
+Tier rules: common hardness 1-3, depthMin 0, baseValue 1-3. rare hardness 3-7, depthMin 2-12, baseValue 8-60, rising together. mythic hardness 9-10, depthMin 16-20, baseValue 300-600.
 
-STEP 4. Regions. 5 to 7 regions in a ring around the planet, each a DIFFERENT landscape chosen from these terrain keys:
+STEP 4. Regions. Up to 7 flavour regions (the Guild adds the rest and decides where everything sits), each a DIFFERENT landscape chosen from these terrain keys:
 ${terrains}.
-Weather keys: ${WEATHER_IDS.join(', ')} (pick what fits each region).
+Do not give coordinates, soil, temperature or distances; the Guild surveyor sets every number. Weather keys: ${WEATHER_IDS.join(', ')} (pick what fits each region).
 
 STEP 5. Buyers. 4 off-world buyers with personality. likes maps every ore id to a price multiplier from 0.8 to 1.4 (what they want most is near 1.4).
 
@@ -163,8 +168,8 @@ Reply with ONLY a JSON object, no prose, no code fences:
 "sky":["#hex top of sky (dark)","#hex horizon (bright)"],"stars":"#hex","surface":"#hex ground",
 "moons":[0-3 of {"color":"#hex","size":4-18,"x":0-1,"y":0-1}],
 "layers":[exactly 5, shallow to deep, {"name":"","color":"#hex"}],
-"regions":[5-7 of {"name":"","terrain":"terrain key","biomes":["#hex","#hex","#hex"],"blurb":"<=14 words","weather":"weather key"}],
-"ores":[exactly 7 of {"id":"lowercase-slug","name":"<=24 chars","tier":"common|rare|mythic","hardness":1-5,"depthMin":0-20,"baseValue":number,"color":"#hex","palette":["#hex dark","#hex mid","#hex light","#hex highlight"],"shape":"one shape","use":"its galactic use","description":"<=20 words, darkly funny"}],
+"regions":[up to 7 of {"name":"","terrain":"terrain key","biomes":["#hex","#hex","#hex"],"blurb":"<=14 words","weather":"weather key"}],
+"ores":[exactly 7 of {"id":"lowercase-slug","name":"<=24 chars","tier":"common|rare|mythic","hardness":1-10,"depthMin":0-20,"baseValue":number,"color":"#hex","palette":["#hex dark","#hex mid","#hex light","#hex highlight"],"shape":"one shape","use":"its galactic use","description":"<=20 words, darkly funny"}],
 "buyers":[exactly 4 of {"name":"","blurb":"<=14 words","distance":"near|mid|far","likes":{"ore-id":1.2}}]}`;
 }
 
@@ -200,26 +205,26 @@ export function planetFromAI(raw, seed) {
 
   const layers = base.layers.map((b, i) => { const o = obj(arr(r.layers)[i]); return { name: cleanText(o.name, b.name, 32), color: hexOr(o.color, b.color) }; });
 
-  // regions: 5-7, each a known terrain, preferably all different
+  // regions: the AI supplies flavour for up to 7 (terrain, names, colours, weather); the rest come from the improvised base.
+  // Count, positions, common zones, soil, tough ground and temperature are all seeded (layout.js).
   const rawRegions = arr(r.regions).slice(0, 7);
-  const count = clamp(rawRegions.length, 5, 7);
+  const count = base.regions.length;
   const usedT = new Set(); const usedNames = new Set();
   const spare = shuffle(R, base.regions.map((x) => x.terrain).concat(TERRAIN_IDS));
-  const seeds = placeSeeds(R, count);
   const regions = Array.from({ length: count }, (_, i) => {
+    if (i >= rawRegions.length) { const f = { ...base.regions[i], id: `r${i}` }; if (usedNames.has(f.name)) f.name = `${f.name} ${i + 1}`; usedNames.add(f.name); return f; }
     const o = obj(rawRegions[i]);
     const name0 = cleanText(o.name, '', 32);
     let terrain = typeof o.terrain === 'string' && TERRAINS[o.terrain.trim().toLowerCase()] ? o.terrain.trim().toLowerCase() : inferTerrain(`${o.terrain || ''} ${name0}`, typeof o.blurb === 'string' ? o.blurb : '', arr(o.biomes)[0] || o.color);
     if (!terrain || (usedT.has(terrain) && rawRegions.length <= TERRAIN_IDS.length)) terrain = spare.find((t) => !usedT.has(t)) || pick(R, TERRAIN_IDS);
     usedT.add(terrain);
     const T = TERRAINS[terrain];
-    const fb = makeRegion(R, i, terrain, surface, themeObj.adjectives || ['Bleak', 'Grim', 'Distant', 'Lost', 'Restless', 'Crooked'], seeds[i], usedNames);
+    const fb = makeRegion(R, i, terrain, surface, themeObj.adjectives || ['Bleak', 'Grim', 'Distant', 'Lost', 'Restless', 'Crooked'], { x: 0, y: 0 }, usedNames);
     let name = name0 || fb.name; if (usedNames.has(name) && name0) name = `${name} ${i + 1}`; usedNames.add(name);
     const biomes = arr(o.biomes).map((c) => hexOr(c, null)).filter(Boolean).slice(0, 3);
     while (biomes.length < 3) biomes.push(hexOr(o.color, null) || fb.biomes[biomes.length]);
     const weather = typeof o.weather === 'string' && WEATHER[o.weather.trim().toLowerCase()] ? o.weather.trim().toLowerCase() : T.fx;
-    const x = num(o.x, NaN); const y = num(o.y, NaN);
-    return { id: `r${i}`, name, terrain, biomes, blurb: cleanText(o.blurb, fb.blurb, 100), weather, x: Number.isFinite(x) ? Math.round(clamp(x, 40, 960)) : fb.x, y: Number.isFinite(y) ? Math.round(clamp(y, 40, 960)) : fb.y };
+    return { id: `r${i}`, name, terrain, biomes, blurb: cleanText(o.blurb, fb.blurb, 100), weather, x: 0, y: 0 };
   });
 
   // ores: exactly 2 common, 4 rare, 1 mythic, whatever arrived
@@ -242,6 +247,8 @@ export function planetFromAI(raw, seed) {
   const rares = ores.slice(2, 6).sort((a, b) => a.depthMin - b.depthMin || a.baseValue - b.baseValue);
   ores.splice(2, 4, ...rares);
 
+  const sites = applyLayout(seed, regions, ores);
+
   const byName = new Map(ores.map((o) => [o.name.toLowerCase(), o.id]));
   const rawBuyers = arr(r.buyers).slice(0, 4);
   const buyers = base.buyers.map((b, i) => {
@@ -252,7 +259,8 @@ export function planetFromAI(raw, seed) {
       if (id) likes[id] = +clamp(num(v, 1), 0.8, 1.4).toFixed(2);
     }
     if (!rawBuyers[i]) for (const ore of ores) likes[ore.id] = +(0.8 + R() * 0.6).toFixed(2);
-    return { id: `b${i}`, name: cleanText(o.name, b.name, 40), blurb: cleanText(o.blurb, b.blurb, 100), distance: DISTANCES.includes(o.distance) ? o.distance : b.distance, likes };
+    const distance = DISTANCES.includes(o.distance) ? o.distance : b.distance;
+    return { id: `b${i}`, name: cleanText(o.name, b.name, 40), blurb: cleanText(o.blurb, b.blurb, 100), distance, ...tripFor(R, distance), likes };
   });
 
   const motifs = arr(r.motifs).length ? arr(r.motifs) : arr(themeObj.motifs);
@@ -261,7 +269,7 @@ export function planetFromAI(raw, seed) {
     theme: cleanText(themeText, base.theme, 160), themeId: 'ai', mood: cleanText(r.mood || themeObj.mood, base.mood, 40),
     motifs: motifs.map((m) => cleanText(m, '', 20)).filter(Boolean).slice(0, 5),
     tagline: cleanText(r.tagline, base.tagline, 90), story: cleanText(r.story, base.story, 600),
-    sky, stars: hexOr(r.stars, base.stars), surface, moons, layers, regions, ores, buyers, ai: true,
+    sky, stars: hexOr(r.stars, base.stars), surface, moons, layers, regions, sites, ores, buyers, ai: true,
   };
 }
 

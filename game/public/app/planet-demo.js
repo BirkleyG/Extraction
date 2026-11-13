@@ -42,6 +42,7 @@ function build(seed) {
   }
   $('layers').innerHTML = `<b>Rock layers</b>${planet.layers.map((l, i) => `<div style="background:${l.color};color:${color.luma(l.color) > 0.5 ? '#000' : '#fff'}">${i + 1}. ${esc(l.name)}</div>`).join('')}`;
   $('buyers').innerHTML = `<tr><th>buyer</th><th>dist</th>${planet.ores.map((o) => `<th title="${esc(o.name)}">${esc(o.name.split(' ')[0])}</th>`).join('')}</tr>${planet.buyers.map((b) => `<tr><td title="${esc(b.blurb)}">${esc(b.name)}</td><td>${b.distance}</td>${planet.ores.map((o) => `<td class="${b.likes[o.id] >= 1.2 ? 'hot' : ''}">${b.likes[o.id]}</td>`).join('')}</tr>`).join('')}`;
+  $('mapkey').innerHTML = `Map: region colour = common-ore zone (${planet.ores.filter((o) => o.tier === 'common').map((o) => `${sw(o.color)}${esc(o.name)}`).join(' / ')}) · ${planet.regions.length} regions, ${(planet.sites || []).length} sites, ${(planet.sites || []).filter((s) => s.start).length} starts (yellow squares) · pink = mythic · red region dot = tough ground`;
   drawMap(); drawStatic(); drawShapes();
 }
 
@@ -52,17 +53,25 @@ function drawShapes() {
 
 function drawMap() {
   const cv = $('map'); const g = cv.getContext('2d'); const N = cv.width; const k = 1000 / N; const rs = planet.regions;
+  const zoneColor = {}; planet.ores.filter((o) => o.tier === 'common').forEach((o) => { zoneColor[o.id] = o.color; });
   const own = new Int16Array(N * N);
   for (let y = 0; y < N; y += 1) for (let x = 0; x < N; x += 1) { let best = 0; let bd = 1e9; for (let i = 0; i < rs.length; i += 1) { const d = (rs[i].x - x * k) ** 2 + (rs[i].y - y * k) ** 2; if (d < bd) { bd = d; best = i; } } own[y * N + x] = best; }
   for (let y = 0; y < N; y += 1) for (let x = 0; x < N; x += 1) {
     const i = own[y * N + x]; const edge = (x && own[y * N + x - 1] !== i) || (y && own[(y - 1) * N + x] !== i);
-    const c = rs[i].biomes[(x + y) % 7 === 0 ? 1 : 0];
+    const c = color.mix(zoneColor[rs[i].common] || rs[i].biomes[0], rs[i].biomes[(x + y) % 7 === 0 ? 1 : 0], 0.3);
     g.fillStyle = edge ? '#0b0714' : ((x * 7 + y * 13) % 23 === 0 ? color.shade(c, -0.2) : c); g.fillRect(x, y, 1, 1);
   }
   const dx = N / 2; const r = N / 2 - 1; const id = g.getImageData(0, 0, N, N);
   for (let y = 0; y < N; y += 1) for (let x = 0; x < N; x += 1) { const d = Math.hypot(x - dx, y - dx); const i = (y * N + x) * 4; if (d > r) { id.data[i + 3] = 0; } else if (d > r * 0.8) { const a = (d - r * 0.8) / (r * 0.2) * 0.6; id.data[i] *= 1 - a; id.data[i + 1] *= 1 - a; id.data[i + 2] *= 1 - a; } }
   g.putImageData(id, 0, 0);
-  for (const reg of rs) { g.fillStyle = '#ffffff'; g.fillRect(Math.round(reg.x / k) - 1, Math.round(reg.y / k) - 1, 3, 3); }
+  g.font = '5px monospace'; g.textAlign = 'center';
+  for (const reg of rs) { g.fillStyle = reg.tough ? '#ff6a4a' : '#ffffff'; g.fillRect(Math.round(reg.x / k) - 1, Math.round(reg.y / k) - 1, 3, 3); g.fillStyle = '#fff'; g.fillText(reg.name.split(' ').pop().slice(0, 9), reg.x / k, reg.y / k - 4); }
+  const mythic = planet.ores[6].id;
+  for (const s of planet.sites || []) {
+    const x = Math.round(s.x / k); const y = Math.round(s.y / k);
+    if (s.start) { g.fillStyle = '#ffe14a'; g.fillRect(x - 3, y - 3, 7, 7); g.fillStyle = '#000'; g.fillRect(x - 2, y - 2, 5, 5); g.fillStyle = '#ffe14a'; g.fillRect(x - 1, y - 1, 3, 3); }
+    else { g.fillStyle = mythic in s.richness ? '#ff4aff' : '#0b0714'; g.fillRect(x - 1, y - 1, 3, 3); g.fillStyle = mythic in s.richness ? '#ffffff' : '#d8d0e8'; g.fillRect(x, y, 1, 1); }
+  }
 }
 
 function drawStatic() {

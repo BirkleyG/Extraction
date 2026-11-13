@@ -33,9 +33,9 @@ const useOf = (id) => USES.find((u) => u.id === id) || null;
 
 /* ranges the engine can rely on; planetFromAI clamps into these */
 export const TIER_RULES = {
-  common: { hardness: [1, 2], depth: [0, 0], value: [1, 3] },
-  rare: { hardness: [2, 4], depth: [2, 12], value: [8, 60] },
-  mythic: { hardness: [5, 5], depth: [16, 20], value: [300, 600] },
+  common: { hardness: [1, 3], depth: [0, 0], value: [1, 3] },
+  rare: { hardness: [3, 7], depth: [2, 12], value: [8, 60] },
+  mythic: { hardness: [9, 10], depth: [16, 20], value: [300, 600] },
 };
 
 /* palette from a base colour; mythic ores get a hot highlight */
@@ -67,11 +67,11 @@ const spread = (R, a, b, n) => Array.from({ length: n }, (_, i) => Math.round(a 
 
 export function oreStats(R, tier, rank, rareCount = 4) {
   const T = TIER_RULES[tier];
-  if (tier === 'common') return { hardness: rank === 0 ? 1 : 2, depthMin: 0, baseValue: rank === 0 ? 1 : 2 + Math.round(R()) };
-  if (tier === 'mythic') return { hardness: 5, depthMin: 16 + Math.floor(R() * 5), baseValue: Math.round((300 + R() * 300) / 10) * 10 };
+  if (tier === 'common') return { hardness: rank === 0 ? 1 : 2 + (R() < 0.35 ? 1 : 0), depthMin: 0, baseValue: rank === 0 ? 1 : 2 + Math.round(R()) };
+  if (tier === 'mythic') return { hardness: 9 + Math.round(R()), depthMin: 16 + Math.floor(R() * 5), baseValue: Math.round((300 + R() * 300) / 10) * 10 };
   const k = rank / Math.max(1, rareCount - 1);
   return {
-    hardness: clamp(Math.round(2 + k * 2), T.hardness[0], T.hardness[1]),
+    hardness: clamp(Math.round(3 + k * 4), T.hardness[0], T.hardness[1]),
     depthMin: clamp(Math.round(2 + k * 9 + R() * 1.5), T.depth[0], T.depth[1]),
     baseValue: clamp(Math.round(8 * Math.pow(60 / 8, k) * (0.9 + R() * 0.2)), T.value[0], T.value[1]),
   };
