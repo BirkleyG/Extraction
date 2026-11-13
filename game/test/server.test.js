@@ -133,6 +133,7 @@ for (const [label, url] of backends) {
       assert.match(html, /classic\/net\.js/);
       assert.equal((await fetch(base + '/classic/net.js')).status, 200);
       assert.equal((await (await fetch(base + '/healthz')).json()).ok, true);
+      assert.match((await (await fetch(base + '/api/config')).json()).version, /^\d+\.\d+\.\d{2,}$/);
     });
   });
 }
