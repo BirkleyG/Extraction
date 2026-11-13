@@ -82,7 +82,7 @@ export function createMine(canvas, get, hooks = {}) {
     dpr = Math.min(2, window.devicePixelRatio || 1);
     canvas.width = Math.max(1, Math.round(r.width * dpr));
     canvas.height = Math.max(1, Math.round(r.height * dpr));
-    if (!cam.homed) { setView(homeView()); cam.homed = true; }
+    if (!cam.homed) { setView(innerWidth < 700 ? fitView() : homeView()); cam.homed = true; }
     z = zt = clamp(z, zMin(), ZMAX); Sc = z * dpr; clampCam();
   }
   // zoom toward a device-pixel point (ax, ay)

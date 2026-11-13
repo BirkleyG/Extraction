@@ -461,3 +461,9 @@ textarea { background: var(--ink); color: var(--text); border: 2px solid var(--l
   .stat.coin i { flex-basis: 100%; line-height: 1; }
   .hud .stat:not(.coin) { flex-shrink: 0; }
 }
+
+/* closing bell replaces the day readout on narrow screens */
+@media (max-width:700px){body.bellon .stat.day{display:none}}
+/* tab strip: snap and fade so clipped tabs read as scrollable */
+#tabs{scroll-snap-type:x proximity;scroll-padding:0 24px}
+#tabs [data-tab]{scroll-snap-align:center}

@@ -40,7 +40,7 @@ export function createPrestige(S, A, ui) {
       ${ok ? '' : `<p class="lede">The Guild signs off a nuke at <b>${fmt(min)}</b> earned this run.</p><span class="nextbar big"><i style="width:${clamp(100 * run / min, 0, 100).toFixed(1)}%"></i></span>`}
       <p class="strategy">Rank is coin on hand, so nuking drops you to zero. Early nukes compound; late ones waste the month.</p>
       <p class="lede small">Spectacle = coin earned this run<sup>1/7.5</sup>. It becomes SP for evolutions and sets how big a change the Maker can grant. Ships in flight get paid; everything else becomes a crater. You keep SP, evolutions and unlocked panels.</p>
-      <button class="buy big danger nukebtn" data-nuke="1" ${ok ? '' : 'disabled'}>${ok ? `Arm the nuke · +${q.spectacle.toFixed(1)} SP` : 'Not enough earned yet'}</button>
+      <button class="buy big danger nukebtn" data-nuke="1" ${ok ? '' : 'disabled'}>${ok ? `Arm the nuke · +${q.spectacle.toFixed(1)} SP` : `Rebuild to ${fmt(20e6)} earned to arm the next nuke (${fmt(c.runEarned || 0)})`}</button>
     </div>`;
     h += `<h3>Evolutions <span class="pill sp">${fmt(c.sp || 0)} SP</span></h3><p class="lede">Bought with SP from nukes. They last the whole month, through every later nuke.</p>`;
     h += ui.bulkBar();

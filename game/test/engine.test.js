@@ -796,7 +796,7 @@ test('nuke: settles ships in flight, resets the colony, keeps SP, evolutions, na
   assert.equal(x.coin, E.TUNING.startCoin);
   assert.equal(x.shafts.length, 1);
   assert.equal(x.ships.length, 1);
-  assert.equal(x.miners, 0);
+  assert.equal(x.miners, 3, "the Guild sends a relief crew");
   assert.equal(x.lift, 0);
   assert.deepEqual(x.evo, { mine: 1, ship: 0, sell: 1, spectacle: 2 });
   assert.equal(x.nukes, 1);
@@ -807,7 +807,7 @@ test('nuke: settles ships in flight, resets the colony, keeps SP, evolutions, na
   assert.equal(x.v, E.ENGINE_VERSION);
   assertSane(x, 'nuked');
   // the fresh colony plays on
-  const y = run(x, w, { type: 'hire', n: 3 });
+  const y = x; // the relief crew is already digging
   assert.ok(E.advance(y, w, y.t + HOUR).colony.earned > 0);
   // and can't nuke again right away
   assert.match(E.quote(x, w, { type: 'nuke' }).error, /20M/);

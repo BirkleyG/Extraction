@@ -70,10 +70,11 @@ export function createUI(S, A) {
     const left = w.endsAt - now, bell = $('#bell');
     if (left > 0 && left <= BELL_MS) {
       bell.hidden = false;
+      document.body.classList.add('bellon');
       bell.innerHTML = `<small>Closing bell</small><b>${hms(left)}</b>`;
       const k = `msc2_bell_${w.month}`;
       if (!store(k)) { store(k, 1); banner('The closing bell', 'Final 48 hours. The richest colony at the bell enters the Hall of Fame.', 'bell'); sfx.bell && sfx.bell(); }
-    } else bell.hidden = true;
+    } else { bell.hidden = true; document.body.classList.remove('bellon'); }
   }
   function rankList() {
     const rows = [...S.board.values()].filter((b) => b.month === S.world.month).map((b) => (b.id === S.me.id ? { ...b, coin: S.colony.coin, coinPerMin: S.rates.coinPerMin } : b));
@@ -87,6 +88,8 @@ export function createUI(S, A) {
     S.ui.tab = id; seenTabs.add(id); store('msc2_seenTabs', [...seenTabs]);
     lastKey = ''; render(true);
     $('#tabbody').scrollTop = 0;
+    const tb = document.querySelector(`[data-tab="${id}"]`);
+    if (tb && tb.scrollIntoView) tb.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
     if (id === 'ranks') A.loadBoard();
     if (id === 'galaxy') { GX.markSeen(); GX.refresh().then(() => render(true)); }
     if (id === 'prestige') PR.loadMaker();

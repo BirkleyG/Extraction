@@ -368,7 +368,7 @@ function nukeColony(c, world, spect, ctx = {}) {
     hazards: num(c.stats?.hazards), lost: num(c.stats?.lost),
   };
   Object.assign(c, {
-    coin: T.startCoin, earned: 0, runEarned: 0, miners: 0, idle: 0, drill: 1,
+    coin: T.startCoin, earned: 0, runEarned: 0, miners: 3, idle: 0, drill: 1, // the Guild sends a relief crew so the rebuild starts moving
     lift: 0, conveyor: 0, yardLvl: 0, pads: 1, tunnel: {}, tunnelG: {}, yard: {}, yardG: {},
     shafts: [], ships: [], born: c.t, stats: freshStats(), tutorial: 5,
     safety: { ventilation: 0, pumps: 0, firebreaks: 0 },
