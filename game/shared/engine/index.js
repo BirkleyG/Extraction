@@ -9,7 +9,9 @@
  *   quote(colony, world, cmd) -> { cost, effect, canAfford, n, error?, currency?: 'sp', spectacle? }   (evolve costs SP)
  *   rates(colony, world) -> { orePerMin, minePerMin, liftPerMin, conveyorPerMin, conveyorPerPad, shipPerMin,
  *                             throughput, coinPerMin, valuePerOre, yardLoss, yardCap, tunnelCap, idleMiners, pads,
- *                             shafts: [{ id, name, ore, miners, cap, orePerMin, perMiner, ok, reason, vein,
+ *                             shafts: [{ id, name, ore (= oreId, mined now), miners, cap, orePerMin, perMiner, ok, reason,
+ *                                        face (m), metresPerMin, dug (pockets dug out), pocket: null | { ore, left, len } (m),
+ *                                        next: null | { ore, at (m ahead), blocked }, blocked, need (drill level), wallRate,
  *                                        risk (mishaps/hour, 0..1), haltMins, lights, supports }],
  *                             ships: [{ id, name, cls, cap, dest, tripSecs, perMin, cycleSecs }],
  *                             hazards: { perHour, loss (share of output), lossPerMin, colony: { gas, flood, fire, quake } },
@@ -29,7 +31,7 @@
  *   marketTable(world, now), fmt(n), PANELS, TUTORIAL, TUNING, spectacleOf(colony, runEarned), evoMult(colony, kind).
  *
  * Commands ({ type, ...args }; n = 1 | 10 | 100 | 'max' where noted):
- *   hire {n} · buyShaft · redrill {shaftId} (exhausted veins only) · upgradeShaft {shaftId, kind:'cart'|'bunk', n}
+ *   hire {n} · buyShaft · upgradeShaft {shaftId, kind:'cart'|'bunk', n}
  *   upgradeLift {n} · upgradeConveyor {n} · upgradeYard {n} · buyPad {n} · upgradeDrill
  *   buyShip {cls:'hauler'|'cruiser'|'freighter'} · upgradeShip {shipId, n} · setRoute {shipId, policy:'best'|'nearest'|'fixed', destId?}
  *   rename {target:'colony'|'shaft'|'ship', id, name} · tutorial {step} · autoSpend {keep?: 0..0.9}
@@ -47,16 +49,22 @@
  *     safety: { ventilation, pumps, firebreaks }, hz: { gas, flood, fire, quake }, hzRng,   (hz = hazard clocks, see hazards.js)
  *     miners, idle, drill, lift, conveyor, yardLvl, pads,
  *     tunnel: { oreId: amt }, tunnelG, yard: { oreId: amt }, yardG,   (…G = grade units: amount x depth grade; value = G x price)
- *     shafts: [{ id, idx, name, ore, vein: null | { total, left, warn }, up: { bunk, cart, lights, supports }, miners,
- *                haltUntil (ms or null), hz: { cave, mad } }],
+ *     shafts: [{ id, idx, name, ore (mined now), face (m), pk: [{ ore, start, len, hit?, blk? }] (rolled ahead), pkN, pkEnd, dug,
+ *                up: { bunk, cart, lights, supports }, miners, haltUntil (ms or null), hz: { cave, mad } }],
  *     ships: [{ id, name, cls, lvl, policy, destId, state: 'home'|'loading'|'out'|'back', cargo: { oreId: amt }, cargoG,
  *               dest, readyAt, dockedAt, firstLoadAt, departAt, arriveAt, homeAt }],
  *     stats: { mined, lifted, loaded, sold, sales, launches, upgrades, spent, firstSaleAt, hazards, lost },
  *     unlocked: { panels, licenses }, tutorial, nextId }
- * Event types: autoSpend, sale, sales (summary with data.ore/coin), salesSummary, launch, vein20, vein5, veinOut, buy, unlock, license,
+ * Event types: autoSpend, sale, sales (summary with data.ore/coin), salesSummary, launch, buy, unlock, license,
+ *   strike { shaftId, oreId, tier } (face broke into a pocket), pocketOut { shaftId, oreId }, blocked { shaftId, oreId, need },
+ *   pocketSummary { count } (past 12 pocket events in one advance),
  *   hazard { kind: 'cavein'|'insanity'|'gas'|'flood'|'fire'|'quake', shaftId?, lost, haltMins, rescued?, burned? } (story text),
  *   hazardSummary { count, lost }, nuke { spectacle, runEarned, sp, paid }, evolve { kind, sp, n, level }.
  *
+ * Tunnels (pockets.js): each shaft digs sideways; its face advances as ore is mined (ore per metre scales with the crew,
+ *   the haul slows long tunnels). Pockets { ore, start, len } are rolled from (seed, nukes, depth, n), richer deeper
+ *   (each ore's depthMin; rares peek up to 2 levels early, mythic only at depth). Outside pockets the crew mines the best
+ *   common the drill can cut; a pocket harder than the drill stops the face (walls pay T.pk.wall of the rate).
  * Hazards: danger = shaft depth index (home shaft safe); none in a colony's first 30 minutes (after a nuke too).
  *   Each hazard spends a seeded Exp(1) clock at its current rate, so advance() stays deterministic and step-invariant.
  *   Halted shafts dig nothing until haltUntil; mishaps never take the colony's last miner.

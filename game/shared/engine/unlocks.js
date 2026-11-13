@@ -39,7 +39,7 @@ for (const p of PANELS) p.when = (c, I, r) => (got(c) >= p.at && waited(c, p)) |
 export function panelFor(cmd) {
   switch (cmd.type) {
     case 'hire': return 'hire';
-    case 'buyShaft': case 'redrill': return 'shafts';
+    case 'buyShaft': return 'shafts';
     case 'upgradeShaft': return cmd.kind === 'bunk' ? 'bunks' : (cmd.kind === 'lights' || cmd.kind === 'supports') ? 'safety' : 'carts';
     case 'upgradeSafety': return 'safety';
     case 'nuke': case 'evolve': return 'prestige';

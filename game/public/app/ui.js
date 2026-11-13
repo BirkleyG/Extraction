@@ -174,23 +174,31 @@ export function createUI(S, A) {
   // ------------------------------------------------------------ panels
   const ore = (id) => S.oreById[id];
   const oreTag = (o) => (o ? `${oreIcon(o, 16)}<span style="color:${TIER_COL[o.tier]}">${esc(o.name)}</span>` : '');
-  function veinBar(s) {
-    if (!s.vein) return '<span class="pill mut">endless</span>';
-    const p = s.vein.left / Math.max(1, s.vein.total);
-    const col = p <= 0 ? '#5a5260' : p <= 0.05 ? 'var(--bad)' : p <= 0.2 ? 'var(--warn)' : 'var(--ok)';
-    return `<span class="vein" title="${fmt(s.vein.left)} of ${fmt(s.vein.total)} ore left"><i style="width:${(p * 100).toFixed(1)}%;background:${col}"></i></span><span class="vp">${p <= 0 ? 'exhausted' : Math.ceil(p * 100) + '%'}</span>`;
+  const fmtM = (m) => (m >= 1000 ? `${(m / 1000).toFixed(1)} km` : m >= 10 ? `${Math.round(m)} m` : `${Math.max(0, m).toFixed(1)} m`);
+  // The tunnel: what the face cuts now, how much of the pocket is left, what's next in the rock.
+  function pocketLine(s, r) {
+    if (!r) return '';
+    const nx = r.next, no = nx && ore(nx.ore);
+    if (r.blocked) return `<div class="why">${esc(r.reason)}. Crews scrape ${esc(ore(s.ore)?.name || 'common ore')} off the walls at ${Math.round(100 * TUNING.pk.wall)}% meanwhile.</div>`;
+    let h = '<div class="sh-s pk">';
+    if (r.pocket) {
+      const p = 1 - r.pocket.left / Math.max(1e-9, r.pocket.len);
+      h += `<span>Pocket: ${fmtM(r.pocket.left)} left</span><span class="vein" title="${fmtM(r.pocket.left)} of ${fmtM(r.pocket.len)} left"><i style="width:${((1 - p) * 100).toFixed(1)}%;background:${ore(s.ore)?.color || 'var(--ok)'}"></i></span>`;
+    } else h += `<span class="mut">${fmtM(r.face)} dug</span>`;
+    if (nx && no) {
+      const mins = r.metresPerMin > 0 ? nx.at / r.metresPerMin : 0;
+      h += `<span>Next: ${oreTag(no)} in ${fmtM(nx.at)}${mins > 0 && !r.pocket ? ` <small class="mut">~${mins < 60 ? Math.ceil(mins) + ' min' : (mins / 60).toFixed(1) + ' h'}</small>` : ''}${nx.blocked ? ` <span class="pill warn">needs drill ${no.tier === 'mythic' ? 'mythic' : no.hardness}</span>` : ''}</span>`;
+    }
+    return h + '</div>';
   }
   function shaftRows(s, r, inCard = false) {
     const u = S.unl, o = ore(s.ore);
-    const exhausted = (s.vein && s.vein.left <= 0) || !!s.spent;
-    let h = `<div class="shaft">${inCard ? '' : `<div class="sh-h"><b class="nm" data-rename="shaft" data-id="${s.id}" title="Rename">${esc(s.name)}</b> ${oreTag(o)} <span class="pill ${o?.tier === 'mythic' ? 'warn' : o?.tier === 'rare' ? 'sp' : 'mut'}">${o?.tier || ''}</span></div>`}
-      <div class="sh-s"><span>${s.miners}/${r ? r.cap : '?'} miners</span><span>${fmt(r ? r.orePerMin : 0)} ore/min</span>${veinBar(s)}</div>
+    let h = `<div class="shaft">${inCard ? '' : `<div class="sh-h"><b class="nm" data-rename="shaft" data-id="${s.id}" title="Rename">${esc(s.name)}</b> ${oreTag(o)} <span class="pill ${o?.tier === 'mythic' ? 'warn' : o?.tier === 'rare' ? 'sp' : 'mut'}">${r && r.pocket ? 'pocket' : o?.tier || ''}</span></div>`}
+      <div class="sh-s"><span>${s.miners}/${r ? r.cap : '?'} miners</span><span>${fmt(r ? r.orePerMin : 0)} ore/min</span></div>
+      ${pocketLine(s, r)}
       ${r && !r.ok ? `<div class="why">${esc(r.reason)}</div>` : ''}`;
-    if (exhausted && has(u, 'shafts')) h += row({ type: 'redrill', shaftId: s.id }, 'Re-drill', s.spent ? `Rare vein spent; crews are mining ${esc(ore(s.ore)?.name || 'common ore')}. Drill for a new rare vein.` : 'Roll a fresh vein here', { btn: 'Drill' });
-    else {
-      if (has(u, 'carts')) h += row({ type: 'upgradeShaft', shaftId: s.id, kind: 'cart' }, `Carts <span class="lvl">Lv ${s.up.cart}</span>`, '', { btn: 'Upgrade' });
-      if (has(u, 'bunks')) h += row({ type: 'upgradeShaft', shaftId: s.id, kind: 'bunk' }, `Bunkhouse <span class="lvl">Lv ${s.up.bunk}</span>`, '', { btn: 'Build' });
-    }
+    if (has(u, 'carts')) h += row({ type: 'upgradeShaft', shaftId: s.id, kind: 'cart' }, `Carts <span class="lvl">Lv ${s.up.cart}</span>`, '', { btn: 'Upgrade' });
+    if (has(u, 'bunks')) h += row({ type: 'upgradeShaft', shaftId: s.id, kind: 'bunk' }, `Bunkhouse <span class="lvl">Lv ${s.up.bunk}</span>`, '', { btn: 'Build' });
     return h + '</div>';
   }
   function advisor() {
@@ -330,7 +338,7 @@ export function createUI(S, A) {
   function structKey() {
     const c = S.colony, u = S.unl;
     const base = [S.ui.tab, u.panels.join(','), u.licenses.join(','), S.ui.bulk];
-    if (S.ui.tab === 'mine') base.push(c.miners, c.idle, c.drill, c.shafts.map((s) => [s.id, s.name, s.ore, s.up.cart, s.up.bunk, s.miners, s.vein ? (s.vein.left <= 0 ? 'x' : Math.ceil(100 * s.vein.left / s.vein.total)) : ''].join(':')).join(';'), S.bneck ? S.bneck.message + (S.bneck.suggestion?.canAfford ? 1 : 0) : '', Math.floor(S.rates.minePerMin * 10), S.unl.next.panel ? Math.floor(20 * S.unl.next.panel.have / (S.unl.next.panel.at || 1)) + ':' + Math.ceil((S.unl.next.panel.waitH || 0) * 6) : '');
+    if (S.ui.tab === 'mine') base.push(c.miners, c.idle, c.drill, c.shafts.map((s, i) => [s.id, s.name, s.ore, s.up.cart, s.up.bunk, s.miners, Math.floor((s.face || 0) * 2), S.rates.shafts[i]?.blocked ? 'b' : ''].join(':')).join(';'), S.bneck ? S.bneck.message + (S.bneck.suggestion?.canAfford ? 1 : 0) : '', Math.floor(S.rates.minePerMin * 10), S.unl.next.panel ? Math.floor(20 * S.unl.next.panel.have / (S.unl.next.panel.at || 1)) + ':' + Math.ceil((S.unl.next.panel.waitH || 0) * 6) : '');
     if (S.ui.tab === 'surface') base.push(c.lift, c.conveyor, c.yardLvl, c.pads, Math.round(S.rates.minePerMin), Math.round(S.rates.yardLoss * 100));
     if (S.ui.tab === 'fleet') base.push(c.ships.map((s) => [s.id, s.name, s.lvl, s.policy, s.destId, s.state].join(':')).join(';'), S.unl.day, Math.floor(Math.log10(1 + c.earned) * 4));
     if (S.ui.tab === 'market') base.push(Math.floor(S.now() / 15000), S.ui.mktCls, c.shafts.length);
@@ -403,13 +411,13 @@ export function createUI(S, A) {
       const i = c.shafts.findIndex((s) => s.id === card.id);
       if (i < 0) return closeCard();
       const s = c.shafts[i], o = ore(s.ore);
-      key += [s.up.cart, s.up.bunk, s.miners, s.name, s.ore, s.vein && s.vein.left <= 0, S.unl.panels.length, S.ui.bulk].join(':');
+      key += [s.up.cart, s.up.bunk, s.miners, s.name, s.ore, Math.floor((s.face || 0) * 2), S.rates.shafts[i]?.blocked, S.unl.panels.length, S.ui.bulk].join(':');
       html = `<h4><span class="nm" data-rename="shaft" data-id="${s.id}" title="Rename">${esc(s.name)}</span> <small>depth ${s.idx + 1}</small></h4>
         <div class="orebox">${o ? oreIcon(o, 32) : ''}<div><b style="color:${TIER_COL[o?.tier]}">${esc(o?.name)}</b> <span class="pill mut">${o?.tier}</span><br><small>${esc(o?.description || '')}</small></div></div>
         ${(has(S.unl, 'carts') || has(S.unl, 'bunks')) ? bulkBar() : ''}` + shaftRows(s, S.rates.shafts[i], true);
     } else if (card.kind === 'dig') {
       key += c.shafts.length;
-      html = `<h4>A new shaft</h4><p class="lede">Every level down is richer: more ore per miner and purer grade. Rare veins run out; common ore never does.</p>` + row({ type: 'buyShaft' }, `Dig shaft ${c.shafts.length + 1}`, '', { btn: 'Dig' });
+      html = `<h4>A new shaft</h4><p class="lede">Every level down is richer: more ore per miner, purer grade and rarer pockets in the rock. Crews dig common ore until the tunnel breaks into a pocket.</p>` + row({ type: 'buyShaft' }, `Dig shaft ${c.shafts.length + 1}`, '', { btn: 'Dig' });
     } else if (card.kind === 'bneck') {
       const b = S.bneck;
       if (!b) return closeCard();
@@ -440,9 +448,7 @@ export function createUI(S, A) {
     c.shafts.forEach((s, i) => {
       const r = S.rates.shafts[i];
       const o = ore(s.ore);
-      if (s.vein && s.vein.left <= 0) out.push({ lvl: 'bad', text: `${s.name}: ${o?.name} vein exhausted. Re-drill or dig deeper.`, shaft: s.id });
-      else if (s.vein && s.vein.left <= s.vein.total * 0.05) out.push({ lvl: 'bad', text: `${s.name}: ${o?.name} vein at 5%.`, shaft: s.id });
-      else if (s.vein && s.vein.left <= s.vein.total * 0.2) out.push({ lvl: 'warn', text: `${s.name}: ${o?.name} vein at 20%.`, shaft: s.id });
+      if (r && r.blocked) out.push({ lvl: 'warn', text: `${s.name}: ${r.reason}.`, shaft: s.id });
       else if (r && !r.ok) out.push({ lvl: 'warn', text: `${s.name}: ${r.reason}.`, shaft: s.id });
     });
     return out;
@@ -533,7 +539,7 @@ export function createUI(S, A) {
     const rows = [
       ['Coin earned', fmt(s.coin), 'gold'], ['Ore sold', fmt(s.sold), ''], ['Ships launched', fmt(s.launches), ''], ['Ship sales', fmt(s.sales), ''],
     ];
-    if (s.veins) rows.push(['Veins exhausted', s.veins, 'bad']);
+    if (s.pockets) rows.push(['Ore pockets dug out', s.pockets, 'gold']);
     const { el, close } = sheet(`<div class="away"><small>While you were away · ${esc(dur(s.ms))}</small><h2>Welcome back, General</h2>
       <p class="lede">Your crews kept digging. Here's what the colony did without you.</p>
       <div class="awaygrid">${rows.map(([k, v, c]) => `<div><small>${k}</small><b class="${c}">${v}</b></div>`).join('')}</div>

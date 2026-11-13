@@ -79,7 +79,8 @@ test('newColony: plain JSON starter colony', () => {
   assert.equal(c.v, E.ENGINE_VERSION);
   assert.equal(c.shafts.length, 1);
   assert.equal(c.shafts[0].ore, 'gravel');
-  assert.equal(c.shafts[0].vein, null);
+  assert.equal(c.shafts[0].face, 0);
+  assert.ok(Array.isArray(c.shafts[0].pk));
   assert.equal(c.ships.length, 1);
   assert.equal(c.miners, 0);
   assert.ok(c.coin >= E.quote(c, newWorld(), { type: 'hire' }).cost, 'can afford the first miner');
@@ -130,8 +131,12 @@ test('step invariance: 3 days in one call vs 1-minute calls agree within 0.5%', 
     assert.ok(rel(one.earned, x.earned) < 0.005);
     assert.ok(rel(one.stats.mined, x.stats.mined) < 0.005, `mined ${one.stats.mined} vs ${x.stats.mined}`);
     assert.ok(rel(one.stats.sold, x.stats.sold) < 0.005);
+    const face = (y) => y.shafts.reduce((a, q) => a + q.face, 0), dug = (y) => y.shafts.reduce((a, q) => a + q.dug, 0);
+    assert.ok(rel(face(one), face(x)) < 0.005, `faces ${face(one)} vs ${face(x)}`);
+    assert.ok(Math.abs(dug(one) - dug(x)) <= 1, `pockets dug ${dug(one)} vs ${dug(x)}`);
   }
   assert.ok(one.earned > 0);
+  assert.ok(one.shafts.reduce((a, q) => a + q.dug, 0) > 3, 'tunnels crossed several pocket boundaries');
 });
 
 test('offline 3-day catch-up runs fast and pays at about the live rate', () => {
@@ -184,11 +189,13 @@ test('commands: shafts, shaft upgrades and re-drill', () => {
   let c = rich(fresh(0), w);
   const q = E.quote(c, w, { type: 'buyShaft' });
   assert.match(q.effect, /^Shaft 2: /);
-  const rng = c.rng;
   c = run(c, w, { type: 'buyShaft' });
   assert.equal(c.shafts.length, 2);
-  assert.notEqual(c.rng, rng);
-  assert.match(q.effect, new RegExp(PLANET.ores.find((o) => o.id === c.shafts[1].ore).name), 'quote previews the vein');
+  const ns = c.shafts[1];
+  assert.equal(ns.face, 0);
+  assert.equal(ns.ore, 'gravel', 'a new tunnel starts on common ore');
+  assert.ok(ns.pk.length >= 1 && ns.pk[0].start <= E.TUNING.pk.first[1], 'first pocket a few metres in');
+  assert.match(q.effect, new RegExp(`first pocket: ${PLANET.ores.find((o) => o.id === ns.pk[0].ore).name}`), 'quote previews the first pocket');
   const s = c.shafts[0];
   const qc = E.quote(c, w, { type: 'upgradeShaft', shaftId: s.id, kind: 'cart', n: 10 });
   assert.match(qc.effect, /ore per miner/);
@@ -199,15 +206,9 @@ test('commands: shafts, shaft upgrades and re-drill', () => {
   const r = E.applyCommand(c, w, { type: 'upgradeShaft', shaftId: s.id, kind: 'bunk', n: 1 }, c.t);
   assert.match(r.error, /maxed/);
   assert.match(E.applyCommand(c, w, { type: 'upgradeShaft', shaftId: 'nope', kind: 'cart' }, c.t).error, /No such shaft/);
-  // re-drill only works on exhausted veins and gives a new finite vein
-  for (let i = 0; i < 4; i++) c = run(c, w, { type: 'buyShaft' });
-  const deep = c.shafts[c.shafts.length - 1];
-  assert.match(E.applyCommand(c, w, { type: 'redrill', shaftId: deep.id }, c.t).error, /exhausted/);
-  c.shafts[c.shafts.length - 1] = { ...deep, ore: 'amber', vein: { total: 100, left: 0, warn: 3 } };
-  c = run(c, w, { type: 'redrill', shaftId: deep.id });
-  const nd = c.shafts[c.shafts.length - 1];
-  assert.ok(nd.vein && nd.vein.left > 0 && nd.vein.left === nd.vein.total);
-  assert.notEqual(PLANET.ores.find((o) => o.id === nd.ore).tier, 'common');
+  // re-drilling is gone: tunnels keep going and find the next pocket
+  assert.equal(E.applyCommand(c, w, { type: 'redrill', shaftId: s.id }, c.t).error, 'Unknown command');
+  assert.ok(!E.candidateMoves(c, w).some((m) => m.type === 'redrill'));
   // tunnel is full at 30
   let full = rich(fresh(0), w, 1e300);
   for (let i = 1; i < 30; i++) full = run(full, w, { type: 'buyShaft' });
@@ -292,7 +293,7 @@ test('fuzz: never negative, never NaN', () => {
   let c = rich(fresh(0), w, 2e5);
   let s = 12345;
   const rnd = (n) => { s = (s * 16807) % 2147483647; return s % n; };
-  const kinds = ['hire', 'buyShaft', 'upgradeShaft', 'upgradeLift', 'upgradeConveyor', 'upgradeYard', 'buyPad', 'upgradeDrill', 'buyShip', 'upgradeShip', 'setRoute', 'redrill', 'rename'];
+  const kinds = ['hire', 'buyShaft', 'upgradeShaft', 'upgradeLift', 'upgradeConveyor', 'upgradeYard', 'buyPad', 'upgradeDrill', 'buyShip', 'upgradeShip', 'setRoute', 'rename'];
   let t = 0;
   for (let i = 0; i < 400; i++) {
     t += rnd(4) === 0 ? rnd(6 * HOUR) : rnd(20_000);
@@ -310,68 +311,122 @@ test('fuzz: never negative, never NaN', () => {
   assert.ok(c.earned > 0);
 });
 
-test('veins: warnings at 20% and 5%, then exhaustion; miners move on', () => {
+// A shaft at depth 1 with one hand-placed pocket (later pockets roll after it as usual).
+function withPocket(c, pocket) {
+  c = JSON.parse(JSON.stringify(c));
+  const s = c.shafts[1];
+  Object.assign(s, { face: 0, pk: [pocket], pkN: 1, pkEnd: pocket.start + pocket.len, dug: 0 });
+  return c;
+}
+
+test('pockets: strike, mine the pocket ore, back to common; rates show it', () => {
   const w = newWorld();
   let c = rich(fresh(0), w, 1e9);
   c = run(c, w, { type: 'upgradeDrill' });
   c = run(c, w, { type: 'buyShaft' });
   c = run(c, w, { type: 'upgradeLift', n: 20 });
-  c.shafts[1] = { ...c.shafts[1], ore: 'amber', vein: { total: 2000, left: 2000, warn: 0 } };
+  c = withPocket(c, { ore: 'amber', start: 1, len: 2 });
   c = run(c, w, { type: 'hire', n: 3 });
-  assert.equal(c.shafts[1].miners, 3, 'miners take the valuable rare shaft first');
-  const events = [];
+  c = run(c, w, { type: 'hire', n: 3 });
+  assert.equal(c.shafts[1].ore, 'gravel');
+  let r = E.rates(c, w).shafts[1];
+  assert.equal(r.pocket, null);
+  assert.equal(r.next.ore, 'amber');
+  assert.ok(Math.abs(r.next.at - 1) < 1e-9 && r.next.blocked === false);
+  assert.ok(r.metresPerMin > 0);
+  const events = [], ores = [];
+  let sawPocket = null;
   const t0 = c.t;
-  for (let t = t0; t < t0 + 3 * HOUR; t += 5 * MIN) {
-    const r = E.advance(c, w, t);
-    c = r.colony;
-    events.push(...r.events.filter((e) => /^vein/.test(e.type)));
+  for (let t = t0 + MIN; t < t0 + 3 * HOUR; t += MIN) {
+    const x = E.advance(c, w, t);
+    c = x.colony;
+    events.push(...x.events.filter((e) => ['strike', 'pocketOut', 'blocked'].includes(e.type) && e.data.shaftId === c.shafts[1].id));
+    if (ores[ores.length - 1] !== c.shafts[1].ore) ores.push(c.shafts[1].ore);
+    const rs = E.rates(c, w).shafts[1];
+    if (rs.pocket && !sawPocket) sawPocket = rs.pocket;
   }
-  assert.deepEqual(events.map((e) => e.type), ['vein20', 'vein5', 'veinOut']);
-  assert.equal(events[0].data.pct, 20);
-  assert.ok(events[0].at < events[1].at && events[1].at < events[2].at);
-  // the 20% event fires when about 1600 of 2000 were mined
-  const rate = 3 * E.TUNING.minePerMiner * Math.pow(E.TUNING.richness, 1) / MIN;
-  assert.ok(Math.abs(events[0].at - (c.born + 1600 / rate)) < 2 * MIN, 'warning near the right time');
-  // Crews fall back to common ore instead of standing idle; a re-drill is offered.
-  assert.equal(c.shafts[1].spent, 'amber');
-  assert.equal(c.shafts[1].vein, null);
-  assert.equal(PLANET.ores.find((o) => o.id === c.shafts[1].ore).tier, 'common');
-  assert.ok(E.rates(c, w).shafts[1].orePerMin > 0, 'still producing');
-  assert.match(events[2].text, /switched to/);
-  assert.ok(E.quote(c, w, { type: 'redrill', shaftId: c.shafts[1].id }).cost > 0);
-  const re = run(c, w, { type: 'redrill', shaftId: c.shafts[1].id });
-  assert.notEqual(PLANET.ores.find((o) => o.id === re.shafts[1].ore).tier, 'common');
-  assert.equal(re.shafts[1].spent, undefined);
+  assert.deepEqual(events.slice(0, 2).map((e) => e.type), ['strike', 'pocketOut']);
+  assert.match(events[0].text, /Shaft 2 struck Amber!/);
+  assert.deepEqual(events[0].data, { shaftId: c.shafts[1].id, oreId: 'amber', tier: 'rare' });
+  assert.equal(ores[1], 'amber', 'the crew mines the pocket ore');
+  assert.notEqual(ores[2], 'amber', 'then goes back to common');
+  assert.equal(E.TUNING.pk && PLANET.ores.find((o) => o.id === ores[2]).tier, 'common');
+  assert.ok(sawPocket && sawPocket.ore === 'amber' && sawPocket.len === 2 && sawPocket.left <= 2);
+  assert.ok(c.shafts[1].face > 3 && c.shafts[1].dug >= 1);
+  assert.ok(!c.shafts[1].pk.some((p) => p.start + p.len <= c.shafts[1].face), 'dug-out pockets are pruned');
+  // the strike lands when the face reaches 1 m: Q(1) ore at the shaft's rate
+  const s1 = c.shafts[1];
+  const rate = 3 * E.TUNING.minePerMiner * Math.pow(E.TUNING.richness, 1);
+  const ore1 = E.TUNING.pk.minPerM * rate * (1 + 1 / (2 * E.TUNING.pk.haulM));
+  assert.ok(Math.abs(events[0].at - (c.born + ore1 / rate * MIN)) < 2 * MIN, `strike near the right time (${events[0].at} vs ${ore1 / rate * MIN})`);
 });
 
-test('hardness: a vein harder than the drill produces nothing until upgraded', () => {
+test('pockets: a hard pocket stops the face; walls pay 60% until the drill breaks in', () => {
   const w = newWorld();
   let c = rich(fresh(0), w);
   c = run(c, w, { type: 'buyShaft' });
-  c.shafts[1] = { ...c.shafts[1], ore: 'jade', vein: { total: 1e9, left: 1e9, warn: 0 } };
+  c = run(c, w, { type: 'upgradeLift', n: 20 });
+  c = withPocket(c, { ore: 'jade', start: 0.5, len: 1.5 });
   c = run(c, w, { type: 'hire', n: 6 });
-  assert.equal(c.miners, 3, 'blocked shafts offer no bunks');
-  c.miners = 6; // e.g. miners hired before the shaft was blocked
-  c = E.advance(c, w, c.t + 1).colony;
+  assert.equal(c.miners, 6, 'a tunnel heading for a hard pocket still has bunks');
+  const evs = [];
+  const t0 = c.t;
+  for (let t = t0 + MIN; t <= t0 + 2 * HOUR; t += 10 * MIN) { const x = E.advance(c, w, t); c = x.colony; evs.push(...x.events); }
+  const s = c.shafts[1];
+  assert.equal(s.face, 0.5, 'face waits at the pocket');
+  assert.equal(evs.filter((e) => e.type === 'blocked').length, 1, 'blocked fires once');
+  assert.match(evs.find((e) => e.type === 'blocked').text, /needs drill 3/);
   let r = E.rates(c, w).shafts[1];
-  assert.equal(r.ok, false);
-  assert.equal(r.orePerMin, 0);
-  assert.equal(r.reason, 'Needs drill 3');
-  assert.equal(c.shafts[1].miners, 0, 'no miners on a blocked shaft');
-  assert.equal(c.idle, 3);
-  assert.equal(E.bottleneck(c, w).stage === 'blocked' || E.bottleneck(c, w).stage === 'idle', true);
-  const left = c.shafts[1].vein.left;
+  assert.equal(r.ok, true);
+  assert.equal(r.blocked, true);
+  assert.equal(r.need, 3);
+  assert.equal(r.reason, 'Needs drill 3 to break into Jade');
+  assert.equal(r.ore, 'gravel');
+  const full = 3 * E.TUNING.minePerMiner * Math.pow(E.TUNING.richness, 1);
+  assert.ok(Math.abs(r.wallRate - full * E.TUNING.pk.wall) < 1e-9 && r.orePerMin === r.wallRate);
+  assert.deepEqual(r.next, { ore: 'jade', at: 0, blocked: true });
+  const b = E.bottleneck(c, w);
+  assert.equal(b.stage, 'blocked');
+  assert.equal(b.suggestion.cmd.type, 'upgradeDrill');
+  assert.match(b.message, /stuck at a pocket/);
+  const mined = c.stats.mined;
   c = E.advance(c, w, c.t + HOUR).colony;
-  assert.equal(c.shafts[1].vein.left, left);
+  assert.ok(c.stats.mined > mined, 'walls keep paying');
+  assert.equal(c.shafts[1].face, 0.5);
   c = run(c, w, { type: 'upgradeDrill' });
+  assert.equal(E.rates(c, w).shafts[1].blocked, true, 'drill 2 is not enough');
   c = run(c, w, { type: 'upgradeDrill' });
   r = E.rates(c, w).shafts[1];
-  assert.equal(r.ok, true);
-  assert.ok(r.orePerMin > 0 && c.shafts[1].miners === 3);
-  // mythic needs the mythic drill even at drill 5
+  assert.equal(r.blocked, false);
+  assert.equal(r.ore, 'jade');
+  const x = E.advance(c, w, c.t + 10 * MIN);
+  assert.ok(x.events.some((e) => e.type === 'strike' && e.data.oreId === 'jade'), 'breaking in is a strike');
+  assert.ok(x.colony.shafts[1].face > 0.5, 'face moves again');
+  // mythic pockets need the mythic drill even at drill 5
+  c = withPocket(x.colony, { ore: 'star', start: 0, len: 1 });
   c.drill = 5;
-  c.shafts[1] = { ...c.shafts[1], ore: 'star' };
   assert.match(E.rates(c, w).shafts[1].reason, /mythic drill/);
+});
+
+test('pockets: rolled from the seed, richer deeper, colony stays small after a month of digging', () => {
+  const w = newWorld();
+  let c = midgame(w);
+  const a = E.advance(c, w, c.t + HOUR).colony, b = E.advance(JSON.parse(JSON.stringify(c)), w, c.t + HOUR).colony;
+  assert.deepEqual(a.shafts.map((s) => s.pk), b.shafts.map((s) => s.pk));
+  // deeper shafts roll harder, rarer ores
+  let deep = rich(fresh(0), w, 1e300);
+  for (let i = 1; i < 30; i++) deep = run(deep, w, { type: 'buyShaft' });
+  const tierAt = (k) => deep.shafts[k].pk.map((p) => PLANET.ores.find((o) => o.id === p.ore));
+  assert.ok(tierAt(1).every((o) => o.tier === 'rare' && o.depthMin <= 3));
+  assert.ok(deep.shafts.slice(0, 15).every((s) => s.pk.every((p) => p.ore !== 'star')), 'mythic only deep');
+  const t0 = c.t;
+  for (let t = t0 + 6 * HOUR; t <= t0 + 30 * DAY; t += 6 * HOUR) c = E.advance(c, w, t).colony;
+  const size = JSON.stringify(c).length;
+  assert.ok(size < 30_000, `colony is ${size} bytes`);
+  for (const s of c.shafts) assert.ok(s.pk.length <= E.TUNING.pk.ahead + 1, `${s.name} keeps ${s.pk.length} pockets`);
+  assert.ok(c.shafts.some((s) => s.face > 100), 'tunnels get long');
+  assert.ok(c.shafts.reduce((x, s) => x + s.dug, 0) > 20, 'many pockets dug');
+  assertSane(c);
 });
 
 test('ships: load, launch, get paid on arrival, fly home', () => {

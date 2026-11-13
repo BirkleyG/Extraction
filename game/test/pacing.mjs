@@ -148,7 +148,7 @@ function run({ quiet = false, strategy = 'none' } = {}) {
     while (t < end) { t = Math.min(end, t + 30 * MIN); step(t); if (first20M == null && c.earned >= 2e7) first20M = t; }
     const r = E.rates(c, world);
     rows.push({ day: day + 1, coin: c.coin, earned: c.earned, cpm: r.coinPerMin, shafts: c.shafts.length, ships: c.ships.length, mix: ['hauler','cruiser','freighter'].map(k => c.ships.filter(s => s.cls === k).length).join('/'), miners: c.miners, drill: c.drill,
-      bn: E.bottleneck(c, world).stage, exh: c.shafts.filter((s) => s.vein && s.vein.left <= 0).length, month: c.monthEarned });
+      bn: E.bottleneck(c, world).stage, exh: r.shafts.filter((x) => x.blocked).length, dug: c.shafts.reduce((a, s) => a + (s.dug || 0), 0), face: Math.max(0, ...c.shafts.map((s) => s.face || 0)), month: c.monthEarned });
   }
   const result = {
     strategy, coin: c.coin, monthEarned: c.monthEarned, sp: c.sp, evo: c.evo, nukedAt, nukeInfo, first20M, prestigeAt,
@@ -159,8 +159,8 @@ function run({ quiet = false, strategy = 'none' } = {}) {
   if (strategy !== 'none') return result;
   out.push('');
   out.push('== (b) 30-day month, 4 check-ins/day, greedy ==');
-  out.push('day  coin     earned   coin/min  shafts ships miners drill exhausted bottleneck');
-  for (const r of rows) out.push(`${String(r.day).padStart(3)}  ${E.fmt(r.coin).padEnd(8)} ${E.fmt(r.earned).padEnd(8)} ${E.fmt(r.cpm).padEnd(9)} ${String(r.shafts).padStart(6)} ${String(r.ships).padStart(5)} ${String(r.miners).padStart(6)} ${String(r.drill).padStart(5)} ${String(r.exh).padStart(9)} ${r.bn}`);
+  out.push('day  coin     earned   coin/min  shafts ships miners drill stuck dug longest bottleneck');
+  for (const r of rows) out.push(`${String(r.day).padStart(3)}  ${E.fmt(r.coin).padEnd(8)} ${E.fmt(r.earned).padEnd(8)} ${E.fmt(r.cpm).padEnd(9)} ${String(r.shafts).padStart(6)} ${String(r.ships).padStart(5)} ${String(r.miners).padStart(6)} ${String(r.drill).padStart(5)} ${String(r.exh).padStart(5)} ${String(r.dug).padStart(4)} ${(Math.round(r.face) + 'm').padStart(7)} ${r.bn}`);
   out.push(`first 20M earned: ${first20M == null ? 'never' : 'day ' + (first20M / DAY + 1).toFixed(2)} · prestige panel: day ${prestigeAt == null ? '-' : (prestigeAt / DAY + 1).toFixed(2)}`);
   out.push(`hazards: ${hazards.length} (${Object.entries(result.byKind).map(([k, v]) => k + ' ' + v).join(', ')}), miners lost ${c.stats.lost}, safety ${JSON.stringify(c.safety)}, lights/supports avg ${(c.shafts.reduce((a, s) => a + (s.up.lights || 0), 0) / c.shafts.length).toFixed(1)}/${(c.shafts.reduce((a, s) => a + (s.up.supports || 0), 0) / c.shafts.length).toFixed(1)}`);
   for (const e of hazards.slice(0, 4)) out.push(`  day ${(e.at / DAY + 1).toFixed(2)}: ${e.text}`);

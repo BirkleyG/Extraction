@@ -19,8 +19,6 @@ export function candidateMoves(c, world) {
   for (const cls of Object.keys(T.ship)) list.push({ type: 'buyShip', cls });
   for (const s of c.ships) list.push({ type: 'upgradeShip', shipId: s.id });
   for (const s of c.shafts) {
-    if (s.spent || (s.vein && s.vein.left <= 0)) list.push({ type: 'redrill', shaftId: s.id });
-    if (s.vein && s.vein.left <= 0) continue;
     if (!shaftStatus(c, I, s).ok) continue;
     list.push({ type: 'upgradeShaft', shaftId: s.id, kind: 'cart' }, { type: 'upgradeShaft', shaftId: s.id, kind: 'bunk' });
   }
@@ -39,7 +37,6 @@ export function moveLabel(c, cmd) {
   switch (cmd.type) {
     case 'hire': return 'Hire a miner';
     case 'buyShaft': return 'Dig a new shaft';
-    case 'redrill': return `Re-drill ${sh()}`;
     case 'upgradeShaft': return { bunk: `Add bunks to ${sh()}`, lights: `Light up ${sh()}`, supports: `Shore up ${sh()}` }[cmd.kind] || `Add carts to ${sh()}`;
     case 'upgradeSafety': return { ventilation: 'Improve ventilation', pumps: 'Install pumps', firebreaks: 'Build firebreaks' }[cmd.kind] || 'Improve safety';
     case 'upgradeLift': return 'Upgrade the lift';
@@ -54,7 +51,7 @@ export function moveLabel(c, cmd) {
 }
 
 // Expand a command into the small bundle a player would really buy with it
-// (a new shaft is worth nothing without miners, a hard vein without the drill).
+// (a new shaft or bunk is worth nothing without miners; a drill level that frees no face is followed by the next).
 // A copy deep enough for applyNow (which never touches ore maps, cargo or hazard clocks). Much faster than clone().
 export function planClone(c) {
   return {
@@ -74,8 +71,8 @@ function expand(c, world, cmd) {
   x.coin = Infinity;
   if (applyNow(x, world, cmd, [])) return null;
   const fix = () => {
-    // drill up to whatever new shafts need (not past licenses)
-    for (let guard = 0; guard < 6; guard++) {
+    // a drill upgrade keeps going until a stuck face is freed (not past licenses)
+    for (let guard = 0; cmd.type === 'upgradeDrill' && guard < 6; guard++) {
       const need = x.shafts.some((s) => /Needs drill/.test(shaftStatus(x, I, s).reason));
       if (!need || applyNow(x, world, { type: 'upgradeDrill' }, [])) break;
       steps.push({ type: 'upgradeDrill' });
@@ -83,7 +80,7 @@ function expand(c, world, cmd) {
     let free = x.shafts.reduce((a, s) => a + (shaftStatus(x, I, s).ok ? bunkCap(s.up.bunk) : 0), 0) - x.miners;
     while (free-- > 0 && !applyNow(x, world, { type: 'hire', n: 1 }, [])) steps.push({ type: 'hire', n: 1 });
   };
-  if (cmd.type === 'buyShaft' || cmd.type === 'redrill' || cmd.type === 'upgradeDrill' || (cmd.type === 'upgradeShaft' && cmd.kind === 'bunk')) {
+  if (cmd.type === 'buyShaft' || cmd.type === 'upgradeDrill' || (cmd.type === 'upgradeShaft' && cmd.kind === 'bunk')) {
     fix();
     const last = x.shafts[x.shafts.length - 1];
     if (cmd.type === 'buyShaft' && !shaftStatus(x, I, last).ok && !applyNow(x, world, { type: 'buyShaft' }, [])) {
@@ -116,9 +113,9 @@ export function bestMoves(colony, world, { cmds, limit = 5 } = {}) {
 
 // ---------------------------------------------------------------- bottleneck
 const STAGE_CMDS = {
-  mine: ['hire', 'buyShaft', 'upgradeShaft', 'redrill', 'upgradeDrill'],
-  idle: ['buyShaft', 'upgradeShaft', 'redrill'],
-  blocked: ['upgradeDrill', 'redrill'],
+  mine: ['hire', 'buyShaft', 'upgradeShaft', 'upgradeDrill'],
+  idle: ['buyShaft', 'upgradeShaft'],
+  blocked: ['upgradeDrill'],
   lift: ['upgradeLift'],
   conveyor: ['upgradeConveyor', 'buyPad'],
   ships: ['buyShip', 'upgradeShip', 'buyPad'],
@@ -149,13 +146,17 @@ export function bottleneck(colony, world) {
     const best = Math.max(0, ...r.shafts.filter((s) => s.ok).map((s) => s.perMiner * s.grade * (r._price[I.idx[s.ore]] || 0)));
     push('idle', c.idle * T.minePerMiner, c.idle * best * 0.5, { miners: c.idle });
   }
-  const blocked = r.shafts.filter((s) => !s.ok);
-  if (blocked.length) {
-    const s = blocked[0];
-    const o = I.ores[I.idx[s.ore]];
-    push('blocked', 0, (o?.value || 0) * T.minePerMiner * 3 * 0.5, { shaft: s });
+  // Faces stuck at a pocket the drill can't cut: what the pocket would pay minus the wall scrapings.
+  let stuck = null, stuckV = 0;
+  for (const s of r.shafts) {
+    if (!s.blocked || !s.next) continue;
+    const full = s.wallRate / T.pk.wall;
+    const v = Math.max(0, full * s.grade * (r._price[I.idx[s.next.ore]] || 0) - s.wallRate * s.grade * (r._price[I.idx[s.ore]] || 0));
+    if (!stuck || v > stuckV) { stuck = s; stuckV = v; }
   }
-  if (r.hazards.lossPerMin > 0 && (c.unlocked?.panels || []).includes('safety')) {
+  if (stuck) push('blocked', 0, Math.max(stuckV, 1e-6), { shaft: stuck });
+  // Only call safety a bottleneck when mishaps cost a noticeable share of income.
+  if (r.hazards.lossPerMin > Math.max(1, 0.02 * (r.coinPerMin || 0)) && (c.unlocked?.panels || []).includes('safety')) {
     push('safety', 0, r.hazards.lossPerMin, { perHour: r.hazards.perHour });
   }
   stages.sort((a, b) => b.value - a.value);
@@ -177,7 +178,7 @@ export function bottleneck(colony, world) {
     conveyor: `Your conveyors can't keep up: ${o} ore/min piles up in the yard.`,
     ships: `Not enough ships: ${o} ore/min waits in the yard.`,
     idle: `${c.idle} miner${c.idle > 1 ? 's are' : ' is'} idle: no free bunks.`,
-    blocked: top.shaft ? `${top.shaft.name} can't dig: ${top.shaft.reason.toLowerCase()}.` : '',
+    blocked: top.shaft ? `${top.shaft.name} is stuck at a pocket: ${top.shaft.reason.toLowerCase()}.` : '',
     mine: 'Everything keeps up. More ore means more coin.',
     safety: `Mishaps underground cost about ${fmt(top.value)} coin/min (${(top.perHour || 0).toFixed(2)} per hour).`,
   }[top.stage];

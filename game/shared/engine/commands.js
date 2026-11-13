@@ -3,13 +3,14 @@ import { T, geoSum, geoMax } from './tuning.js';
 import { info, clone, num, fmt, cleanName, hashSeed, DAY_MS } from './util.js';
 import {
   liftRate, convRate, yardCap, bunkCap, perMiner, shipCap, tripSecs,
-  assignMiners, rollVein, shaftStatus, grade, evoMult, evoLvl, spectacleOf, priceAt,
+  assignMiners, shaftStatus, grade, evoMult, evoLvl, spectacleOf, priceAt,
 } from './model.js';
 import { advance, toArr, toMap } from './sim.js';
 import { licensesOpen, panelFor, syncUnlocks } from './unlocks.js';
 import { ensureHz, ensureShaftHz } from './hazards.js';
+import { syncTunnel, cuts, commonOre } from './pockets.js';
 
-export const ENGINE_VERSION = 2;
+export const ENGINE_VERSION = 3;
 const SAFETY = { ventilation: 'Ventilation (gas)', pumps: 'Pumps (floods)', firebreaks: 'Firebreaks (yard fires)' };
 const MAX_LVL = 400;
 
@@ -28,17 +29,18 @@ function makeShip(c, cls) {
   };
 }
 
-function makeShaft(c, idx, roll) {
-  const s = { id: 's' + (c.nextId++), idx, name: `Shaft ${idx + 1}`, ore: roll.ore, vein: roll.vein, up: { bunk: 0, cart: 0, lights: 0, supports: 0 }, miners: 0 };
+// A new tunnel starts on common ore, with its first pocket a few metres in.
+function makeShaft(c, world, idx) {
+  const s = { id: 's' + (c.nextId++), idx, name: `Shaft ${idx + 1}`, ore: '', up: { bunk: 0, cart: 0, lights: 0, supports: 0 }, miners: 0,
+    face: 0, pk: [], pkN: 0, pkEnd: 0, dug: 0 };
+  syncTunnel(c, info(world), s);
   if (c.hzRng != null) ensureShaftHz(c, s);
   return s;
 }
 
 // Starter mine: one shaft of the easiest common ore and one hauler.
 function starter(c, world) {
-  const I = info(world);
-  const first = I.ores.filter((o) => o.tier === 'common').sort((a, b) => a.hardness - b.hardness || a.value - b.value)[0] || I.ores[0];
-  c.shafts.push(makeShaft(c, 0, { ore: first.id, vein: null }));
+  c.shafts.push(makeShaft(c, world, 0));
   c.ships.push(makeShip(c, 'hauler'));
 }
 const freshStats = () => ({ mined: 0, lifted: 0, loaded: 0, sold: 0, sales: 0, launches: 0, upgrades: 0, spent: 0, firstSaleAt: null, hazards: 0, lost: 0 });
@@ -118,26 +120,13 @@ function plan(c, world, cmd, now, quoting = false) {
     case 'buyShaft': {
       const idx = c.shafts.length;
       if (idx >= T.maxShafts) return { error: 'The main tunnel is full' };
-      const roll = rollVein(world, idx, c.rng);
-      const ore = I.ores[I.idx[roll.ore]];
-      const tmp = { ...c, drill: c.drill };
-      const st = shaftStatus(tmp, I, { ore: roll.ore, vein: roll.vein });
+      const tmp = makeShaft({ ...c, nextId: c.nextId }, world, idx);
+      const common = I.ores[I.idx[tmp.ore]], p = tmp.pk[0], po = p && I.ores[I.idx[p.ore]];
+      const first = po ? `, first pocket: ${po.name} (${po.tier}) at ${fmt(p.start)} m${cuts(c, po) ? '' : ` · needs ${po.tier === 'mythic' ? 'the mythic drill' : 'drill ' + po.hardness}`}` : '';
       return {
         cost: shaftCost(idx), n: 1, k: 1,
-        effect: `Shaft ${idx + 1}: ${ore.name} (${ore.tier}, grade x${fmt(grade(idx))}${roll.vein ? ', ' + fmt(roll.vein.total) + ' ore' : ''})${st.ok ? '' : ' · ' + st.reason.toLowerCase()}`,
-        apply: (x) => { x.shafts.push(makeShaft(x, idx, roll)); x.rng = roll.rng; },
-      };
-    }
-    case 'redrill': {
-      const s = c.shafts.find((x) => x.id === cmd.shaftId);
-      if (!s) return { error: 'No such shaft' };
-      if (!s.spent && (!s.vein || s.vein.left > 0)) return { error: 'Only exhausted veins can be re-drilled' };
-      const roll = rollVein(world, s.idx, c.rng, { redrill: true, up: s.up });
-      const ore = I.ores[I.idx[roll.ore]];
-      return {
-        cost: Math.max(50, T.redrillFrac * shaftCost(s.idx)), n: 1, k: 1,
-        effect: `${s.name}: new ${ore.name} vein (${ore.tier}${roll.vein ? ', ' + fmt(roll.vein.total) + ' ore' : ''})`,
-        apply: (x) => { const y = x.shafts.find((q) => q.id === s.id); y.ore = roll.ore; y.vein = roll.vein; delete y.spent; x.rng = roll.rng; },
+        effect: `Shaft ${idx + 1}: ${common.name} (grade x${fmt(grade(idx))})${first}`,
+        apply: (x) => { x.shafts.push(makeShaft(x, world, idx)); },
       };
     }
     case 'upgradeShaft': {
@@ -227,10 +216,12 @@ function plan(c, world, cmd, now, quoting = false) {
       if (c.drill >= T.drillMax) return { error: 'Drill is maxed' };
       const to = c.drill + 1;
       if (to >= T.drillMax && !lic.has('mythicDrill')) return { error: 'Needs the Mythic drill license' };
-      const blocked = c.shafts.filter((s) => { const o = I.ores[I.idx[s.ore]]; return o && !shaftStatus(c, I, s).ok && (o.tier === 'mythic' ? to >= T.drillMax : o.hardness <= to) && !(s.vein && s.vein.left <= 0); }).length;
+      const blocked = c.shafts.filter((s) => { const st = shaftStatus(c, I, s); return st.blocked && st.need <= to; }).length;
+      const nc = commonOre(I, 0, to), oc = commonOre(I, 0, c.drill);
       return {
         cost: T.drillCosts[to], n: 1, k: 1,
-        effect: to >= T.drillMax ? 'Mythic drill: mine mythic ore' : `Drill ${to}: mine hardness ${to}` + (blocked ? ` (opens ${blocked} shaft${blocked > 1 ? 's' : ''})` : ''),
+        effect: (to >= T.drillMax ? 'Mythic drill: break into mythic pockets' : `Drill ${to}: break into hardness ${to}`)
+          + (blocked ? ` (frees ${blocked} stuck face${blocked > 1 ? 's' : ''})` : '') + (nc !== oc ? `; crews switch to ${nc.name}` : ''),
         apply: (x) => { x.drill = to; },
       };
     }
