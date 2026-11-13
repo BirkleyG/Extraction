@@ -13,7 +13,7 @@
 <div id="boot" class="boot"><div class="guild-seal">MG</div><p>Opening the mine…</p></div>
 <div id="app" hidden>
   <header class="hud">
-    <div class="brand">MINESHAFT<span>CAPITAL</span></div>
+    <div class="brand">MINESHAFT<span>CAPITAL</span><small id="gameVersion" class="ver" title="Game version"></small></div>
     <div class="stat coin"><small>Coin</small><b id="coin">0</b><i id="cpm"></i></div>
     <div class="stat day"><small id="day">Day 1</small><b><span id="left"></span><span class="lw"> left</span></b></div>
     <button class="stat rank" id="rankBtn" aria-label="Rank"><small>Rank</small><b><span id="rank">–</span> <span id="rankOf"></span></b></button>
@@ -38,5 +38,9 @@
 <div id="toasts" aria-live="polite"></div>
 <div id="banner" class="banner"></div>
 <script type="module" src="/app/main.js"></script>
+<script type="module">
+  // Game version under the logo (see notes.md).
+  fetch('/api/config').then(r => r.json()).then(j => { if (j.version) document.getElementById('gameVersion').textContent = 'v' + j.version; }).catch(() => {});
+</script>
 </body>
 </html>
