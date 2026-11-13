@@ -77,7 +77,7 @@ export function createV2({ store, ai, currentModel, broadcast, now: clock = () =
 
   function summary(c, world, name) {
     let cpm = 0; try { cpm = E.rates(c, world).coinPerMin || 0; } catch {}
-    return { id: c.uid, name: c.name, player: name, species: c.species, coin: c.coin, earned: c.earned, coinPerMin: cpm, shafts: c.shafts.length, ships: c.ships.length, month: world.month, t: c.t };
+    return { id: c.uid, name: c.name, player: name, species: c.species, coin: c.coin, earned: c.earned, grant: c.grant || 0, coinPerMin: cpm, shafts: c.shafts.length, ships: c.ships.length, month: world.month, t: c.t };
   }
 
   // Advance a colony to now, fold its sales into the shared market, persist.

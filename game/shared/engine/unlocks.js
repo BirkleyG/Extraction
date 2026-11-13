@@ -5,21 +5,23 @@ import { shaftStatus } from './model.js';
 import { rates } from './rates.js';
 
 // Panels in reveal order. `when(c, I)` is checked against monotonic progress.
+// Progress counts a late joiner's catch-up grant, so the grant can be spent right away.
+const got = (c) => c.earned + (c.grant || 0);
 export const PANELS = [
   { id: 'mine', label: 'Mine', when: () => true },
   { id: 'hire', label: 'Hire miners', when: () => true },
-  { id: 'shafts', label: 'Dig shafts', when: (c) => c.miners >= 3 || c.earned >= 30 },
-  { id: 'carts', label: 'Carts & rails', when: (c) => c.earned >= 45 },
-  { id: 'lift', label: 'Lift', when: (c, I, r) => c.earned >= 150 || (r().limit === 'lift' && c.earned >= 15) },
-  { id: 'ships', label: 'Ship upgrades', when: (c, I, r) => c.earned >= 300 || (r().limit === 'ships' && c.earned >= 15) },
-  { id: 'bunks', label: 'Bunkhouses', when: (c) => c.earned >= 400 || c.miners >= 5 },
-  { id: 'conveyor', label: 'Conveyors', when: (c, I, r) => c.earned >= 700 || (r().limit === 'conveyor' && c.earned >= 15) },
-  { id: 'yard', label: 'Surface yard', when: (c, I, r) => c.earned >= 1_200 || (r().yardLoss > 0.03 && c.earned >= 15) },
-  { id: 'drill', label: 'Drill', when: (c, I) => c.earned >= 2_000 || c.shafts.some((s) => /drill/.test(shaftStatus(c, I, s).reason)) },
-  { id: 'routes', label: 'Routes & buyers', when: (c) => c.earned >= 3_000 },
-  { id: 'fleet', label: 'Fleet', when: (c, I, r) => c.earned >= 5_000 || (r().limit === 'ships' && c.earned >= 1_000) },
-  { id: 'pads', label: 'Launch pads', when: (c) => c.ships.length >= 2 || c.earned >= 12_000 },
-  { id: 'market', label: 'Market', when: (c) => c.earned >= 25_000 },
+  { id: 'shafts', label: 'Dig shafts', when: (c) => c.miners >= 3 || got(c) >= 30 },
+  { id: 'carts', label: 'Carts & rails', when: (c) => got(c) >= 45 },
+  { id: 'lift', label: 'Lift', when: (c, I, r) => got(c) >= 150 || (r().limit === 'lift' && got(c) >= 15) },
+  { id: 'ships', label: 'Ship upgrades', when: (c, I, r) => got(c) >= 300 || (r().limit === 'ships' && got(c) >= 15) },
+  { id: 'bunks', label: 'Bunkhouses', when: (c) => got(c) >= 400 || c.miners >= 5 },
+  { id: 'conveyor', label: 'Conveyors', when: (c, I, r) => got(c) >= 700 || (r().limit === 'conveyor' && got(c) >= 15) },
+  { id: 'yard', label: 'Surface yard', when: (c, I, r) => got(c) >= 1_200 || (r().yardLoss > 0.03 && got(c) >= 15) },
+  { id: 'drill', label: 'Drill', when: (c, I) => got(c) >= 2_000 || c.shafts.some((s) => /drill/.test(shaftStatus(c, I, s).reason)) },
+  { id: 'routes', label: 'Routes & buyers', when: (c) => got(c) >= 3_000 },
+  { id: 'fleet', label: 'Fleet', when: (c, I, r) => got(c) >= 5_000 || (r().limit === 'ships' && got(c) >= 1_000) },
+  { id: 'pads', label: 'Launch pads', when: (c) => c.ships.length >= 2 || got(c) >= 12_000 },
+  { id: 'market', label: 'Market', when: (c) => got(c) >= 25_000 },
 ];
 
 // Which panel a command needs.

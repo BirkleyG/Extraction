@@ -144,17 +144,24 @@ async function resync() {
 }
 
 // ------------------------------------------------------------------ while you were away
+let A_send = () => {};
 const awayKey = () => `msc2_seen_${S.me.id}_${S.world.month}`;
 function snapshot() {
   const c = S.colony;
   return { t: S.now(), earned: c.earned, sold: c.stats.sold, launches: c.stats.launches, sales: c.stats.sales, out: c.shafts.filter((s) => s.vein && s.vein.left <= 0).length };
 }
 function checkAway() {
+  if (document.querySelector('.awaysheet')) return; // one away sheet at a time
   const prev = store(awayKey());
   const cur = snapshot();
   store(awayKey(), cur);
   if (!prev || cur.t - prev.t < 5 * 60_000 || cur.earned - prev.earned <= 0) return;
-  ui.awaySheet({ ms: cur.t - prev.t, coin: cur.earned - prev.earned, sold: cur.sold - prev.sold, launches: cur.launches - prev.launches, sales: cur.sales - prev.sales, veins: Math.max(0, cur.out - prev.out) });
+  let next = null;
+  try {
+    const sug = E.bottleneck(S.colony, S.ew)?.suggestion;
+    if (sug && sug.cmd) next = { label: sug.label, cost: sug.cost, canAfford: S.colony.coin >= sug.cost, spend: () => A_send(sug.cmd) };
+  } catch {}
+  ui.awaySheet({ ms: cur.t - prev.t, coin: cur.earned - prev.earned, sold: cur.sold - prev.sold, launches: cur.launches - prev.launches, sales: cur.sales - prev.sales, veins: Math.max(0, cur.out - prev.out), next });
 }
 
 // ------------------------------------------------------------------ loops
@@ -220,6 +227,7 @@ async function boot() {
     },
   });
   const A = { send, mine, reload: () => location.reload(), loadBoard };
+  A_send = send;
   ui = createUI(S, A);
   A.mine = mine;
   ui.render(true);

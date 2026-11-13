@@ -100,6 +100,7 @@ function confetti(host) {
 // ---------------------------------------------------------------- floating numbers (DOM, anchored to an element)
 export function popAt(el, text, cls = 'coin') {
   if (!el) return;
+  if (document.querySelectorAll('.pop').length >= (innerWidth < 600 ? 2 : 4)) return; // keep small screens readable
   const r = el.getBoundingClientRect();
   const p = document.createElement('div');
   p.className = 'pop ' + cls;

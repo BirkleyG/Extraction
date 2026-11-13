@@ -249,7 +249,7 @@ export function createUI(S, A) {
     const board = rankList();
     let h = '<h3>This month</h3><div class="tablewrap"><table><tr><th>#</th><th>Colony</th><th class="n">Coin</th><th class="n">/min</th></tr>';
     board.forEach((b, i) => {
-      h += `<tr class="${b.id === S.me.id ? 'me' : ''}"><td>${i + 1}</td><td><i class="sw" style="background:${esc(b.species?.color || '#888')}"></i><b>${esc(b.name)}</b><br><small>${esc(b.player || '')}${b.species?.name ? ' · ' + esc(b.species.name) : ''}</small></td><td class="n gold">${fmt(b.coin)}</td><td class="n">${fmt(b.coinPerMin)}</td></tr>`;
+      h += `<tr class="${b.id === S.me.id ? 'me' : ''}"><td>${i + 1}</td><td><i class="sw" style="background:${esc(b.species?.color || '#888')}"></i><b>${esc(b.name)}</b><br><small>${esc(b.player || '')}${b.species?.name ? ' · ' + esc(b.species.name) : ''}</small></td><td class="n gold">${fmt(b.coin)}${b.grant ? `<br><small class="muted" title="Late joiners get a catch-up grant">started with a ${fmt(b.grant)} grant</small>` : ''}</td><td class="n">${fmt(b.coinPerMin)}</td></tr>`;
     });
     h += '</table></div>';
     const B = S.boardFull;
@@ -473,7 +473,10 @@ export function createUI(S, A) {
     const { el, close } = sheet(`<div class="away"><small>While you were away · ${esc(dur(s.ms))}</small><h2>Welcome back, General</h2>
       <p class="lede">Your crews kept digging. Here's what the colony did without you.</p>
       <div class="awaygrid">${rows.map(([k, v, c]) => `<div><small>${k}</small><b class="${c}">${v}</b></div>`).join('')}</div>
-      <div class="btnrow"><button class="buy big" data-x="1">Collect &amp; carry on</button></div></div>`, 'awaysheet');
+      ${s.next ? `<div class="awaynext"><small>Best next move</small><b>${esc(s.next.label)}</b> <span class="gold">${fmt(s.next.cost)}</span></div>` : ''}
+      <div class="btnrow">${s.next && s.next.canAfford ? `<button class="buy big" data-spend="1">Spend it: ${esc(s.next.label)}</button>` : ''}<button class="buy big ${s.next && s.next.canAfford ? 'ghost' : ''}" data-x="1">Collect &amp; carry on</button></div></div>`, 'awaysheet');
+    const sp = el.querySelector('[data-spend]');
+    if (sp) sp.addEventListener('click', () => { s.next.spend(); close(); });
     sfx.big();
     return { el, close };
   }
