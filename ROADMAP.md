@@ -114,6 +114,31 @@ Underground hazards (gives lights and supports a purpose)
 
 > **Playtest:** Is it satisfying to watch a tunnel break into a rare pocket? Does it pull players to dig deeper and longer?
 
+## Phase 3.5: Monumental shafts and a real planet (owner request, 2026-11-13)
+
+*Buying a shaft should feel like opening a new business; where you dig should matter.*
+
+Mine
+- Shafts are AdVenture-Capitalist-style categories: very expensive, each with its **own miners** (no transfers), **gear** (mining speed and the hardest ore it can cut) and **cart** (hauls ore from the face to the shaft entrance). You start with shaft 1.
+- Buying a shaft offers 2–3 **dig directions** with different (fuzzy) ore prospects, so you choose better or worse ore.
+- The lift has three upgrades: **speed** (trips per minute), **capacity** (per bucket) and **buckets** (how many run at once).
+- No recommended buys anywhere. The bottleneck diagnosis stays as plain information.
+
+Planet layout (full spec; weather, wildlife, tribes and scouting land in Phase 5)
+- 12–18 regions, each with one of the planet's 2 common ores (common-ore zones never overlap), soil hardness, topography, weather and temperature.
+- Sites are specific spots in a region, not too close together. Each has richness per ore (0–100%) and vein sizes, soil, weather pattern, tribes/wildlife, and distances.
+- Distances: on-planet destinations 1–8 units, off-planet 10–60, plus 8 to leave or enter the surface.
+- Every player gets an equally good start, about one standard deviation above an average site, with no hostile tribes or boss monsters.
+- Rare ores (4) each appear at ~37% of sites independently (0 rares ~16%, 1 ~37%, 2 ~33%, 3 ~13%, 4 ~2%). Mythic (1) at ~5% of sites, only on naturally tough ground, hardness 9–10, needing special equipment.
+- Depth bands: shallow (mostly common, safe), middle (rare appears, moderate creatures), deep (more rare, toxic gas), deepest (the only place mythic appears, floods, worst creatures). Vein chance and size grow with depth; no shaft is guaranteed a vein.
+- A rare vein lasts ~4 hours to 2 days at a median player's pace; shafts often hit several. Warnings at 20%; below 5% output tapers; a dry vein falls back to common until the next.
+- Creature danger roughly doubles every 5 shafts. Soil hardness modifies mining speed.
+- Phase 5 adds: five weather types (clear, dust, storm, ash, cold) changing daily per region (production, storms ground ships, lightning); per-region wildlife (1–3 pests, 2–3 standard, 1–2 apex; neighbours share; 1–2 planet-roaming mythic creatures; traits fit terrain); tribes placed where it makes sense, from nomads to empires with villages and HQs; scouting from early reports (ore density without mythic, soil, common ore) to full reports (vein counts and sizes, soil, wildlife, danger, weather, tribe strength and relations).
+
+Look and feel
+- More space: separate ore piles per ore, ore visibly travelling on belts and pipes, the shipyard set well away from the piles.
+- Tunnels look natural (no grey bands); the ore chunks in the rock are the actual veins.
+
 ## Phase 3: Refineries and a real market (Stage 2)
 
 - Refinery license unlocks mid-month. Build on-planet (cheap, close) or off-planet (expensive, big).

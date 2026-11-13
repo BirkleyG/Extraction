@@ -9,4 +9,5 @@
 - `ROADMAP.md` sets the build order. Finish and playtest a phase before starting the next.
 - The earlier Extraction Tycoon attempt is archived on the `archive/legacy-tycoon` branch. It does not bind this game unless the owner brings something back.
 - Every change bumps the version and adds a line to `notes.md`: `npm run bump -- minor|big|major "what changed"` (minor +0.0.01, big +0.1, major +1 when the game is ready or for a huge update). The game shows the version under its logo.
+- Coding and playtest agents use Sonnet 5.5 (owner decision, 2026-11-13). Run one at a time, or two with separate files, to stay under the usage limit.
 - Push feature branches; the owner decides what merges to `main`.

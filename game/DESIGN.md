@@ -140,3 +140,42 @@ Total sales/min = min(stock flow, Σ_k q_k). The player chooses p with a markup 
 **Ledger** (engine): `colony.ledger = { month: { in: { raw, refined, nukeCargo, grant }, out: { miners, shafts, lift, ships, refinery, safety, ... } }, run: {...} }`. Every coin in or out is tagged.
 
 **History for charts** (server): an hourly snapshot per colony in `hist2/<uid>` (`[[t, coin, coinPerMin, rank], ...]`, max 744 points), and per-ore market price index history in `phist2/current`. `GET /api/v2/history` → `{ me: [...], prices: { [oreId]: [[t, index], ...] }, board: [{id, points}] }`.
+
+## Phase 3.5 contract (sites, monumental shafts, lift)
+
+**Hardness is now 1–10.** Commons 1–3, rares 3–7, mythic 9–10. Gear levels match: gear ≥ hardness cuts that ore. Gear above 8 needs the `mythicDrill` licence.
+
+**Planet** (`game/shared/planet`, generated once per month):
+```js
+planet.regions: 12–18 × { id, name, terrain, biomes, blurb, weather, x, y,
+  common: oreId,              // exactly one of the 2 commons; each common covers a contiguous zone of regions
+  soil: 0.75..1.35,           // hardness multiplier: higher = slower digging
+  tough: bool,                // naturally tough ground; only here can mythic occur
+  temperature: -1..1 }
+planet.sites: ~3–6 per region × { id, regionId, name, x, y,
+  soil,                       // region soil ± a little
+  richness: { [oreId]: 0..1 },// common of its region = 1; each rare present independently at ~37% (0.2..1 when present); mythic only on tough regions, ~5% of all sites
+  veinSize: { [oreId]: 0.6..1.6 },
+  start: bool,                // eligible starting site: score ≈ +1 SD above the mean, no hostile tribe/boss flags
+  score }                     // overall quality, for balancing starts
+planet.buyers[].units         // trip distance in units: on-planet 1–8, off-planet 10–60 (+8 to leave the surface); keep `distance` labels too
+```
+Sites keep a minimum spacing. `planetFromAI` keeps AI flavor (names, colors, terrains) but all of the above numbers are seeded.
+
+**Colony site:** `newColony({ ..., site })` receives the chosen site object. The server gives each player a distinct `start` site (players pick one in onboarding). The colony stores `site` (id, regionId, soil, richness, veinSize, common).
+
+**Shafts** (engine; replaces global miners, bunks, drill and per-shaft carts/bunks):
+```js
+shaft: { id, idx, name, dir, band: 'shallow'|'middle'|'deep'|'deepest',
+         miners, gear, cart, face, pk[], ... }        // keeps pockets from Phase 2.5, plus hazard fields
+```
+- `surveyShaft` (via `quote({type:'buyShaft'})` or a dedicated export `shaftOptions(colony, world)`) returns 2–3 direction options for the next shaft: `{ dir, label, prospects: { [oreId]: 'none'|'low'|'fair'|'good' } (fuzzy), cost }`. Each option has its own pocket seed and site-richness weighting, so some are better than others.
+- `buyShaft { dir }`. Costs are monumental and rise steeply (tune so a strong player opens about 6–12 shafts in a month). Each new shaft starts with 0 miners, gear 1 and cart 1.
+- Per-shaft commands: `hireMiners { shaftId, n }` (cost rises per shaft and scales with depth), `upgradeGear { shaftId, n }` (mining speed + hardness), `upgradeCart { shaftId, n }` (ore/min the cart can haul from face to entrance; the shaft is capped by its cart).
+- Production per shaft = miners × perMiner(gear) × depth richness × (1 / soil), then capped by the cart. Ore mined = the common of the site, or the current pocket's ore. Pocket odds and sizes rise with depth band and site richness, and use only ores present at the site. Mythic appears only in the deepest band at mythic sites.
+- Veins: sized so a rare pocket lasts ~4 hours to 2 days at a median player's pace. Events at 20% left; output tapers below 5%; then back to common until the next pocket.
+- Hazard danger ×2 every 5 shafts.
+
+**Lift:** `upgradeLift { kind: 'speed'|'capacity'|'buckets', n }`. Throughput = buckets × capacity × trips/min (speed, slowed by the depth of the deepest active shaft). The old single lift upgrade goes away.
+
+**UI rule:** no recommended buys. `bottleneck()` keeps `stage` and `message` (a diagnosis) but the client shows no buy suggestion.
