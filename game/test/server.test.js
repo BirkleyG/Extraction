@@ -129,9 +129,9 @@ for (const [label, url] of backends) {
     });
 
     test('serves the game page with the network adapter', async () => {
-      const html = await (await fetch(base + '/')).text();
-      assert.match(html, /<script src="\/net\.js"><\/script>/);
-      assert.equal((await fetch(base + '/net.js')).status, 200);
+      const html = await (await fetch(base + '/classic/')).text();
+      assert.match(html, /classic\/net\.js/);
+      assert.equal((await fetch(base + '/classic/net.js')).status, 200);
       assert.equal((await (await fetch(base + '/healthz')).json()).ok, true);
       assert.match((await (await fetch(base + '/api/config')).json()).version, /^\d+\.\d+\.\d{2,}$/);
     });
