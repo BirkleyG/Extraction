@@ -21,8 +21,10 @@ export function createPrestige(S, A, ui) {
   }
   const makerOpen = () => P.maker && ['new', 'open', 'offer'].includes(P.maker.status);
 
+  let tried = null;
   function panel() {
     const c = S.colony, q = quote(c, S.ew, { type: 'nuke' });
+    if (c.lastNuke && tried !== c.lastNuke.at) { tried = c.lastNuke.at; setTimeout(loadMaker, 0); }
     const min = TUNING.nukeMin, run = c.runEarned || 0;
     const ok = !q.error;
     let h = '';
@@ -188,7 +190,7 @@ export function createPrestige(S, A, ui) {
       cv.width = W; cv.height = H;
       const g = cv.getContext('2d');
       const gx = Math.round((stage.left + stage.width / 2) / px), gy = Math.round((stage.top + stage.height * 0.62) / px);
-      const scale = Math.min(W, H * 1.4) / 120;
+      const scale = Math.max(0.6, Math.min(W / 110, gy * 0.85 / 84));
       const parts = [];
       for (let i = 0; i < 90; i++) {
         const a = -Math.PI * Math.random(), v = (30 + Math.random() * 90) * scale;
@@ -196,7 +198,7 @@ export function createPrestige(S, A, ui) {
       }
       const T0 = performance.now(), DUR = 4300;
       let last = T0;
-      const fire = (k) => k < 0.15 ? '#ffffff' : k < 0.3 ? '#fff6a0' : k < 0.5 ? '#ffd23f' : k < 0.7 ? '#ff8a3d' : k < 0.85 ? '#c84a2a' : '#5a4a50';
+      const fire = (k, i = 0) => k < 0.15 ? '#ffffff' : k < 0.3 ? '#fff6a0' : k < 0.5 ? (i % 2 ? '#ffd23f' : '#ffe680') : k < 0.7 ? (i % 2 ? '#ff8a3d' : '#ffa94d') : k < 0.85 ? (i % 2 ? '#c84a2a' : '#e0603a') : (i % 3 === 0 ? '#7a6a72' : i % 3 === 1 ? '#5a4a50' : '#6a5a62');
       const puff = (x, y, r, col) => { g.fillStyle = col; g.beginPath(); for (let dy = -r; dy <= r; dy++) { const w = Math.floor(Math.sqrt(r * r - dy * dy)); g.rect(Math.round(x - w), Math.round(y + dy), w * 2 + 1, 1); } g.fill(); };
       const loop = (ms) => {
         const t = (ms - T0) / 1000, dt = Math.min(0.05, (ms - last) / 1000); last = ms;
@@ -212,16 +214,17 @@ export function createPrestige(S, A, ui) {
         const topY = gy - rise * 62 * scale;
         for (let i = 0; i < 14; i++) {
           const yy = gy - (i / 14) * (gy - topY), r = (5 + (i % 3)) * scale * (0.6 + rise * 0.4);
-          puff(gx + Math.sin(t * 3 + i) * 1.5 * scale, yy, r, fire(clamp(cool + (1 - i / 14) * 0.25, 0, 1)));
+          puff(gx + Math.sin(t * 3 + i) * 1.5 * scale, yy, r, fire(clamp(cool + (1 - i / 14) * 0.25, 0, 1), i));
         }
         const capR = (8 + rise * 16) * scale;
         for (let i = 0; i < 12; i++) {
           const a = (i / 12) * Math.PI * 2 + t * 0.8;
-          puff(gx + Math.cos(a) * capR * 0.9, topY + Math.sin(a) * capR * 0.35, capR * 0.5, fire(clamp(cool + (Math.sin(a) > 0 ? 0.12 : 0), 0, 1)));
+          puff(gx + Math.cos(a) * capR * 0.9, topY + Math.sin(a) * capR * 0.35, capR * 0.5, fire(clamp(cool + (Math.sin(a) > 0 ? 0.12 : 0), 0, 1), i));
         }
-        puff(gx, topY, capR * 0.6, fire(clamp(cool - 0.15, 0, 1)));
+        puff(gx, topY, capR * 0.6, fire(clamp(cool - 0.15, 0, 1), 1));
+        if (cool < 0.8) puff(gx, topY + capR * 0.1, capR * 0.3, fire(clamp(cool - 0.35, 0, 1), 0));
         // ground fire ring
-        for (let i = -6; i <= 6; i++) puff(gx + i * 4 * scale, gy, (3 + (i * 7 + Math.floor(t * 10)) % 3) * scale, fire(clamp(cool + 0.1 + Math.abs(i) * 0.03, 0, 1)));
+        for (let i = -6; i <= 6; i++) puff(gx + i * 4 * scale, gy, (3 + (i * 7 + Math.floor(t * 10)) % 3) * scale, fire(clamp(cool + 0.1 + Math.abs(i) * 0.03, 0, 1), i + 7));
         // debris
         for (const p of parts) {
           p.vy += 90 * scale * dt; p.x += p.vx * dt; p.y += p.vy * dt;

@@ -20,6 +20,7 @@ const TABS = [
 ];
 const BELL_MS = 48 * 3600_000;
 const hms = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)); return `${String(Math.floor(s / 3600)).padStart(2, '0')}:${String(Math.floor(s / 60) % 60).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; };
+const riskTxt = (perHour) => (perHour >= 1 ? `${perHour.toFixed(perHour < 10 ? 1 : 0)} mishaps/hour` : perHour * 24 >= 0.05 ? `${(perHour * 24).toFixed(1)} mishaps/day` : 'almost no risk');
 const HZ_LABEL = { gas: 'Toxic gas', flood: 'Floods', fire: 'Yard fires', quake: 'Earthquakes' };
 const SAFETY_ROWS = [['ventilation', 'Ventilation', 'gas', 'Clears toxic gas before it reaches the crews'], ['pumps', 'Pumps', 'flood', 'Keeps flooded tunnels from drowning shifts'], ['firebreaks', 'Firebreaks', 'fire', 'Stops yard fires from burning stockpiled ore']];
 const has = (u, ...p) => p.some((x) => u.panels.includes(x));
@@ -290,7 +291,7 @@ export function createUI(S, A) {
   }
   function panelSafety() {
     const c = S.colony, R = S.rates, Hz = R.hazards;
-    let h = `<div class="hzsum ${Hz.perHour > 0.5 ? 'hot' : ''}"><span class="skull" aria-hidden="true"></span><div><b>${Hz.perHour.toFixed(Hz.perHour < 10 ? 1 : 0)} mishaps/hour</b><br><small>${Hz.loss > 0.001 ? `costing about <span class="bad">${(Hz.loss * 100).toFixed(1)}%</span> of output (${fmt(Hz.lossPerMin)} coin/min)` : 'Your crews are safe for now.'}</small></div></div>`;
+    let h = `<div class="hzsum ${Hz.perHour > 0.5 ? 'hot' : ''}"><span class="skull" aria-hidden="true"></span><div><b>${riskTxt(Hz.perHour)}</b><br><small>${Hz.loss > 0.001 ? `costing about <span class="bad">${(Hz.loss * 100).toFixed(1)}%</span> of output (${fmt(Hz.lossPerMin)} coin/min)` : 'Your crews are safe for now.'}</small></div></div>`;
     h += '<p class="lede">Deeper shafts are more dangerous. Lights keep miners sane in the dark; supports stop cave-ins. Halted shafts dig nothing until they are cleared.</p>';
     h += bulkBar();
     h += '<h3>Shafts</h3>';
@@ -300,7 +301,7 @@ export function createUI(S, A) {
       any = true;
       const r = R.shafts[i] || {};
       const risk = r.risk || 0, halted = s.haltUntil && s.haltUntil > S.now();
-      h += `<div class="shaft safety"><div class="sh-h"><b>${esc(s.name)}</b> <small>depth ${s.idx + 1}</small> <span class="pill ${risk > 0.3 ? 'bad' : risk > 0.08 ? 'warn' : 'ok'}">${risk.toFixed(2)} mishaps/h</span>${halted ? ` <span class="pill bad">halted ${dur(s.haltUntil - S.now())}</span>` : ''}</div>`;
+      h += `<div class="shaft safety"><div class="sh-h"><b>${esc(s.name)}</b> <small>depth ${s.idx + 1}</small> <span class="pill ${risk > 0.3 ? 'bad' : risk > 0.08 ? 'warn' : 'ok'}">${riskTxt(risk)}</span>${halted ? ` <span class="pill bad">halted ${dur(s.haltUntil - S.now())}</span>` : ''}</div>`;
       h += row({ type: 'upgradeShaft', shaftId: s.id, kind: 'lights' }, `Lights <span class="lvl">Lv ${s.up.lights || 0}</span>`, 'Prevents miner insanity', { btn: 'Install' });
       h += row({ type: 'upgradeShaft', shaftId: s.id, kind: 'supports' }, `Supports <span class="lvl">Lv ${s.up.supports || 0}</span>`, 'Prevents cave-ins', { btn: 'Brace' });
       h += '</div>';
@@ -309,9 +310,9 @@ export function createUI(S, A) {
     h += '<h3>Colony defenses</h3>';
     for (const [kind, label, hz, desc] of SAFETY_ROWS) {
       const rate = Hz.colony?.[hz] || 0;
-      h += row({ type: 'upgradeSafety', kind }, `${label} <span class="lvl">Lv ${c.safety?.[kind] || 0}</span>`, `${desc} · ${HZ_LABEL[hz]}: ${rate.toFixed(2)}/h`, { btn: 'Build' });
+      h += row({ type: 'upgradeSafety', kind }, `${label} <span class="lvl">Lv ${c.safety?.[kind] || 0}</span>`, `${desc} · ${HZ_LABEL[hz]}: ${riskTxt(rate)}`, { btn: 'Build' });
     }
-    if (Hz.colony?.quake) h += `<p class="lede small">Earthquakes: ${Hz.colony.quake.toFixed(2)}/h. Supports in every shaft soften them.</p>`;
+    if (Hz.colony?.quake) h += `<p class="lede small">Earthquakes: ${riskTxt(Hz.colony.quake)}. Supports in every shaft soften them.</p>`;
     return h;
   }
   function nextUnlock() {

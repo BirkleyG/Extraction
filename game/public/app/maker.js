@@ -109,6 +109,7 @@ export function openMaker(S, { sheet, onChange, onGranted }) {
     sess = s;
     if (s.ask) { Object.assign(ask, { kind: s.ask.kind, direction: s.ask.direction }); if (s.ask.oreId) ask.oreId = s.ask.oreId; if (s.ask.buyerId) ask.buyerId = s.ask.buyerId; el.querySelectorAll('[data-k]').forEach((x) => { if (ask[x.dataset.k]) x.value = ask[x.dataset.k]; }); preview(); }
     renderLog(); renderControls();
+    requestAnimationFrame(() => { const l = $('.mk-log'); l.scrollTop = l.scrollHeight; });
     onChange && onChange(s);
   }
   async function call(body) {
