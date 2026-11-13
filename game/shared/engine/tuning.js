@@ -7,50 +7,54 @@ export const T = {
 
   // Miners
   minePerMiner: 10,          // ore/min per miner, before carts
-  hireBase: 10, hireGrowth: 1.03,
+  hireBase: 10, hireGrowth: 1.02,
 
   // Shafts (index = depth)
   maxShafts: 30,
-  shaftBase: 60, shaftGrowth: 2.3,
-  bunkCap0: 3, bunkCapPer: 2,                 // miners per shaft = 3 + 2*bunk
-  bunkBase: 60, bunkGrowth: 1.75,
-  cartBase: 40, cartGrowth: 1.6, cartMult: 1.25,  // ore per miner x1.25 per level
+  shaftBase: 60, shaftGrowth: 2.25,
+  bunkCap0: 3, bunkCapPer: 1,                 // miners per shaft = 3 + bunk
+  bunkBase: 60, bunkGrowth: 2.08,
+  cartBase: 25, cartGrowth: 1.83, cartAdd: 0.3,  // ore per miner +30% of base per level
   upMax0: 10, upMaxPerDepth: 1,              // carts/bunks per shaft max out at 10 + depth
-  depthCost: 1.6,                             // per-shaft upgrade price x1.6 per depth
-  richness: 1.15,                            // ore per miner x1.15 per depth
+  depthCost: 1.66,                             // per-shaft upgrade price x1.6 per depth
+  richness: 1.05,                             // ore per miner x1.05 per depth
+  grade: 1.6,                                 // ore value x1.6 per depth (deeper ore is purer)
   shaftBuffer: 40,                            // tunnel storage per shaft (ore)
   redrillFrac: 0.6,                           // re-drill an exhausted vein: 60% of a new shaft at that depth
 
   // Veins (rare/mythic are finite)
-  veinRare: 6000, veinMythic: 2000, veinGrowth: 1.42, // amount x1.42 per depth
-  veinHours: 8,                                      // re-drilled veins last >= 8h at full staffing
+  veinMythicK: 0.5,                                  // mythic veins are half as deep
+  veinHours: 10,                                     // a vein lasts ~10h at a half-upgraded shaft
   veinWarn: [0.2, 0.05],
 
   // Drill: level >= hardness to mine. Level 6 = mythic drill (license).
-  drillCosts: [0, 0, 400, 9_000, 220_000, 4_500_000, 30_000_000], // cost to reach level i
+  drillCosts: [0, 0, 1_700, 38_000, 940_000, 19_000_000, 130_000_000], // cost to reach level i
   drillMax: 6,
 
   // Lift, conveyor, yard, pads
-  liftBase: 25, liftMult: 1.2, liftCost: 45, liftGrowth: 1.32,
-  convBase: 40, convMult: 1.2, convCost: 70, convGrowth: 1.32,  // per pad
+  milestoneEvery: 10,                         // lift, conveyors and ship cargo double every 10 levels
+  liftBase: 25, liftMult: 1.19, liftCost: 25, liftGrowth: 1.46,
+  convBase: 60, convMult: 1.19, convCost: 35, convGrowth: 1.46,  // per pad
   yardBase: 120, yardMult: 1.35, yardCost: 50, yardGrowth: 1.42,
   padMax: 8, padCost: 2_500, padGrowth: 9,
 
   // Ships
   maxShips: 20,
   ship: {
-    hauler:    { cap: 40,  speed: 1,    cost: 400,   label: 'Hauler' },
-    cruiser:   { cap: 14,  speed: 2.1,  cost: 3_000, label: 'Cruiser' },
-    freighter: { cap: 160, speed: 0.55, cost: 60_000, label: 'Freighter' },
+    // upk: upgrade price per unit of cargo (fast ships cost more per crate)
+    hauler:    { cap: 40,  speed: 1,    cost: 400,    upk: 1,   label: 'Hauler' },
+    cruiser:   { cap: 16,  speed: 2.2,  cost: 3_000,  upk: 1.8, label: 'Cruiser' },
+    freighter: { cap: 180, speed: 0.55, cost: 60_000, upk: 0.6, label: 'Freighter' },
   },
   shipFleetGrowth: 2.6,                 // each extra ship costs 2.6x
-  shipCapMult: 1.25, shipUpCost: 0.5, shipUpGrowth: 1.4, // upgrade base = 0.5 x class cost
+  shipCapMult: 1.25, shipUpCost: 0.8, shipUpGrowth: 1.43, // upgrade base = 0.8 coin per crate x upk
+  shipJoinLevel: 0.8,                   // new ships arrive at 80% of your best ship's level
   maxLoadSecs: 40,                      // a ship leaves this long after its first ore even if not full
   tripSecs: { near: 15, mid: 35, far: 70 },  // one way, speed 1
 
   // Ore values when the planet gives none
-  value: { common: 1, rare: 9, mythic: 260 },
-  valueHard: { common: 1.5, rare: 1.45, mythic: 1.2 }, // x per hardness step above 1
+  value: { common: 1, rare: 1.7, mythic: 40 },
+  valueHard: { common: 1.5, rare: 1.35, mythic: 1.2 }, // x per hardness step above 1
 
   // Market
   depth: { common: 1e12, rare: 1e9, mythic: 3e7 }, // ore volume that cuts the index by 1/e

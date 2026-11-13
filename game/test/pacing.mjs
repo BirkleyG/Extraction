@@ -28,19 +28,28 @@ const MIN = 60_000, HOUR = 3_600_000, DAY = 86_400_000;
 // buy an affordable one that is at least half as good, else wait.
 export function spend(c, world, now, maxBuys = 400) {
   let buys = 0;
-  for (; buys < maxBuys;) {
+  const exec = (steps) => {
+    for (const st of steps) {
+      const r = E.applyCommand(c, world, st, now);
+      if (r.error) return false;
+      c = r.colony; buys++;
+    }
+    return true;
+  };
+  while (buys < maxBuys) {
     const moves = E.bestMoves(c, world, { limit: 0 }).filter((m) => m.gain > 0);
     if (!moves.length) break;
     const best = moves[0];
-    const pick = best.canAfford ? best : moves.find((m) => m.canAfford && m.ratio >= 0.5 * best.ratio);
+    let pick = best.canAfford ? best : moves.find((m) => m.canAfford && m.ratio >= 0.5 * best.ratio);
     if (!pick) break;
-    let ok = true;
-    for (const st of pick.steps) {
-      const r = E.applyCommand(c, world, st, now);
-      if (r.error) { ok = false; break; }
-      c = r.colony; buys++;
+    const bar = (moves.find((m) => m !== pick)?.ratio || 0);
+    if (!exec(pick.steps)) break;
+    // keep buying the same thing while it stays better than the runner-up (saves re-ranking everything)
+    while (buys < maxBuys) {
+      const again = E.bestMoves(c, world, { cmds: [pick.cmd], limit: 0 })[0];
+      if (!again || !again.canAfford || !(again.gain > 0) || again.ratio < bar) break;
+      if (!exec(again.steps)) break;
     }
-    if (!ok) break;
   }
   return { c, buys };
 }

@@ -3,7 +3,7 @@ import { T, geoSum, geoMax } from './tuning.js';
 import { info, clone, num, fmt, cleanName, hashSeed, DAY_MS } from './util.js';
 import {
   liftRate, convRate, yardCap, bunkCap, perMiner, shipCap, tripSecs,
-  assignMiners, rollVein, shaftStatus,
+  assignMiners, rollVein, shaftStatus, grade,
 } from './model.js';
 import { advance } from './sim.js';
 import { licensesOpen, panelFor, syncUnlocks } from './unlocks.js';
@@ -21,7 +21,7 @@ function makeShip(c, cls) {
   const n = c.ships.length;
   return {
     id: 'p' + (c.nextId++), name: SHIP_NAMES[n % SHIP_NAMES.length] + (n >= SHIP_NAMES.length ? ' ' + (Math.floor(n / SHIP_NAMES.length) + 1) : ''),
-    cls, lvl: 0, policy: 'best', destId: null, state: 'home', readyAt: c.t, cargo: {},
+    cls, lvl: 0, policy: 'best', destId: null, state: 'home', readyAt: c.t, cargo: {}, cargoG: {},
     dest: null, dockedAt: null, firstLoadAt: null, departAt: null, arriveAt: null, homeAt: null,
   };
 }
@@ -45,7 +45,7 @@ export function newColony({ id, uid, name, species, planet, siteRegion, now, gra
     coin: T.startCoin + g, earned: 0, grant: g,
     miners: 0, idle: 0, drill: 1,
     lift: 0, conveyor: 0, yardLvl: 0, pads: 1,
-    tunnel: {}, yard: {},
+    tunnel: {}, tunnelG: {}, yard: {}, yardG: {},
     shafts: [], ships: [],
     stats: { mined: 0, lifted: 0, loaded: 0, sold: 0, sales: 0, launches: 0, upgrades: 0, spent: 0, firstSaleAt: null },
     unlocked: { panels: [], licenses: [] }, tutorial: 0, nextId: 1,
@@ -67,8 +67,10 @@ export function catchUpGrant(world, now) {
 }
 
 export const upMax = (s) => T.upMax0 + T.upMaxPerDepth * s.idx;
+const shipUpBase = (cls) => T.shipUpCost * T.ship[cls].cap * T.ship[cls].upk;
 const shaftCost = (idx) => (idx <= 0 ? 0 : T.shaftBase * Math.pow(T.shaftGrowth, idx - 1));
 const capPct = (m) => `+${Math.round((m - 1) * 100)}%`;
+const ms = (from, k) => (Math.floor((from + k) / T.milestoneEvery) > Math.floor(from / T.milestoneEvery) ? ' · milestone x2!' : '');
 
 function levelPlan(c, cur, max, base, g, n, cap = MAX_LVL) {
   const room = Math.max(0, Math.min(cap, max) - cur);
@@ -109,7 +111,7 @@ function plan(c, world, cmd, now) {
       const st = shaftStatus(tmp, I, { ore: roll.ore, vein: roll.vein });
       return {
         cost: shaftCost(idx), n: 1, k: 1,
-        effect: `Shaft ${idx + 1}: ${ore.name} (${ore.tier}${roll.vein ? ', ' + fmt(roll.vein.total) + ' ore' : ''})${st.ok ? '' : ' · ' + st.reason.toLowerCase()}`,
+        effect: `Shaft ${idx + 1}: ${ore.name} (${ore.tier}, grade x${fmt(grade(idx))}${roll.vein ? ', ' + fmt(roll.vein.total) + ' ore' : ''})${st.ok ? '' : ' · ' + st.reason.toLowerCase()}`,
         apply: (x) => { x.shafts.push(makeShaft(x, idx, roll)); x.rng = roll.rng; },
       };
     }
@@ -134,7 +136,7 @@ function plan(c, world, cmd, now) {
         const p = levelPlan(c, s.up.cart, upMax(s), T.cartBase * dm, T.cartGrowth, n);
         if (p.maxed) return { error: 'Carts are maxed for this depth' };
         const a = perMiner(s.up.cart, s.idx), b = perMiner(s.up.cart + p.k, s.idx);
-        return { ...p, n: p.k, effect: `${capPct(b / a)} ore per miner (${fmt(a)} → ${fmt(b)}/min)`, apply: (x) => { x.shafts.find((q) => q.id === s.id).up.cart += p.k; } };
+        return { ...p, n: p.k, effect: `+${Math.round(100 * (b / a - 1))}% ore per miner (${fmt(a)} → ${fmt(b)}/min)`, apply: (x) => { x.shafts.find((q) => q.id === s.id).up.cart += p.k; } };
       }
       if (kind === 'bunk') {
         const p = levelPlan(c, s.up.bunk, upMax(s), T.bunkBase * dm, T.bunkGrowth, n);
@@ -146,12 +148,12 @@ function plan(c, world, cmd, now) {
     case 'upgradeLift': {
       const p = levelPlan(c, c.lift, MAX_LVL, T.liftCost, T.liftGrowth, n);
       const a = liftRate(c.lift), b = liftRate(c.lift + p.k);
-      return { ...p, n: p.k, effect: `${capPct(b / a)} lift (${fmt(a)} → ${fmt(b)}/min)`, apply: (x) => { x.lift += p.k; } };
+      return { ...p, n: p.k, effect: `${capPct(b / a)} lift (${fmt(a)} → ${fmt(b)}/min)${ms(c.lift, p.k)}`, apply: (x) => { x.lift += p.k; } };
     }
     case 'upgradeConveyor': {
       const p = levelPlan(c, c.conveyor, MAX_LVL, T.convCost, T.convGrowth, n);
       const a = convRate(c.conveyor), b = convRate(c.conveyor + p.k);
-      return { ...p, n: p.k, effect: `${capPct(b / a)} conveyors (${fmt(a)} → ${fmt(b)}/min per pad)`, apply: (x) => { x.conveyor += p.k; } };
+      return { ...p, n: p.k, effect: `${capPct(b / a)} conveyors (${fmt(a)} → ${fmt(b)}/min per pad)${ms(c.conveyor, p.k)}`, apply: (x) => { x.conveyor += p.k; } };
     }
     case 'upgradeYard': {
       const p = levelPlan(c, c.yardLvl, MAX_LVL, T.yardCost, T.yardGrowth, n);
@@ -179,21 +181,23 @@ function plan(c, world, cmd, now) {
       if (!T.ship[cls]) return { error: 'Unknown ship class' };
       if (cls !== 'hauler' && !lic.has(cls)) return { error: `Needs the ${T.licenses[cls].label}` };
       if (c.ships.length >= T.maxShips) return { error: 'Fleet is full' };
-      const cost = T.ship[cls].cost * Math.pow(T.shipFleetGrowth, Math.max(0, c.ships.length - 1));
+      // New ships join near your fleet's best level, and that refit is in the price.
+      const lvl = Math.floor(T.shipJoinLevel * c.ships.reduce((a, s) => Math.max(a, s.lvl), 0));
+      const cost = T.ship[cls].cost * Math.pow(T.shipFleetGrowth, Math.max(0, c.ships.length - 1)) + (lvl ? geoSum(shipUpBase(cls), T.shipUpGrowth, 0, lvl) : 0);
       const near = I.buyers.reduce((a, b) => (T.tripSecs[b.distance] < T.tripSecs[a.distance] ? b : a));
       return {
         cost, n: 1, k: 1,
-        effect: `New ${T.ship[cls].label}: ${fmt(T.ship[cls].cap)} cargo, ${Math.round(tripSecs(near, cls))}s to ${near.name}`,
-        apply: (x) => { x.ships.push(makeShip(x, cls)); },
+        effect: `New ${T.ship[cls].label}: ${fmt(shipCap({ cls, lvl }))} cargo, ${Math.round(tripSecs(near, cls))}s to ${near.name}`,
+        apply: (x) => { const s = makeShip(x, cls); s.lvl = lvl; x.ships.push(s); },
       };
     }
     case 'upgradeShip': {
       const s = c.ships.find((x) => x.id === cmd.shipId);
       if (!s) return { error: 'No such ship' };
-      const base = T.ship[s.cls].cost * T.shipUpCost;
+      const base = shipUpBase(s.cls);
       const p = levelPlan(c, s.lvl, MAX_LVL, base, T.shipUpGrowth, n);
       const a = shipCap(s), b = shipCap({ ...s, lvl: s.lvl + p.k });
-      return { ...p, n: p.k, effect: `${capPct(b / a)} cargo (${fmt(a)} → ${fmt(b)})`, apply: (x) => { x.ships.find((q) => q.id === s.id).lvl += p.k; } };
+      return { ...p, n: p.k, effect: `${capPct(b / a)} cargo (${fmt(a)} → ${fmt(b)})${ms(s.lvl, p.k)}`, apply: (x) => { x.ships.find((q) => q.id === s.id).lvl += p.k; } };
     }
     case 'setRoute': {
       const s = c.ships.find((x) => x.id === cmd.shipId);

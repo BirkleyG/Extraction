@@ -16,7 +16,14 @@ export function hashSeed(x) {
   return h >>> 0;
 }
 
-export const clone = (o) => (typeof structuredClone === 'function' ? structuredClone(o) : JSON.parse(JSON.stringify(o)));
+// Fast deep copy for plain JSON data (colonies are plain JSON).
+export function clone(o) {
+  if (o === null || typeof o !== 'object') return o;
+  if (Array.isArray(o)) { const a = new Array(o.length); for (let i = 0; i < o.length; i++) a[i] = clone(o[i]); return a; }
+  const r = {};
+  for (const k in o) { const v = o[k]; if (v !== undefined) r[k] = clone(v); }
+  return r;
+}
 
 export const num = (x, d = 0) => (Number.isFinite(x) ? x : d);
 export const pos = (x) => (Number.isFinite(x) && x > 0 ? x : 0);

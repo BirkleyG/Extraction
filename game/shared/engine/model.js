@@ -2,13 +2,16 @@
 import { T } from './tuning.js';
 import { info, rngNext, num, pos } from './util.js';
 
-export const liftRate = (lvl) => T.liftBase * Math.pow(T.liftMult, lvl);
-export const convRate = (lvl) => T.convBase * Math.pow(T.convMult, lvl);
+// Every T.milestoneEvery levels a stat doubles (a "milestone"), on top of its per-level gain.
+export const milestone = (lvl) => Math.pow(2, Math.floor(lvl / T.milestoneEvery));
+export const liftRate = (lvl) => T.liftBase * Math.pow(T.liftMult, lvl) * milestone(lvl);
+export const convRate = (lvl) => T.convBase * Math.pow(T.convMult, lvl) * milestone(lvl);
 export const yardCap = (lvl) => T.yardBase * Math.pow(T.yardMult, lvl);
 export const bunkCap = (lvl) => T.bunkCap0 + T.bunkCapPer * lvl;
-export const perMiner = (cart, idx = 0) => T.minePerMiner * Math.pow(T.cartMult, cart) * Math.pow(T.richness, idx);
+export const perMiner = (cart, idx = 0) => T.minePerMiner * (1 + T.cartAdd * cart) * Math.pow(T.richness, idx);
+export const grade = (idx) => Math.pow(T.grade, idx);
 export const tunnelCap = (c) => T.shaftBuffer * Math.max(1, c.shafts.length);
-export const shipCap = (ship) => (T.ship[ship.cls] || T.ship.hauler).cap * Math.pow(T.shipCapMult, ship.lvl || 0);
+export const shipCap = (ship) => (T.ship[ship.cls] || T.ship.hauler).cap * Math.pow(T.shipCapMult, ship.lvl || 0) * milestone(ship.lvl || 0);
 export const shipSpeed = (cls) => (T.ship[cls] || T.ship.hauler).speed;
 export const tripSecs = (buyer, cls) => T.tripSecs[buyer.distance] / shipSpeed(cls);
 
@@ -26,7 +29,7 @@ export function shaftStatus(c, I, s) {
 export function assignMiners(c, world) {
   const I = info(world);
   const order = c.shafts
-    .map((s, k) => ({ k, ok: shaftStatus(c, I, s).ok, v: (I.ores[I.idx[s.ore]]?.value || 0) * perMiner(s.up.cart, s.idx) }))
+    .map((s, k) => ({ k, ok: shaftStatus(c, I, s).ok, v: (I.ores[I.idx[s.ore]]?.value || 0) * grade(s.idx) * perMiner(s.up.cart, s.idx) }))
     .sort((a, b) => (b.ok - a.ok) || (b.v - a.v) || (a.k - b.k));
   let left = c.miners;
   for (const o of order) {
@@ -47,9 +50,9 @@ export function rollVein(world, idx, rng, { redrill = false, up = null } = {}) {
   if (!pool.length) pool.push(I.ores[0]);
   const w = pool.map((o) => {
     const deep = Math.max(0, idx - o.depthMin);
-    if (o.tier === 'common') return idx === 0 ? 1 : 1.2 / (1 + idx / 3);
-    if (o.tier === 'rare') return 1 + deep * 0.15;
-    return 0.5 + deep * 0.15;
+    if (o.tier === 'common') return idx === 0 ? 1 : 2 / (1 + idx / 3);
+    if (o.tier === 'rare') return 1 + o.depthMin * 0.4;
+    return 1 + deep * 0.3;
   });
   const sum = w.reduce((a, b) => a + b, 0);
   const [r, next] = rngNext(rng >>> 0);
@@ -57,10 +60,13 @@ export function rollVein(world, idx, rng, { redrill = false, up = null } = {}) {
   for (let i = 0; i < pool.length; i++) { x -= w[i]; if (x <= 0) { pick = pool[i]; break; } }
   let vein = null;
   if (pick.tier !== 'common') {
-    const base = pick.tier === 'mythic' ? T.veinMythic : T.veinRare;
-    // Big enough to last a while at this shaft's full staffing (re-drills keep their upgrades).
-    const full = up ? bunkCap(up.bunk) * perMiner(up.cart, idx) * 60 * T.veinHours : 0;
-    const total = Math.round(Math.max(base * Math.pow(T.veinGrowth, idx), full) * (0.8 + 0.4 * rngNext(next)[0]));
+    // Sized to last about T.veinHours at a well-upgraded shaft of this depth
+    // (re-drills use the shaft's own upgrades if that is bigger).
+    const mid = Math.floor((T.upMax0 + T.upMaxPerDepth * idx) / 2);
+    const typical = bunkCap(mid) * perMiner(mid, idx);
+    const own = up ? bunkCap(up.bunk) * perMiner(up.cart, idx) : 0;
+    const k = pick.tier === 'mythic' ? T.veinMythicK : 1;
+    const total = Math.round(Math.max(typical, own) * 60 * T.veinHours * k * (0.75 + 0.5 * rngNext(next)[0]));
     vein = { total, left: total, warn: 0 };
   }
   return { ore: pick.id, vein, rng: rngNext(next)[1] };

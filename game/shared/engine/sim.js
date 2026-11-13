@@ -9,7 +9,7 @@ import { T } from './tuning.js';
 import { info, clone, num, pos, fmt } from './util.js';
 import {
   liftRate, convRate, yardCap, perMiner, tunnelCap, shipCap, tripSecs,
-  shaftStatus, assignMiners, pickDest, priceAt,
+  shaftStatus, assignMiners, pickDest, priceAt, grade,
 } from './model.js';
 import { syncUnlocks } from './unlocks.js';
 
@@ -27,17 +27,23 @@ export function toMap(I, arr, keepZero = false) {
 }
 const sum = (a) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i]; return s; };
 
-// Take `amount` from src (per-ore array) highest value first; returns taken array.
-function takeByValue(I, src, amount) {
-  const out = new Array(I.n).fill(0);
+// Take `amount` from src (per-ore amounts, with grade units srcG) highest unit value first.
+// Returns [amounts, gradeUnits] taken. Grade travels with the ore in proportion.
+function takeByValue(I, src, srcG, amount) {
+  const out = new Array(I.n).fill(0), outG = new Array(I.n).fill(0);
+  const order = I.ores.map((o) => o.i).filter((o) => src[o] > 0)
+    .sort((a, b) => I.ores[b].value * srcG[b] / src[b] - I.ores[a].value * srcG[a] / src[a] || a - b);
   let left = amount;
-  for (const o of I.byValue) {
+  for (const o of order) {
     if (left <= 0) break;
     const x = Math.min(src[o], left);
-    if (x > 0) { src[o] -= x; out[o] = x; left -= x; }
+    if (x > 0) {
+      const g = x >= src[o] ? srcG[o] : srcG[o] * (x / src[o]);
+      src[o] -= x; srcG[o] -= g; out[o] = x; outG[o] = g; left -= x;
+    }
   }
-  for (let o = 0; o < I.n; o++) if (src[o] < 1e-12) src[o] = 0;
-  return out;
+  for (let o = 0; o < I.n; o++) if (src[o] < 1e-12) { src[o] = 0; srcG[o] = 0; }
+  return [out, outG];
 }
 
 export function advance(colony, world, now) {
@@ -52,16 +58,18 @@ export function advance(colony, world, now) {
     return { colony: c, events, sales: [] };
   }
 
-  const tun = toArr(I, c.tunnel);
-  const yd = toArr(I, c.yard);
+  const tun = toArr(I, c.tunnel), tunG = toArr(I, c.tunnelG);
+  const yd = toArr(I, c.yard), ydG = toArr(I, c.yardG);
   const cargo = c.ships.map((s) => toArr(I, s.cargo));
+  const cargoG = c.ships.map((s) => toArr(I, s.cargoG));
   const flowRate = c.ships.map(() => -1); // last measured fill rate (ore/ms), -1 unknown
-  let rates = [], oreOf = [], lastScale = 1;
+  let rates = [], oreOf = [], gradeOf = [], lastScale = 1;
 
   const recompute = () => {
     assignMiners(c, world);
     rates = c.shafts.map((s) => (shaftStatus(c, I, s).ok ? s.miners * perMiner(s.up.cart, s.idx) / 60000 : 0)); // ore per ms
     oreOf = c.shafts.map((s) => I.idx[s.ore]);
+    gradeOf = c.shafts.map((s) => grade(s.idx));
   };
   recompute();
 
@@ -81,7 +89,7 @@ export function advance(colony, world, now) {
         const bi = I.buyerIdx[s.dest] ?? 0;
         let coin = 0;
         for (let o = 0; o < I.n; o++) if (cargo[k][o] > 0) {
-          coin += cargo[k][o] * priceAt(world, I, o, bi, s.arriveAt);
+          coin += cargoG[k][o] * priceAt(world, I, o, bi, s.arriveAt);
           soldArr[o] += cargo[k][o];
         }
         coin = pos(coin);
@@ -92,7 +100,7 @@ export function advance(colony, world, now) {
           emit('sale', `${s.name} sold ${fmt(sum(cargo[k]))} ore at ${I.buyers[bi].name}`, s.arriveAt,
             { shipId: s.id, destId: s.dest, coin, ore: toMap(I, cargo[k]) });
         }
-        cargo[k].fill(0);
+        cargo[k].fill(0); cargoG[k].fill(0);
         s.state = 'back';
         s.homeAt = s.arriveAt + tripSecs(I.buyers[bi], s.cls) * 1000;
       } else {
@@ -107,7 +115,7 @@ export function advance(colony, world, now) {
       const full = load >= shipCap(s) * (1 - 1e-9) - 1e-9;
       const timeout = s.firstLoadAt != null && t >= s.firstLoadAt + T.maxLoadSecs * 1000 - 1e-6;
       if (load > 0 && (full || timeout)) {
-        const bi = pickDest(world, I, s, cargo[k], t);
+        const bi = pickDest(world, I, s, cargoG[k], t);
         const b = I.buyers[bi];
         s.state = 'out';
         s.dest = b.id;
@@ -115,7 +123,7 @@ export function advance(colony, world, now) {
         s.arriveAt = t + tripSecs(b, s.cls) * 1000;
         s.firstLoadAt = null;
         c.stats.launches++;
-        if (c.stats.launches <= 3 || c.stats.launches % 100 === 0) emit('launch', `${s.name} launched for ${b.name}`, t, { shipId: s.id, destId: b.id });
+        if (c.stats.launches <= 3) emit('launch', `${s.name} launched for ${b.name}`, t, { shipId: s.id, destId: b.id });
         flowRate[k] = -1;
       }
     });
@@ -204,14 +212,15 @@ export function advance(colony, world, now) {
         if (!(pot[k] > 0)) continue;
         const m = pot[k] * scale;
         tun[oreOf[k]] += m;
+        tunG[oreOf[k]] += m * gradeOf[k];
         const v = c.shafts[k].vein;
         if (v) v.left = Math.max(0, v.left - m);
       }
       c.stats.mined += fm;
     }
     if (fl > 0) {
-      const up = takeByValue(I, tun, fl);
-      for (let o = 0; o < I.n; o++) yd[o] += up[o];
+      const [up, upG] = takeByValue(I, tun, tunG, fl);
+      for (let o = 0; o < I.n; o++) { yd[o] += up[o]; ydG[o] += upG[o]; }
       c.stats.lifted += fl;
     }
     let left = fc;
@@ -219,8 +228,8 @@ export function advance(colony, world, now) {
       const x = Math.min(caps[j], left);
       left -= x;
       if (x > 0) {
-        const got = takeByValue(I, yd, x);
-        for (let o = 0; o < I.n; o++) cargo[k][o] += got[o];
+        const [got, gotG] = takeByValue(I, yd, ydG, x);
+        for (let o = 0; o < I.n; o++) { cargo[k][o] += got[o]; cargoG[k][o] += gotG[o]; }
         if (c.ships[k].firstLoadAt == null) c.ships[k].firstLoadAt = t0;
       }
       flowRate[k] = x / dt;
@@ -230,9 +239,9 @@ export function advance(colony, world, now) {
   }
 
   // pack
-  c.tunnel = toMap(I, tun);
-  c.yard = toMap(I, yd);
-  c.ships.forEach((s, k) => { s.cargo = toMap(I, cargo[k]); });
+  c.tunnel = toMap(I, tun); c.tunnelG = toMap(I, tunG);
+  c.yard = toMap(I, yd); c.yardG = toMap(I, ydG);
+  c.ships.forEach((s, k) => { s.cargo = toMap(I, cargo[k]); s.cargoG = toMap(I, cargoG[k]); });
   c.t = now;
   if (saleCount > MAX_EVENT_SALES) {
     emit('salesSummary', `${saleCount - MAX_EVENT_SALES} more ship sales`, now, { count: saleCount - MAX_EVENT_SALES });
