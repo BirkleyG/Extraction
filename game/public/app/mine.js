@@ -6,6 +6,7 @@ import { drawScene, drawWeather, pen, drawOre, drawShip, drawPile, shipSprite, o
 import { oreSpriteSpec, color } from '/shared/planet/index.js';
 import { minerImg, clamp, fmt, hash } from './util.js';
 import { prefs } from './juice.js';
+import { REF, drawPlanetRefinery, drawStation } from './refinery-art.js';
 
 export const L = { LV: 34, G0: 8, GH: 24, GX0: 8, GLEN: 168, YARD_X: 26, CONV_X0: 38, PAD_X0: 76, PAD_W: 68, LAYER_H: 136 };
 export const galleryTop = (k) => L.G0 + k * L.LV;
@@ -51,7 +52,7 @@ export function createMine(canvas, get, hooks = {}) {
     const c = st && st.colony;
     const n = c ? c.shafts.length : 1;
     const pads = c ? Math.max(c.pads, 1) : 1;
-    return { x0: -90, x1: Math.max(L.GX0 + L.GLEN + 40, rockEnd + 30, L.PAD_X0 + pads * L.PAD_W + 280), y0: -150, y1: galleryTop(n + 1) + 30 };
+    return { x0: c?.refinery?.planet ? -124 : -90, x1: Math.max(L.GX0 + L.GLEN + 40, rockEnd + 30, L.PAD_X0 + pads * L.PAD_W + 280), y0: -150, y1: galleryTop(n + 1) + 30 };
   }
   const fitZ = () => { const b = bounds(); return Math.min(cssW() / (b.x1 - b.x0), cssH() / (b.y1 - b.y0)); };
   const zMin = () => Math.max(0.3, Math.min(fitZ(), 1.5) * 0.9);
@@ -65,11 +66,12 @@ export function createMine(canvas, get, hooks = {}) {
   function clampCam() { const p = clampXY(cam.x, cam.y, Sc); cam.x = p.x; cam.y = p.y; }
   function homeView() {
     const c = get()?.colony;
-    const span = L.PAD_X0 + Math.max(1, c ? c.pads : 1) * L.PAD_W + 70;
+    const left = c?.refinery?.planet ? 118 : 50;
+    const span = L.PAD_X0 + Math.max(1, c ? c.pads : 1) * L.PAD_W + 20 + left;
     let zz = clamp(cssW() / span, 1.8, 4);
     if (cssH() < 260) zz = Math.min(zz, 2);
     const vw = cssW() / zz, vh = cssH() / zz;
-    return { z: zz, x: vw > span ? -50 - (vw - span) / 2 : -50, y: -vh * 0.46 };
+    return { z: zz, x: vw > span ? -left - (vw - span) / 2 : -left, y: -vh * 0.46 };
   }
   function fitView() {
     const b = bounds(), zz = clamp(fitZ() * 0.96, zMin(), ZMAX);
@@ -229,6 +231,8 @@ export function createMine(canvas, get, hooks = {}) {
     Pn.line(0, -44, 0, cageY - 12, '#2a2a33', 1);
     drawCage(Pn, cageY, goingUp ? topOreColor(c.tunnel, ores) : null, clamp(0.45 + tunF * 0.55, 0.45, 1));
     drawHeadframe(Pn, t, liftV);
+    const RF = R.refinery || {};
+    if (RF.planet) drawPlanetRefinery(Pn, emit, t, dt, RF.planet, ingotCol(c.refinery?.planet, ores), prefs.reduced);
     Pn.line(8, -17, 19, -8, '#5a5a66', 2); // tip chute
 
     // --- yard: the pile grows with colony.yard / yardCap
@@ -249,6 +253,7 @@ export function createMine(canvas, get, hooks = {}) {
     if (yardF >= 0.85 && Math.floor(t * 3) % 2) Pn.rect(L.YARD_X - 2, -34, 4, 4, '#ff5a6e');
 
     // --- pads, ships, belt
+    if (RF.orbital) drawStation(Pn, emit, t, dt, RF.orbital, ingotCol(c.refinery?.orbital, ores), prefs.reduced);
     const lay = layoutShips(c, R, now, t, dt);
     for (let i = 0; i < c.pads; i++) drawPad(Pn, padX(i), t, i);
     for (const d of lay.draw) drawShipK(bg, view, Pn, d, t);
@@ -278,6 +283,8 @@ export function createMine(canvas, get, hooks = {}) {
       label(g, S(L.YARD_X, -34), `YARD ${fmt(yardAmt)}/${fmt(yardCap)}`, fs, 'center', yardF >= 0.85 ? '#ff7a8a' : null);
       if (yardF >= 0.97) label(g, S(L.YARD_X, -34 - (fs / Sc) - 5), 'FULL', fs, 'center', '#ff5a6e');
       label(g, S(padX(0) + 20, 3), c.pads > 1 ? 'LAUNCH PADS' : 'LAUNCH PAD', fs, 'center');
+      if (RF.planet) refLabel(g, S(REF.X, -54), RF.planet, fs);
+      if (RF.orbital) refLabel(g, S(REF.STX, REF.STY - 26), RF.orbital, fs);
     } else label(g, S(L.YARD_X, -34), `YARD ${Math.round(yardF * 100)}%`, fs, 'center', yardF >= 0.85 ? '#ff7a8a' : null);
     if (tunTot > 0.5 && z >= 1) label(g, S(0, bottom + 2), `LIFT BASE ${fmt(tunTot)}${tunF >= 0.97 ? ' FULL' : ''}`, fs, 'center', tunF >= 0.97 ? '#ff7a8a' : null);
     const gap = L.LV * Sc;
@@ -601,6 +608,7 @@ export function createMine(canvas, get, hooks = {}) {
           if (el < 3 && !prefs.reduced) for (let i = 0; i < 12; i++) emit({ x: padX(pad) + (i - 6) * 4, y: -2, vx: (i - 6) * 4, vy: -6, g: 0, t0: t, life: 1.2, sz: 2, col: '#d8c8b0', alpha: 0.7 });
         }
         if (el < T_A) { const a = ease(el / T_A), a2 = a * a; tg = { x: lerp(padX(pad), X0, a2), y: lerp(-2, laneY, a), k: lerp(1, 0.38, a), flip: false, flame: true }; }
+        else if (dn.dest === '@refinery' && R.refinery?.orbital) { const f = ease(clamp((el - T_A) / Math.max(1, tripOut - T_A), 0, 1)); tg = { x: lerp(X0, REF.STX, f), y: lerp(laneY, REF.STY + 16, f), k: lerp(0.38, 0.3, f), flip: false, flame: f < 0.95, trail: f < 0.95 }; }
         else tg = { x: lerp(X0, X1, clamp(el / tripOut, 0, 1)), y: laneY, k: 0.38, flip: false, flame: el < T_A + 1.2, trail: true };
       } else if (s.state === 'back' && s.homeAt != null) {
         const rem = (s.homeAt - now) / 1000;
@@ -611,6 +619,7 @@ export function createMine(canvas, get, hooks = {}) {
         const backLen = Math.max(1, (s.homeAt - s.arriveAt) / 1000);
         const hx = padX(0) - 4 + Math.min(2, holds.length) * 46;
         if (rem < T_D) { const a = ease(1 - rem / T_D); tg = { x: lerp(X0, hx, a), y: lerp(laneY, -64, a), k: lerp(0.38, 0.55, a), flip: a < 0.5, flame: true }; }
+        else if (dn.dest === '@refinery' && R.refinery?.orbital) { const f = ease(clamp(1 - (rem - T_D) / Math.max(1, backLen - T_D), 0, 1)); tg = { x: lerp(REF.STX, X0, f), y: lerp(REF.STY + 16, laneY, f), k: 0.38, flip: true, flame: false, trail: true }; }
         else tg = { x: lerp(X1, X0, clamp(1 - rem / backLen, 0, 1)), y: laneY, k: 0.38, flip: true, flame: false, trail: true };
       } else { SHIP.delete(s.id); return; }
       let v = SHIP.get(s.id);
@@ -685,7 +694,7 @@ export function createMine(canvas, get, hooks = {}) {
     const rows = flight.slice(0, 3), more = flight.length - rows.length;
     const rh = fs + 6 * dpr, pad = 6 * dpr;
     g.font = `${fs}px Silkscreen, monospace`;
-    const txt = (f) => `${f.s.name.toUpperCase().slice(0, 9)} ${f.dest ? f.dest.toUpperCase().slice(0, 7) + ' ' : ''}${mmss(f.eta)}`;
+    const txt = (f) => `${f.s.name.toUpperCase().slice(0, 9)} ${f.dest ? (f.dest === '@refinery' ? 'REFINERY' : f.dest.toUpperCase().slice(0, 7)) + ' ' : ''}${mmss(f.eta)}`;
     const head = `IN FLIGHT ${flight.length}`;
     let w = g.measureText(head).width;
     for (const f of rows) w = Math.max(w, g.measureText(txt(f)).width + fs);
@@ -803,6 +812,9 @@ export function createMine(canvas, get, hooks = {}) {
     }
     if (wy < 2 && wy > -70 && Math.abs(wx) < 16) return hooks.onTap?.('lift', null, e);
     if (wy < 8 && wy > -40 && Math.abs(wx - L.YARD_X) < 14) return hooks.onTap?.('yard', null, e);
+    const rf = get()?.colony?.refinery;
+    if (rf?.planet && wy < 8 && wy > -44 && wx > REF.X - REF.W / 2 - 24 && wx < REF.X + REF.W / 2) return hooks.onTap?.('refinery', 'planet', e);
+    if (rf?.orbital && Math.abs(wy - REF.STY) < 24 && Math.abs(wx - REF.STX) < 32) return hooks.onTap?.('refinery', 'orbital', e);
     if (wy < 2 && wy > -125 && wx > L.PAD_X0 - 6) return hooks.onTap?.(wy > -20 && wy < -2 ? 'conveyor' : 'ships', null, e);
     hooks.onTap?.('none', null, e);
   }
@@ -817,6 +829,7 @@ export function createMine(canvas, get, hooks = {}) {
     pop(wx, wy, text, col = '#ffd23f') { pops.push({ x: wx, y: wy, text, color: col, t0: performance.now() / 1000 }); if (pops.length > 30) pops.shift(); },
     focusShaft(idx) { goal = null; cam.y = galleryTop(idx) - cssH() / z * 0.4; clampCam(); },
     toCss, padX, galleryTop,
+    refPos: (site) => (site === 'orbital' ? { x: REF.STX, y: REF.STY - 14 } : { x: REF.X, y: -46 }),
     worldOf: (stage, c) => ({ lift: { x: 0, y: -48 }, yard: { x: L.YARD_X, y: -14 }, pads: { x: padX(0), y: -40 }, sky: { x: padX(0), y: -90 }, shaft: { x: L.GX0 + 60, y: galleryTop(0) + 12 } }[stage]),
   };
 }
@@ -835,6 +848,15 @@ function composition(m, ores) {
   return out;
 }
 const pickIdx = (comp, u) => { for (let i = 0; i < comp.length; i++) if (u <= comp[i].w) return i; return comp.length - 1; };
+function ingotCol(r, ores) {
+  let best = null, top = 0;
+  for (const k in r?.stock || {}) if (r.stock[k] > top && ores[k]) { top = r.stock[k]; best = ores[k].color; }
+  return best ? lite(best) : '#ffd23f';
+}
+function refLabel(g, p, x, fs) {
+  const f = x.cap > 0 ? x.stock / x.cap : 0;
+  label(g, p, x.full ? 'REFINERY FULL' : `REFINERY ${Math.round(f * 100)}%`, fs, 'center', x.full ? '#ff5a6e' : f > 0.7 ? '#ffb347' : null);
+}
 function lite(col) { return color.mix ? color.mix(col, '#ffffff', 0.45) : col; }
 function mixRed(col, k) { return color.mix ? color.mix(col, '#ff3a4e', k) : col; }
 function drawMound(P, cx, baseY, h, hw, col, flash) {

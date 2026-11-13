@@ -12,6 +12,7 @@ const PANEL_SUB = {
   ships: 'Bigger holds for your ships', bunks: 'Bunkhouses: more miners per shaft', conveyor: 'Faster conveyors load ships quicker',
   yard: 'A bigger yard holds ore while ships are away', drill: 'Better drills open harder ore', routes: 'Pick where each ship sells',
   fleet: 'Buy more ships', pads: 'More launch pads', market: 'Watch planet-wide prices',
+  refinery: 'Refine ore and set your own price',
 };
 
 const S = {
@@ -22,7 +23,7 @@ const S = {
   oreById: {}, region: null, look: null, I: null,
   now() { return Date.now() + this.offset; },
 };
-let ui, mine, chain = Promise.resolve(), saleCount = 0;
+let ui, mine, chain = Promise.resolve(), saleCount = 0, refPool = 0, refPopAt = 0, deliverN = 0;
 
 // ------------------------------------------------------------------ world + state
 function setWorld(world) {
@@ -49,13 +50,13 @@ async function loadState() {
 
 // ------------------------------------------------------------------ events
 const seen = new Map();
-const WIN = { sale: 2500, launch: 8000, strike: 1, blocked: 6e5, pocketOut: 60_000, pocketSummary: 60_000, unlock: Infinity, license: Infinity, salesSummary: 5000, hazard: 1, hazardSummary: 60_000 };
+const WIN = { sale: 2500, launch: 8000, strike: 1, blocked: 6e5, pocketOut: 60_000, pocketSummary: 60_000, unlock: Infinity, license: Infinity, salesSummary: 5000, hazard: 1, hazardSummary: 60_000, refined: 1, refineryFull: 120_000, deliver: 20_000, deliverSummary: 60_000 };
 const HZ_TITLE = { cavein: 'Cave-in', insanity: 'Madness in the dark', gas: 'Toxic gas', flood: 'Flood', fire: 'Fire', quake: 'Earthquake' };
 function handleEvents(evs) {
   for (const e of evs || []) {
     const win = WIN[e.type];
     if (win == null) continue;
-    const id = e.type === 'hazard' ? `${e.data?.kind}${e.data?.shaftId || ''}@${e.at}` : e.data?.shipId || e.data?.shaftId || e.data?.panel || e.data?.license || '';
+    const id = e.type === 'refineryFull' ? e.data?.site || '' : e.type === 'hazard' ? `${e.data?.kind}${e.data?.shaftId || ''}@${e.at}` : e.data?.shipId || e.data?.shaftId || e.data?.panel || e.data?.license || '';
     const k = e.type + '|' + id;
     const last = seen.get(k);
     if (last != null && Math.abs(e.at - last) < win) continue;
@@ -100,7 +101,25 @@ function react(e) {
       break;
     }
     case 'hazardSummary': toast(`<span class="skull" aria-hidden="true"></span>${esc(e.text)}`, 'hazard', 6000); break;
-    case 'license': banner(e.text.replace(/^The Guild grants you the /, ''), 'The Maker Guild grants you a new license', 'license'); break;
+    case 'refined': {
+      // refined sales arrive every tick: pool them and pop one number every few seconds
+      refPool += e.data?.coin || 0;
+      if (performance.now() - refPopAt > 4000 && refPool > 0) {
+        refPopAt = performance.now();
+        const rp = mine.refPos(S.colony.refinery?.planet ? 'planet' : 'orbital');
+        mine.pop(rp.x + ((saleCount++ * 17) % 20) - 10, rp.y, '+' + fmt(refPool), '#ffe680');
+        popAt(coinEl, '+' + fmt(refPool));
+        bump(coinEl.parentElement);
+        sfx.coin();
+        refPool = 0;
+      }
+      break;
+    }
+    case 'refineryFull': toast(`<b class="bad">Storage full</b> ${e.data?.site === 'orbital' ? 'Orbital refinery' : 'On-planet refinery'}: lower your ask or add storage`, 'warn', 6000); sfx.warn(); break;
+    case 'deliver': if (++deliverN <= 3) toast(esc(e.text), 'info', 2600); break;
+    case 'license':
+      if (e.data?.license === 'refinery') { banner('Refinery license', 'Refine your ore and name your own price. Open the Refinery tab.', 'license'); sfx.unlock && sfx.unlock(); break; }
+      banner(e.text.replace(/^The Guild grants you the /, ''), 'The Maker Guild grants you a new license', 'license'); break;
   }
 }
 
@@ -241,6 +260,7 @@ async function boot() {
       else if (kind === 'dig') ui.openCard({ kind: 'dig' });
       else if (kind === 'bneck') ui.openCard({ kind: 'bneck' });
       else if (kind === 'lift' || kind === 'yard' || kind === 'conveyor') { ui.closeCard(); if (S.unl.panels.some((p) => ['lift', 'conveyor', 'yard', 'pads'].includes(p))) ui.setTab('surface'); }
+      else if (kind === 'refinery') { ui.closeCard(); if (S.unl.panels.includes('refinery')) ui.setTab('refinery'); }
       else if (kind === 'ships') { ui.closeCard(); if (S.unl.panels.some((p) => ['ships', 'fleet', 'routes'].includes(p))) ui.setTab('fleet'); }
       else ui.closeCard();
     },
