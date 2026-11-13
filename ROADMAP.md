@@ -135,6 +135,12 @@ Planet layout (full spec; weather, wildlife, tribes and scouting land in Phase 5
 - Creature danger roughly doubles every 5 shafts. Soil hardness modifies mining speed.
 - Phase 5 adds: five weather types (clear, dust, storm, ash, cold) changing daily per region (production, storms ground ships, lightning); per-region wildlife (1–3 pests, 2–3 standard, 1–2 apex; neighbours share; 1–2 planet-roaming mythic creatures; traits fit terrain); tribes placed where it makes sense, from nomads to empires with villages and HQs; scouting from early reports (ore density without mythic, soil, common ore) to full reports (vein counts and sizes, soil, wildlife, danger, weather, tribe strength and relations).
 
+Painted planet (owner request, 2026-11-13; supersedes discrete site lists)
+- The planet map is a painted, shaded-relief world (height, climate zones blending like a Köppen climate map), not Voronoi cells. Regions are named climate areas with organic borders.
+- Ore is painted as hidden continuous fields: the two common-ore zones cover large areas; each rare covers about 37% of the land in patches; mythic covers part of the tough (rugged, high) ground. Wildlife and tribe territories (Phase 5) are hidden fields too.
+- Players never see the ore or territory maps. A new player is dropped at a random spot that's equally good for everyone (about +1 SD), with no hostile tribes or bosses nearby. The map shows where you are, other players, refineries and ships flying overhead.
+- Later (outposts, Phase 5) players click any spot far enough from other sites to open a site there; the ores painted under that spot are what's in the ground. Scouting reports reveal estimates.
+
 Look and feel
 - More space: separate ore piles per ore, ore visibly travelling on belts and pipes, the shipyard set well away from the piles.
 - Tunnels look natural (no grey bands); the ore chunks in the rock are the actual veins.

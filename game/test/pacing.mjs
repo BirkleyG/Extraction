@@ -12,9 +12,9 @@ export const PLANET = {
     { id: 'slate', name: 'Slate', tier: 'common', hardness: 2, depthMin: 3 },
     { id: 'amber', name: 'Amber', tier: 'rare', hardness: 2, depthMin: 1 },
     { id: 'jade', name: 'Jade', tier: 'rare', hardness: 3, depthMin: 4 },
-    { id: 'ruby', name: 'Ruby', tier: 'rare', hardness: 4, depthMin: 8 },
-    { id: 'opal', name: 'Opal', tier: 'rare', hardness: 5, depthMin: 13 },
-    { id: 'star', name: 'Starheart', tier: 'mythic', hardness: 5, depthMin: 17 },
+    { id: 'ruby', name: 'Ruby', tier: 'rare', hardness: 5, depthMin: 8 },
+    { id: 'opal', name: 'Opal', tier: 'rare', hardness: 7, depthMin: 13 },
+    { id: 'star', name: 'Starheart', tier: 'mythic', hardness: 9, depthMin: 17 },
   ],
   buyers: [
     { id: 'depot', name: 'Ring Depot', distance: 'near', likes: { gravel: 1, slate: 1, amber: 0.9 } },
@@ -39,6 +39,11 @@ export function makeParties(planet, { seed = 7, perType = 4, demand = 60 } = {})
   }
   return out;
 }
+
+// The bot's site: gravel ground, three of the four rares (about the 13% of sites that have three), no mythic.
+export const SITE = { id: 'pace-site', regionId: 'pace-region', soil: 1, common: 'gravel',
+  richness: { gravel: 1, slate: 0, amber: 0.7, jade: 0.55, ruby: 0.5, opal: 0, star: 0 },
+  veinSize: { gravel: 1, slate: 1, amber: 1, jade: 1, ruby: 1, opal: 1, star: 1 } };
 
 const MIN = 60_000, HOUR = 3_600_000, DAY = 86_400_000;
 const HOARD_FROM = 27; // the bot stops spending on this day so month-end coin compares income, not savings timing
@@ -121,13 +126,20 @@ function run({ quiet = false, strategy = 'none', refine = 'tune' } = {}) {
   const noRefine = refine === 'none';
   let refBuilt = null;
   const born = 8 * HOUR;
-  let c = E.newColony({ uid: 'bot', name: 'Pace Colony', planet: PLANET, now: born });
+  let c = E.newColony({ uid: 'bot', name: 'Pace Colony', planet: PLANET, site: SITE, now: born });
+  const opened = [];       // { idx, t, dir }: when each shaft was bought
+  const track = (t) => { for (const s of c.shafts) if (s.idx > 0 && !opened.some((o) => o.idx === s.idx)) opened.push({ idx: s.idx, t, dir: s.dir }); };
+  const veinIn = {}, veinHours = [];
   let hazards = [];
   const step = (to) => {
     const r = E.advance(c, world, to);
     c = r.colony;
     if (r.sales.length) world = E.recordSales(world, r.sales, to);
-    for (const e of r.events) if (e.type === 'hazard') hazards.push(e);
+    for (const e of r.events) {
+      if (e.type === 'hazard') hazards.push(e);
+      else if (e.type === 'strike' && e.data.tier !== 'common') veinIn[e.data.shaftId + e.data.oreId] = e.at;
+      else if (e.type === 'pocketOut' && veinIn[e.data.shaftId + e.data.oreId] != null) { veinHours.push((e.at - veinIn[e.data.shaftId + e.data.oreId]) / HOUR); delete veinIn[e.data.shaftId + e.data.oreId]; }
+    }
     return r.events;
   };
   // an active session: a click every 3 seconds
@@ -135,7 +147,7 @@ function run({ quiet = false, strategy = 'none', refine = 'tune' } = {}) {
     for (let t = from; t <= from + mins * MIN; t += 3000) {
       const ev = step(t);
       const r = spend(c, world, t, 20, { noRefine });
-      c = r.c;
+      c = r.c; track(t);
       if (onTick) onTick(t, ev, r.buys);
     }
     return from + mins * MIN;
@@ -148,7 +160,7 @@ function run({ quiet = false, strategy = 'none', refine = 'tune' } = {}) {
   for (let t = born; t <= born + 30 * MIN; t += 3000) {
     for (const e of step(t)) if (e.type === 'unlock' || e.type === 'license') unlockAt.push(`${Math.round((t - born) / 1000)}s ${e.data.panel || e.data.license}`);
     const r = spend(c, world, t, 20);
-    c = r.c;
+    c = r.c; track(t);
     if (r.buys && firstBuy == null) firstBuy = t - born;
     purchases += r.buys;
     if ((t - born) % (5 * MIN) === 0) marks.push({ min: (t - born) / MIN, coin: c.coin, earned: c.earned, cpm: E.rates(c, world).coinPerMin, purchases, shafts: c.shafts.length, ships: c.ships.length, miners: c.miners });
@@ -191,7 +203,7 @@ function run({ quiet = false, strategy = 'none', refine = 'tune' } = {}) {
       if (!noRefine && !c.refinery?.planet && E.quote(c, world, { type: 'buildRefinery', site: 'planet' }).canAfford) {
         c = E.applyCommand(c, world, { type: 'buildRefinery', site: 'planet' }, t).colony; // a player builds as soon as the license lands
       }
-      if (day < HOARD_FROM - 1) c = spend(c, world, t, 400, { noRefine }).c; // closing bell: the bot hoards the last days
+      if (day < HOARD_FROM - 1) { c = spend(c, world, t, 400, { noRefine }).c; track(t); } // closing bell: the bot hoards the last days
       if (!noRefine) c = tunePrices(c, world, t, refine);
       if (refBuilt == null && (c.refinery?.planet || c.refinery?.orbital)) refBuilt = t;
     }
@@ -199,7 +211,7 @@ function run({ quiet = false, strategy = 'none', refine = 'tune' } = {}) {
     while (t < end) { t = Math.min(end, t + 30 * MIN); step(t); if (first20M == null && c.earned >= 2e7) first20M = t; }
     const r = E.rates(c, world);
     const refCpm = Object.values(r.refinery || {}).reduce((a, x) => a + x.coinPerMin, 0);
-    rows.push({ ref: refCpm, sites: ['planet', 'orbital'].filter((k) => c.refinery?.[k]).map((k) => k[0]).join(''), asks: c.refinery?.planet ? Object.values(c.refinery.planet.ores).map((x) => x.markup).join('/') : '', day: day + 1, coin: c.coin, earned: c.earned, cpm: r.coinPerMin, shafts: c.shafts.length, ships: c.ships.length, mix: ['hauler','cruiser','freighter'].map(k => c.ships.filter(s => s.cls === k).length).join('/'), miners: c.miners, drill: c.drill,
+    rows.push({ ref: refCpm, sites: ['planet', 'orbital'].filter((k) => c.refinery?.[k]).map((k) => k[0]).join(''), asks: c.refinery?.planet ? Object.values(c.refinery.planet.ores).map((x) => x.markup).join('/') : '', day: day + 1, coin: c.coin, earned: c.earned, cpm: r.coinPerMin, shafts: c.shafts.length, ships: c.ships.length, mix: ['hauler','cruiser','freighter'].map(k => c.ships.filter(s => s.cls === k).length).join('/'), miners: c.miners, gear: Math.max(...c.shafts.map((s) => s.gear)),
       bn: E.bottleneck(c, world).stage, exh: r.shafts.filter((x) => x.blocked).length, dug: c.shafts.reduce((a, s) => a + (s.dug || 0), 0), face: Math.max(0, ...c.shafts.map((s) => s.face || 0)), month: c.monthEarned });
   }
   const result = {
@@ -212,8 +224,11 @@ function run({ quiet = false, strategy = 'none', refine = 'tune' } = {}) {
   if (strategy !== 'none' || refine !== 'tune') return result;
   out.push('');
   out.push('== (b) 30-day month, 4 check-ins/day, greedy ==');
-  out.push('day  coin     earned   coin/min  refined/m  shafts ships miners drill stuck dug longest bottleneck  refineries');
-  for (const r of rows) out.push(`${String(r.day).padStart(3)}  ${E.fmt(r.coin).padEnd(8)} ${E.fmt(r.earned).padEnd(8)} ${E.fmt(r.cpm).padEnd(9)} ${E.fmt(r.ref).padEnd(10)} ${String(r.shafts).padStart(6)} ${String(r.ships).padStart(5)} ${String(r.miners).padStart(6)} ${String(r.drill).padStart(5)} ${String(r.exh).padStart(5)} ${String(r.dug).padStart(4)} ${(Math.round(r.face) + 'm').padStart(7)} ${r.bn.padEnd(10)}  ${r.sites} ${r.asks}`);
+  out.push('day  coin     earned   coin/min  refined/m  shafts ships miners gear  stuck dug longest bottleneck  refineries');
+  for (const r of rows) out.push(`${String(r.day).padStart(3)}  ${E.fmt(r.coin).padEnd(8)} ${E.fmt(r.earned).padEnd(8)} ${E.fmt(r.cpm).padEnd(9)} ${E.fmt(r.ref).padEnd(10)} ${String(r.shafts).padStart(6)} ${String(r.ships).padStart(5)} ${String(r.miners).padStart(6)} ${String(r.gear).padStart(5)} ${String(r.exh).padStart(5)} ${String(r.dug).padStart(4)} ${(Math.round(r.face) + 'm').padStart(7)} ${r.bn.padEnd(10)}  ${r.sites} ${r.asks}`);
+  const med = (a) => (a.length ? [...a].sort((x, y) => x - y)[Math.floor(a.length / 2)] : 0);
+  out.push('shaft open times (day): ' + (opened.length ? opened.map((o) => `#${o.idx + 1} ${(o.t / DAY + 1).toFixed(2)} ${o.dir}`).join(' · ') : 'none'));
+  out.push(`veins finished: ${veinHours.length}, hours min/median/max: ${veinHours.length ? [Math.min(...veinHours), med(veinHours), Math.max(...veinHours)].map((x) => x.toFixed(1)).join(' / ') : '-'}`);
   out.push(`first 20M earned: ${first20M == null ? 'never' : 'day ' + (first20M / DAY + 1).toFixed(2)} · prestige panel: day ${prestigeAt == null ? '-' : (prestigeAt / DAY + 1).toFixed(2)}`);
   out.push(`hazards: ${hazards.length} (${Object.entries(result.byKind).map(([k, v]) => k + ' ' + v).join(', ')}), miners lost ${c.stats.lost}, safety ${JSON.stringify(c.safety)}, lights/supports avg ${(c.shafts.reduce((a, s) => a + (s.up.lights || 0), 0) / c.shafts.length).toFixed(1)}/${(c.shafts.reduce((a, s) => a + (s.up.supports || 0), 0) / c.shafts.length).toFixed(1)}`);
   for (const e of hazards.slice(0, 4)) out.push(`  day ${(e.at / DAY + 1).toFixed(2)}: ${e.text}`);

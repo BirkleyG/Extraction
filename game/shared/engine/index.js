@@ -99,7 +99,7 @@
  */
 import { applyCommand as baseApply } from './commands.js';
 import { autoSpend } from './autospend.js';
-export { ENGINE_VERSION, newColony, quote, catchUpGrant } from './commands.js';
+export { ENGINE_VERSION, newColony, quote, catchUpGrant, shaftOptions } from './commands.js';
 
 // autoSpend {keep?} buys the best-value moves in order (keep = fraction of coin to hold back).
 export function applyCommand(colony, world, cmd, now) {
@@ -107,7 +107,7 @@ export function applyCommand(colony, world, cmd, now) {
   return baseApply(colony, world, cmd, now);
 }
 export { advance } from './sim.js';
-export { rates, bottleneck, destinations, marketPrice, recordSales, bestMoves, candidateMoves, marketTable, activeChanges, priceMult } from './analysis.js';
+export { rates, bottleneck, destinations, marketPrice, recordSales, bestMoves, candidateMoves, bestDir, marketTable, activeChanges, priceMult } from './analysis.js';
 export { spectacleOf, evoMult } from './model.js';
 export { unlocks, PANELS, TUTORIAL } from './unlocks.js';
 export { fmt } from './util.js';

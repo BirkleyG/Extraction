@@ -179,3 +179,11 @@ shaft: { id, idx, name, dir, band: 'shallow'|'middle'|'deep'|'deepest',
 **Lift:** `upgradeLift { kind: 'speed'|'capacity'|'buckets', n }`. Throughput = buckets × capacity × trips/min (speed, slowed by the depth of the deepest active shaft). The old single lift upgrade goes away.
 
 **UI rule:** no recommended buys. `bottleneck()` keeps `stage` and `message` (a diagnosis) but the client shows no buy suggestion.
+
+### Painted planet (supersedes `planet.sites` lists)
+- `planet.field`: seeds and parameters only (no rasters stored). Pure functions in `game/shared/planet` sample it anywhere on the map (x, y in 0..1000):
+  - `sampleSpot(planet, x, y)` returns `{ x, y, regionId, height, temperature, moisture, climate, terrain, soil, tough, common, richness: {oreId: 0..1}, veinSize: {oreId}, score }`.
+  - `startSpot(planet, takenPoints, seed)` returns a random spot near +1 SD of score, at least `MIN_SITE_GAP` from taken points, with no mythic.
+  - `renderPlanetMap(...)` lives in the client pixel kit, not shared.
+- The server stores the colony's `site` from `sampleSpot` (id = `s<x>_<y>`, plus the sampled numbers). The engine reads only `colony.site`.
+- The client map never draws ore or territory fields.

@@ -2,8 +2,8 @@
 import { T } from './tuning.js';
 import { info, pos } from './util.js';
 import {
-  liftRate, convRate, yardCap, bunkCap, perMiner, tunnelCap, shipCap, tripSecs,
-  shaftStatus, pickDest, priceAt, grade, evoMult, hazardRates, depthOf,
+  liftRate, convRate, yardCap, perMiner, cartRate, soilOf, tunnelCap, shipCap, tripSecs,
+  shaftStatus, pickDest, priceAt, grade, evoMult, hazardRates, depthOf, dangerOf, bandOf,
 } from './model.js';
 import { tunnelAt, expectedMix, metresPerMin, cuts } from './pockets.js';
 import { REF_DEST, refThru, refYield, refCap, refDocks, refCfg, refUnit, refTrip, demandVec, hasParties, nearestBuyer, intakeFrom, prefersRefinery } from './refinery.js';
@@ -14,7 +14,7 @@ export function hazardOutlook(c) {
   const hr = hazardRates(c, 8.64e15);
   const H = T.hz, D = Math.max(1, depthOf(c)), col = hr.colony;
   const shafts = c.shafts.map((s, k) => {
-    const share = s.idx / D;
+    const share = dangerOf(s.idx) / D;
     const h = hr.shafts[k];
     const risk = h.cave + h.mad + (col.gas + col.flood) * share + (s.idx > 0 ? col.quake : 0);
     const haltMinsPerHour = h.cave * avg(H.caveHalt) + h.mad * avg(H.madHalt)
@@ -39,29 +39,32 @@ export function rates(colony, world) {
     const st = shaftStatus(c, I, s);
     const tn = tunnelAt(c, I, s);
     const haltMs = Math.max(0, (s.haltUntil || 0) - now);
-    const full = st.ok && !haltMs ? s.miners * perMiner(s.up.cart, s.idx) * mineK : 0;
-    const r = full * (tn.blocked ? T.pk.wall : 1);
+    const soil = soilOf(c);
+    const crew = s.miners * perMiner(s) / soil * mineK, cartCap = cartRate(s) * mineK;
+    const full = st.ok && !haltMs ? Math.min(crew, cartCap) : 0;
+    const r = full * (tn.blocked ? T.pk.wall : tn.taper);
     const gr = grade(s.idx);
     if (r > 0) { ore[I.idx[s.ore]] += r; oreG[I.idx[s.ore]] += r * gr; }
     if (tn.blocked) { if (r > 0) { oreE[I.idx[s.ore]] += r; oreEG[I.idx[s.ore]] += r * gr; } }
-    else if (full > 0) for (const { i, share } of expectedMix(I, s.idx, c.drill)) { oreE[i] += full * share; oreEG[i] += full * share * gr; }
+    else if (full > 0) for (const { i, share } of expectedMix(c, I, s)) { oreE[i] += full * share; oreEG[i] += full * share * gr; }
     shaftV.push(r * gr * (I.ores[I.idx[s.ore]]?.value || 0));
     const face = s.face || 0;
     const nx = tn.blocked ? tn.cur : tn.next;
     return {
-      id: s.id, name: s.name, ore: s.ore, oreId: s.ore, miners: s.miners, cap: bunkCap(s.up.bunk), orePerMin: r,
-      perMiner: perMiner(s.up.cart, s.idx) * mineK, grade: gr, ok: st.ok,
+      id: s.id, idx: s.idx, name: s.name, dir: s.dir, band: bandOf(s.idx), ore: s.ore, oreId: s.ore, miners: s.miners,
+      gear: s.gear, cart: s.cart, cap: cartCap, crew, limit: crew > cartCap ? 'cart' : 'miners', orePerMin: r,
+      perMiner: perMiner(s) / soil * mineK, grade: gr, ok: st.ok,
       reason: haltMs && st.ok ? `Halted: ${Math.ceil(haltMs / 60000)} min to clear` : st.reason,
       haltMins: Math.ceil(haltMs / 60000), risk: hz.shafts[k].risk,
       lights: s.up.lights || 0, supports: s.up.supports || 0,
       face, metresPerMin: tn.blocked ? 0 : metresPerMin(s, r), dug: s.dug || 0,
       blocked: !!tn.blocked, need: st.need || 0, wallRate: tn.blocked ? r : 0,
-      pocket: tn.cur && !tn.blocked ? { ore: tn.cur.ore, left: Math.max(0, tn.cur.start + tn.cur.len - face), len: tn.cur.len } : null,
-      next: nx ? { ore: nx.ore, at: Math.max(0, nx.start - face), blocked: !cuts(c, I.ores[I.idx[nx.ore]]) } : null,
+      pocket: tn.cur && !tn.blocked ? { ore: tn.cur.ore, left: Math.max(0, tn.cur.start + tn.cur.len - face), len: tn.cur.len, taper: tn.taper } : null,
+      next: nx ? { ore: nx.ore, at: Math.max(0, nx.start - face), blocked: !cuts(s, I.ores[I.idx[nx.ore]]) } : null,
     };
   });
   const mine = ore.reduce((a, b) => a + b, 0);
-  const lift = liftRate(c.lift) * mineK;
+  const lift = liftRate(c) * mineK;
   const convPad = convRate(c.conveyor);
   const conveyor = convPad * c.pads;
   const supply = Math.min(mine, lift);
@@ -216,7 +219,7 @@ export function rates(colony, world) {
   return {
     orePerMin, minePerMin: mine, liftPerMin: lift, conveyorPerMin: conveyor, conveyorPerPad: convPad,
     shipPerMin: shipMax, throughput: through, coinPerMin: pos(coin), valuePerOre: through > 0 ? coin / through : 0,
-    yardLoss, yardCap: yardCap(c.yardLvl), tunnelCap: tunnelCap(c), idleMiners: c.idle || 0, pads: c.pads,
+    yardLoss, yardCap: yardCap(c.yardLvl), tunnelCap: tunnelCap(c), idleMiners: 0, pads: c.pads,
     shafts, ships: ships.map(({ bi, ref, loadFull, loadReal, rt, ...s }) => ({ ...s, cycleSecs: (loadFull + rt) * 60 })),
     limit, score: mine > 0 ? pos(soft * vpo * (refinery && P0.coin > 0 ? rawCoin / P0.coin : 1) + refPlan * (1 - hzLoss)) : 0,
     refinery: refinery || {},

@@ -8,8 +8,8 @@
 import { T } from './tuning.js';
 import { info, clone, num, pos, fmt } from './util.js';
 import {
-  liftRate, convRate, yardCap, perMiner, tunnelCap, shipCap, tripSecs,
-  shaftStatus, assignMiners, pickDest, priceAt, grade, evoMult, hazardRates, changeTimes,
+  liftRate, convRate, yardCap, shaftRate, tunnelCap, shipCap, tripSecs,
+  shaftStatus, assignMiners, pickDest, priceAt, grade, evoMult, hazardRates, changeTimes, dangerOf,
 } from './model.js';
 import { syncUnlocks } from './unlocks.js';
 import { tunnelAt, syncTunnel, oreBetween, faceAfter, needOf, needText } from './pockets.js';
@@ -108,11 +108,11 @@ export function advance(colony, world, now) {
     hr = null;
     assignMiners(c, world);
     const tn = c.shafts.map((s) => tunnelAt(c, I, s));
-    base = c.shafts.map((s, k) => (shaftStatus(c, I, s).ok ? s.miners * perMiner(s.up.cart, s.idx) * mineK / 60000 * (tn[k].blocked ? T.pk.wall : 1) : 0)); // ore per ms
+    base = c.shafts.map((s, k) => (shaftStatus(c, I, s).ok ? shaftRate(c, s, mineK) / 60000 * (tn[k].blocked ? T.pk.wall : tn[k].taper) : 0)); // ore per ms (the cart caps the crew; veins taper at the end)
     oreOf = c.shafts.map((s) => I.idx[s.ore]);
     digs = tn.map((x) => !x.blocked);      // blocked faces don't move
     tgt = tn.map((x) => x.target);         // metres where the mined ore changes next
-    sig = tn.map((x) => x.ore + (x.blocked ? '!' : ''));
+    sig = tn.map((x) => x.ore + (x.blocked ? '!' : '') + x.taper);
     gradeOf = c.shafts.map((s) => grade(s.idx));
   };
   // Halted shafts (cave-ins, floods...) dig nothing until haltUntil.
@@ -212,11 +212,15 @@ export function advance(colony, world, now) {
         st.cur.hit = 1;
         const o = I.ores[I.idx[st.cur.ore]];
         pe('strike', `${s.name} struck ${o.name}!`, { shaftId: s.id, oreId: o.id, tier: o.tier });
+      } else if (st.cur && !st.blocked && st.cur.hit && !st.cur.low && num(s.face) >= st.cur.start + T.pk.low * st.cur.len - 1e-7) {
+        st.cur.low = 1;
+        const o = I.ores[I.idx[st.cur.ore]];
+        pe('veinLow', `${s.name}: the ${o.name} vein is running low (20% left).`, { shaftId: s.id, oreId: o.id, tier: o.tier });
       } else if (st.blocked && !st.cur.blk) {
         st.cur.blk = 1;
         pe('blocked', `${s.name} hit ${st.pocketOre.name}: ${needText(st.pocketOre).toLowerCase()}. Crews scrape the walls meanwhile.`, { shaftId: s.id, oreId: st.pocketOre.id, need: needOf(st.pocketOre) });
       }
-      if (sig[k] !== st.ore + (st.blocked ? '!' : '') || tgt[k] !== st.target) changed = true;
+      if (sig[k] !== st.ore + (st.blocked ? '!' : '') + st.taper || tgt[k] !== st.target) changed = true;
     });
     if (changed) recompute();
     // hazards whose budget ran out
@@ -294,8 +298,8 @@ export function advance(colony, world, now) {
   const deepShaft = () => {
     const deep = c.shafts.filter((s) => s.idx > 0);
     if (!deep.length) return null;
-    let x = rnd() * deep.reduce((a, s) => a + s.idx, 0);
-    for (const s of deep) { x -= s.idx; if (x <= 0) return s; }
+    let x = rnd() * deep.reduce((a, s) => a + dangerOf(s.idx), 0);
+    for (const s of deep) { x -= dangerOf(s.idx); if (x <= 0) return s; }
     return deep[deep.length - 1];
   };
   function hazard(kind, s, t) {
@@ -405,7 +409,7 @@ export function advance(colony, world, now) {
     const Ppot = sum(pot);
     const B1 = sum(tun), K1 = tunnelCap(c);
     const B2 = sum(yd), K2 = yardCap(c.yardLvl);
-    const Lcap = liftRate(c.lift) * mineK * dt / 60000;
+    const Lcap = liftRate(c) * mineK * dt / 60000;
     const Ccap = convRate(c.conveyor) * dt / 60000;
     const loading = [];
     c.ships.forEach((s, k) => { if (s.state === 'loading') loading.push(k); });

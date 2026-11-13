@@ -5,44 +5,54 @@ export const T = {
   startCoin: 40,                // enough for a few miners right away
   gridMs: 60_000, // advance() never integrates across a minute boundary in one piece
 
-  // Miners
-  minePerMiner: 10,          // ore/min per miner, before carts
-  hireBase: 10, hireGrowth: 1.02,
-
-  // Shafts (index = depth)
+  // Shafts are categories (AdVenture-Capitalist style). Shaft idx (0 = the free first shaft) scales everything in it.
   maxShafts: 30,
-  shaftBase: 60, shaftGrowth: 2.25,
-  bunkCap0: 3, bunkCapPer: 1,                 // miners per shaft = 3 + bunk
-  bunkBase: 60, bunkGrowth: 2.08,
-  cartBase: 25, cartGrowth: 1.83, cartAdd: 0.3,  // ore per miner +30% of base per level
-  upMax0: 10, upMaxPerDepth: 1,              // carts/bunks per shaft max out at 10 + depth
-  depthCost: 1.66,                            // per-shaft upgrade price x1.66 per depth
-  richness: 1.25,                             // ore per miner x1.25 per depth
-  grade: 1.05,                                // ore value x1.05 per depth (deeper ore is purer)
-  shaftBuffer: 40,                            // tunnel storage per shaft (ore)
+  startMiners: 3,                // the free first shaft starts with a few miners
+  minePerMiner: 10,              // ore/min per miner at gear 1, shaft 1
+  shaftScale: 3.4,               // miners, gear and cart cost x3.4 per shaft index
+  richness: 1.55,                // ore per miner x1.55 per shaft index ("depth richness")
+  grade: 1.75,                   // ore value x1.75 per shaft index (deeper ore is purer; market volume is unaffected)
+  hire: { base: 10, growth: 1.075, max: 200 },          // miner n costs base x shaftScale^idx x growth^n
+  // Gear: level 1.. (mining speed). Level >= hardness cuts that ore. Above `free` needs the mythicDrill license.
+  gear: { base: 25, growth: 1.13, add: 0.5, max: 300, free: 8, hardMax: 10 },
+  // Cart: ore/min the cart hauls from the face to the shaft entrance. A shaft makes at most this much.
+  cart: { base: 40, growth: 1.13, add: 0.6, rate: 60, max: 300 },
+  // Gear and cart double at these levels (milestones), on top of their per-level gain.
+  milestones: [25, 50, 100, 200, 300],
+  shaftBase: 6000, shaftGrowth: 10,   // shaft idx (>= 1) costs base x growth^(idx-1)
+  depthBands: [3, 7, 12],             // shaft index where middle, deep and deepest begin
+  bands: ['shallow', 'middle', 'deep', 'deepest'],
+  shaftBuffer: 40,                    // tunnel storage per shaft (ore)
 
-  // Tunnels and ore pockets (pockets.js). Lengths in metres.
+  // Tunnels and ore pockets (pockets.js). A metre = a minute of a reference crew's output at that shaft.
   pk: {
-    minPerM: 2.5,          // minutes a full crew needs per metre at the lift (ore per metre scales with the crew)
-    haulM: 60,             // every 60 m of tunnel adds another minPerM per metre: the haul back gets longer
-    wall: 0.6,             // a face stuck at a too-hard pocket: crews scrape common ore off the walls at 60%
-    first: [1.5, 3],       // a new shaft's first pocket starts this far in
-    homeFirst: [20, 30],   // the home shaft's first pocket (after the drill is affordable)
-    len: [2.5, 5],         // pocket length at depth 0 ...
-    lenDepth: 0.08,        // ... x(1 + 0.08 x depth)
-    share: [0.35, 0.03, 0.7], // share of the tunnel inside pockets: base + per depth, capped
-    mythicLen: 0.5,        // mythic pockets are half as long
+    refOre: 400,           // reference crew ore/min at shaft 1 (x richness per index): sets how long a vein lasts for a median player
+    minPerM: 1,            // minutes of reference output per metre
+    share: [0.04, 0.22, 0.32, 0.42], // share of the tunnel inside veins by band (x richness factor of the site)
+    shareMax: 0.7,
+    hours: [6, 8],         // vein length (hours at the reference pace) = 6 x 8^u x size, clamped to hoursMin..hoursMax
+    hoursMin: 4, hoursMax: 48,
+    meanHours: 14,         // average vein, for spacing
+    mythicLen: 0.5,        // mythic veins are half as long
     mythicW: 0.5,          // and half as likely as a rare of the same weight
+    wall: 0.6,             // a face stuck at a too-hard vein: crews scrape common ore off the walls at 60%
+    low: 0.8,              // "running low" event when 80% of the vein is mined (20% left)
+    taperFrom: 0.95,       // below 5% left the rare share tapers linearly (5 equal steps), then back to common
+    taperSteps: 5,
     ahead: 3,              // pockets rolled ahead of the face (the mine view draws them)
+    tiltRange: [0.45, 1.55], // a direction option multiplies each ore's richness by something in this range
   },
-
-  // Drill: level >= hardness to mine. Level 6 = mythic drill (license).
-  drillCosts: [0, 0, 1_700, 38_000, 940_000, 19_000_000, 130_000_000], // cost to reach level i
-  drillMax: 6,
+  danger: 5,                          // hazard danger doubles every 5 shafts
 
   // Lift, conveyor, yard, pads
-  milestoneEvery: 40,                         // lift, conveyors and ship cargo double every 40 levels
-  liftBase: 25, liftMult: 1.19, liftCost: 25, liftGrowth: 1.46,
+  milestoneEvery: 40,                         // conveyors, ship cargo and lift speed/capacity double every 40 levels
+  // Lift: throughput = buckets x capacity x trips/min, slowed by the depth of the deepest working shaft.
+  lift: {
+    speed:    { base: 2,  mult: 1.12, cost: 30,  growth: 1.42, max: 400, label: 'Lift speed' },     // trips per minute
+    capacity: { base: 20, mult: 1.16, cost: 40,  growth: 1.5,  max: 400, label: 'Bucket capacity' }, // ore per bucket
+    buckets:  { base: 1,  add: 1,    cost: 150, growth: 1.85, max: 60,  label: 'Buckets' },         // buckets running at once
+    depthSlow: 0.03,                          // trips/min / (1 + 0.03 x deepest working shaft index)
+  },
   convBase: 60, convMult: 1.19, convCost: 35, convGrowth: 1.46,  // per pad
   yardBase: 120, yardMult: 1.35, yardCost: 50, yardGrowth: 1.42,
   padMax: 8, padCost: 2_500, padGrowth: 9,
