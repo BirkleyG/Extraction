@@ -108,6 +108,9 @@ body.firstscreen .row.hero { margin-top: 2px; }
 .card h4 .nm input, .sh-h .nm input { width: 160px; padding: 2px 6px; background: var(--ink); border: 2px solid var(--accent); }
 .sh-s { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; font-family: var(--f-mono); font-size: 17px; color: var(--muted); }
 .why { color: var(--warn); font-size: 13px; }
+.sh-s.pk { font-size: 15px; color: var(--text, #f4edff); }
+.sh-s.pk .mut { color: var(--muted); }
+.sh-s.pk img, .sh-s.pk canvas { vertical-align: middle; }
 .vein { display: inline-block; width: 70px; height: 8px; background: #2a2040; border: 1px solid #000; position: relative; vertical-align: middle; }
 .vein i { position: absolute; left: 0; top: 0; bottom: 0; }
 .vein.wide { width: 120px; }

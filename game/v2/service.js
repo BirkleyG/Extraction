@@ -105,7 +105,8 @@ export function createV2({ store, ai, currentModel, broadcast, now: clock = () =
     await store.setDoc('board2', r.colony.uid, s);
     broadcast('board2', r.colony.uid, s);
     for (const ev of r.events || []) {
-      if (['license', 'veinOut'].includes(ev.type) && ev.text) await addFeed(`${r.colony.name}: ${ev.text}`, ev.type, r.colony.uid, t);
+      if (ev.type === 'license' && ev.text) await addFeed(`${r.colony.name}: ${ev.text}`, ev.type, r.colony.uid, t);
+      if (ev.type === 'strike' && ev.data && ev.data.tier !== 'common' && ev.text) await addFeed(`${ev.data.tier === 'mythic' ? '🌟' : '⛏'} ${r.colony.name}: ${ev.text}`, 'strike', r.colony.uid, t);
       if (ev.type === 'nuke') await addFeed(`☢ ${players[0] ? players[0].name : r.colony.name} nuked their whole colony for ${Number(ev.data && ev.data.spectacle || 0).toFixed(1)} Spectacle. The Maker is listening.`, 'nuke', r.colony.uid, t);
     }
     return r;

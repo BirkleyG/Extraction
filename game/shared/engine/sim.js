@@ -1,8 +1,8 @@
-// advance(): piecewise-linear flow simulation with discrete ship and vein events.
+// advance(): piecewise-linear flow simulation with discrete ship and pocket events.
 //
 // Time is cut into segments that end at: `now`, every absolute minute boundary,
-// each ship arrival/return/timeout, and estimated "ship full" / "vein threshold"
-// moments. Inside a segment every rate is constant and the pipeline
+// each ship arrival/return/timeout, and estimated "ship full" / "face reaches a pocket
+// boundary" moments (the face never crosses a boundary inside a segment). Inside a segment every rate is constant and the pipeline
 // (shafts -> tunnel -> lift -> yard -> conveyor -> docked ships) is solved as one
 // fluid step, so splitting a segment anywhere gives (almost) the same totals.
 import { T } from './tuning.js';
@@ -12,10 +12,12 @@ import {
   shaftStatus, assignMiners, pickDest, priceAt, grade, evoMult, hazardRates, changeTimes,
 } from './model.js';
 import { syncUnlocks } from './unlocks.js';
+import { tunnelAt, syncTunnel, oreBetween, faceAfter, needOf, needText } from './pockets.js';
 import { ensureHz, rollBudget, hzPick, hazardText } from './hazards.js';
 
 const MAX_EVENT_SALES = 12;
 const MAX_EVENT_HAZARDS = 12;
+const MAX_EVENT_POCKETS = 12;
 const HOUR = 3_600_000;
 const DUE = 1e-9; // hazard budgets at or below this fire
 
@@ -68,7 +70,8 @@ export function advance(colony, world, now) {
   const cargo = c.ships.map((s) => toArr(I, s.cargo));
   const cargoG = c.ships.map((s) => toArr(I, s.cargoG));
   const flowRate = c.ships.map(() => -1); // last measured fill rate (ore/ms), -1 unknown
-  let rates = [], base = [], oreOf = [], gradeOf = [], lastScale = 1;
+  let rates = [], base = [], oreOf = [], gradeOf = [], tgt = [], digs = [], sig = [], lastScale = 1;
+  let pkCount = 0;
   const mineK = evoMult(c, 'mine'), sellK = evoMult(c, 'sell');
   let hzCount = 0, hzLost = 0;
 
@@ -76,8 +79,12 @@ export function advance(colony, world, now) {
   const recompute = () => {
     hr = null;
     assignMiners(c, world);
-    base = c.shafts.map((s) => (shaftStatus(c, I, s).ok ? s.miners * perMiner(s.up.cart, s.idx) * mineK / 60000 : 0)); // ore per ms
+    const tn = c.shafts.map((s) => tunnelAt(c, I, s));
+    base = c.shafts.map((s, k) => (shaftStatus(c, I, s).ok ? s.miners * perMiner(s.up.cart, s.idx) * mineK / 60000 * (tn[k].blocked ? T.pk.wall : 1) : 0)); // ore per ms
     oreOf = c.shafts.map((s) => I.idx[s.ore]);
+    digs = tn.map((x) => !x.blocked);      // blocked faces don't move
+    tgt = tn.map((x) => x.target);         // metres where the mined ore changes next
+    sig = tn.map((x) => x.ore + (x.blocked ? '!' : ''));
     gradeOf = c.shafts.map((s) => grade(s.idx));
   };
   // Halted shafts (cave-ins, floods...) dig nothing until haltUntil.
@@ -148,23 +155,25 @@ export function advance(colony, world, now) {
         s.state = 'loading'; s.dockedAt = t; s.firstLoadAt = null; docked++;
       }
     }
-    // veins
+    // tunnels: pockets dug out, faces breaking into pockets or stuck at hard ones
     let changed = false;
-    c.shafts.forEach((s) => {
-      const v = s.vein;
-      if (!v || v.warn >= 3) return;
-      if (v.left <= 1e-6) {
-        v.left = 0; v.warn = 3; changed = true;
-        // Crews fall back to the best common ore the drill can cut, so income dips instead of stopping.
-        const spent = s.ore;
-        const fb = I.ores.filter((o) => o.tier === 'common' && o.hardness <= c.drill).sort((a, b) => (b.value || 0) - (a.value || 0))[0];
-        if (fb) { s.ore = fb.id; s.vein = null; s.spent = spent; }
-        emit('veinOut', `${s.name}: the ${oreName(I, spent)} vein is exhausted.${fb ? ` Crews switched to ${oreName(I, fb.id)}.` : ''} Re-drill for a new rare vein.`, t, { shaftId: s.id });
-      } else if (v.warn < 2 && v.left <= v.total * T.veinWarn[1]) {
-        v.warn = 2; emit('vein5', `${s.name}: ${oreName(I, s.ore)} vein at 5%`, t, { shaftId: s.id, pct: 5 });
-      } else if (v.warn < 1 && v.left <= v.total * T.veinWarn[0]) {
-        v.warn = 1; emit('vein20', `${s.name}: ${oreName(I, s.ore)} vein at 20%`, t, { shaftId: s.id, pct: 20 });
+    const pe = (type, text, data) => { if (++pkCount <= MAX_EVENT_POCKETS) emit(type, text, t, data); };
+    c.shafts.forEach((s, k) => {
+      while (s.pk.length && s.pk[0].start + s.pk[0].len <= s.face + 1e-7) {
+        const p = s.pk.shift();
+        s.dug++;
+        if (p.hit) pe('pocketOut', `${s.name}: the ${oreName(I, p.ore)} pocket is dug out. Back to ${oreName(I, tunnelAt(c, I, s).common.id)}.`, { shaftId: s.id, oreId: p.ore });
       }
+      const st = syncTunnel(c, I, s);
+      if (st.cur && !st.blocked && !st.cur.hit) {
+        st.cur.hit = 1;
+        const o = I.ores[I.idx[st.cur.ore]];
+        pe('strike', `${s.name} struck ${o.name}!`, { shaftId: s.id, oreId: o.id, tier: o.tier });
+      } else if (st.blocked && !st.cur.blk) {
+        st.cur.blk = 1;
+        pe('blocked', `${s.name} hit ${st.pocketOre.name}: ${needText(st.pocketOre).toLowerCase()}. Crews scrape the walls meanwhile.`, { shaftId: s.id, oreId: st.pocketOre.id, need: needOf(st.pocketOre) });
+      }
+      if (sig[k] !== st.ore + (st.blocked ? '!' : '') || tgt[k] !== st.target) changed = true;
     });
     if (changed) recompute();
     // hazards whose budget ran out
@@ -281,10 +290,8 @@ export function advance(colony, world, now) {
       if (r > 0) est = Math.min(est, free / r);
     });
     c.shafts.forEach((s, k) => {
-      const v = s.vein;
-      if (!v || v.left <= 0 || !(rates[k] > 0) || !(lastScale > 0)) return;
-      const thr = v.warn < 1 ? v.total * T.veinWarn[0] : v.warn < 2 ? v.total * T.veinWarn[1] : 0;
-      est = Math.min(est, Math.max(0, v.left - thr) / (rates[k] * lastScale));
+      if (!digs[k] || !(tgt[k] < Infinity) || !(rates[k] > 0) || !(lastScale > 0)) return;
+      est = Math.min(est, oreBetween(s, s.face, tgt[k]) / (rates[k] * lastScale));
     });
     if (est < Infinity) te = Math.min(te, t + Math.max(1000, est));
     const dt = te - t;
@@ -300,11 +307,9 @@ export function advance(colony, world, now) {
   process(now);
 
   function flow(dt, t0) {
-    const pot = rates.map((r, k) => {
-      const x = r * dt;
-      const v = c.shafts[k].vein;
-      return v ? Math.min(x, Math.max(0, v.left)) : x;
-    });
+    // the face stops at the next boundary; the rest of the segment digs nothing there
+    const room = rates.map((r, k) => (digs[k] && tgt[k] < Infinity ? oreBetween(c.shafts[k], c.shafts[k].face, tgt[k]) : Infinity));
+    const pot = rates.map((r, k) => Math.min(r * dt, room[k]));
     const Ppot = sum(pot);
     const B1 = sum(tun), K1 = tunnelCap(c);
     const B2 = sum(yd), K2 = yardCap(c.yardLvl);
@@ -325,8 +330,8 @@ export function advance(colony, world, now) {
         const m = pot[k] * scale;
         tun[oreOf[k]] += m;
         tunG[oreOf[k]] += m * gradeOf[k];
-        const v = c.shafts[k].vein;
-        if (v) v.left = Math.max(0, v.left - m);
+        const sh = c.shafts[k];
+        if (digs[k]) sh.face = m >= room[k] * (1 - 1e-9) ? tgt[k] : Math.min(tgt[k], faceAfter(sh, sh.face, m));
       }
       c.stats.mined += fm;
     }
@@ -357,6 +362,9 @@ export function advance(colony, world, now) {
   c.t = now;
   if (saleCount > MAX_EVENT_SALES) {
     emit('salesSummary', `${saleCount - MAX_EVENT_SALES} more ship sales`, now, { count: saleCount - MAX_EVENT_SALES });
+  }
+  if (pkCount > MAX_EVENT_POCKETS) {
+    emit('pocketSummary', `${pkCount - MAX_EVENT_POCKETS} more strikes and dug-out pockets while you were away`, now, { count: pkCount - MAX_EVENT_POCKETS });
   }
   if (hzCount > MAX_EVENT_HAZARDS) {
     emit('hazardSummary', `${hzCount - MAX_EVENT_HAZARDS} more mishaps underground while you were away`, now, { count: hzCount - MAX_EVENT_HAZARDS, lost: hzLost });

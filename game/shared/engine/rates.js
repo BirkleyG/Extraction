@@ -5,6 +5,7 @@ import {
   liftRate, convRate, yardCap, bunkCap, perMiner, tunnelCap, shipCap, tripSecs,
   shaftStatus, pickDest, priceAt, grade, evoMult, hazardRates, depthOf,
 } from './model.js';
+import { tunnelAt, expectedMix, metresPerMin, cuts } from './pockets.js';
 
 const avg = ([a, b]) => (a + b) / 2;
 // Hazards as expected numbers: per-shaft risk (mishaps/hour) and the share of time a shaft sits halted.
@@ -31,20 +32,31 @@ export function rates(colony, world) {
   const mineK = evoMult(c, 'mine'), sellK = evoMult(c, 'sell');
   const hz = hazardOutlook(c);
   const ore = new Array(I.n).fill(0), oreG = new Array(I.n).fill(0);
+  const oreE = new Array(I.n).fill(0), oreEG = new Array(I.n).fill(0); // long-run mix, for planning (score)
   const shaftV = [];
   const shafts = c.shafts.map((s, k) => {
     const st = shaftStatus(c, I, s);
+    const tn = tunnelAt(c, I, s);
     const haltMs = Math.max(0, (s.haltUntil || 0) - now);
-    const r = st.ok && !haltMs ? s.miners * perMiner(s.up.cart, s.idx) * mineK : 0;
-    if (r > 0) { ore[I.idx[s.ore]] += r; oreG[I.idx[s.ore]] += r * grade(s.idx); }
-    shaftV.push(r * grade(s.idx) * (I.ores[I.idx[s.ore]]?.value || 0));
+    const full = st.ok && !haltMs ? s.miners * perMiner(s.up.cart, s.idx) * mineK : 0;
+    const r = full * (tn.blocked ? T.pk.wall : 1);
+    const gr = grade(s.idx);
+    if (r > 0) { ore[I.idx[s.ore]] += r; oreG[I.idx[s.ore]] += r * gr; }
+    if (tn.blocked) { if (r > 0) { oreE[I.idx[s.ore]] += r; oreEG[I.idx[s.ore]] += r * gr; } }
+    else if (full > 0) for (const { i, share } of expectedMix(I, s.idx, c.drill)) { oreE[i] += full * share; oreEG[i] += full * share * gr; }
+    shaftV.push(r * gr * (I.ores[I.idx[s.ore]]?.value || 0));
+    const face = s.face || 0;
+    const nx = tn.blocked ? tn.cur : tn.next;
     return {
-      id: s.id, name: s.name, ore: s.ore, miners: s.miners, cap: bunkCap(s.up.bunk), orePerMin: r,
-      perMiner: perMiner(s.up.cart, s.idx) * mineK, grade: grade(s.idx), ok: st.ok,
+      id: s.id, name: s.name, ore: s.ore, oreId: s.ore, miners: s.miners, cap: bunkCap(s.up.bunk), orePerMin: r,
+      perMiner: perMiner(s.up.cart, s.idx) * mineK, grade: gr, ok: st.ok,
       reason: haltMs && st.ok ? `Halted: ${Math.ceil(haltMs / 60000)} min to clear` : st.reason,
       haltMins: Math.ceil(haltMs / 60000), risk: hz.shafts[k].risk,
       lights: s.up.lights || 0, supports: s.up.supports || 0,
-      vein: s.vein ? { total: s.vein.total, left: s.vein.left, pct: s.vein.total > 0 ? Math.round(1000 * s.vein.left / s.vein.total) / 10 : 0 } : null,
+      face, metresPerMin: tn.blocked ? 0 : metresPerMin(s, r), dug: s.dug || 0,
+      blocked: !!tn.blocked, need: st.need || 0, wallRate: tn.blocked ? r : 0,
+      pocket: tn.cur && !tn.blocked ? { ore: tn.cur.ore, left: Math.max(0, tn.cur.start + tn.cur.len - face), len: tn.cur.len } : null,
+      next: nx ? { ore: nx.ore, at: Math.max(0, nx.start - face), blocked: !cuts(c, I.ores[I.idx[nx.ore]]) } : null,
     };
   });
   const mine = ore.reduce((a, b) => a + b, 0);
@@ -109,7 +121,13 @@ export function rates(colony, world) {
   if (supply > 0) hzLoss += Math.min(0.2, hz.fire * avg(T.hz.fireBurn) * 0.5 * yardCap(c.yardLvl) / (supply * 60));
   hzLoss = Math.min(0.9, hzLoss);
   soft = Math.pow(soft, -1 / P) * (1 - yardLoss) * (1 - hzLoss);
-  let vpo = through > 0 ? coin / through : 0;
+  // Planning value per ore: the long-run mix (pockets come and go), so a shaft between pockets still counts its odds.
+  const mineE = oreE.reduce((a, b) => a + b, 0);
+  const gE = oreE.map((x, o) => (x > 0 ? oreEG[o] / x : 1));
+  const orderE = I.ores.map((o) => o.i).sort((a, b) => I.ores[b].value * gE[b] - I.ores[a].value * gE[a] || a - b);
+  let restE = Math.max(0, Math.min(mineE, lift, conveyor, shipMax)), vE = 0, mE = 0;
+  for (const o of orderE) { const x = Math.min(oreE[o], restE); vE += x * gE[o] * price[o]; mE += x; restE -= x; }
+  let vpo = mE > 0 ? vE / mE : 0;
   if (!(vpo > 0)) { let m = 0, v = 0; for (let o = 0; o < I.n; o++) { m += mix[o]; v += mixG[o] * price[o]; } vpo = m > 0 ? v / m : 0; }
   let limit = 'mine';
   for (const k in stages) if (stages[k] < stages[limit]) limit = k;

@@ -20,12 +20,21 @@ export const T = {
   richness: 1.25,                             // ore per miner x1.25 per depth
   grade: 1.05,                                // ore value x1.05 per depth (deeper ore is purer)
   shaftBuffer: 40,                            // tunnel storage per shaft (ore)
-  redrillFrac: 0.6,                           // re-drill an exhausted vein: 60% of a new shaft at that depth
 
-  // Veins (rare/mythic are finite)
-  veinMythicK: 0.5,                                  // mythic veins are half as deep
-  veinHours: 10,                                     // a vein lasts ~10h at a half-upgraded shaft
-  veinWarn: [0.2, 0.05],
+  // Tunnels and ore pockets (pockets.js). Lengths in metres.
+  pk: {
+    minPerM: 2.5,          // minutes a full crew needs per metre at the lift (ore per metre scales with the crew)
+    haulM: 60,             // every 60 m of tunnel adds another minPerM per metre: the haul back gets longer
+    wall: 0.6,             // a face stuck at a too-hard pocket: crews scrape common ore off the walls at 60%
+    first: [1.5, 3],       // a new shaft's first pocket starts this far in
+    homeFirst: [20, 30],   // the home shaft's first pocket (after the drill is affordable)
+    len: [2.5, 5],         // pocket length at depth 0 ...
+    lenDepth: 0.08,        // ... x(1 + 0.08 x depth)
+    share: [0.35, 0.03, 0.7], // share of the tunnel inside pockets: base + per depth, capped
+    mythicLen: 0.5,        // mythic pockets are half as long
+    mythicW: 0.5,          // and half as likely as a rare of the same weight
+    ahead: 3,              // pockets rolled ahead of the face (the mine view draws them)
+  },
 
   // Drill: level >= hardness to mine. Level 6 = mythic drill (license).
   drillCosts: [0, 0, 1_700, 38_000, 940_000, 19_000_000, 130_000_000], // cost to reach level i

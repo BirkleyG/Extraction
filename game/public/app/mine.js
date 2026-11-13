@@ -15,11 +15,14 @@ const specCache = new Map();
 const specOf = (ore) => { let s = specCache.get(ore.id + ore.color); if (!s) { s = oreSpriteSpec(ore); specCache.set(ore.id + ore.color, s); } return s; };
 const shipLvl = (lvl) => Math.min(9, Math.floor((lvl || 0) / 4));
 
-const RECEDE = 44; // art px the rock face can recede as ore is mined
+// Tunnels are drawn to scale: PXM art px per metre. A fixed landing (STATION) sits by the lift; past DUG_MAX metres
+// the middle of the tunnel is cut out with a break marker so the face and the rock ahead stay on screen.
+const PXM = 4, STATION = 104, DUG_MAX = 40, BREAK = 16;
 const ZMAX = 10;
 const ease = (x) => { x = clamp(x, 0, 1); return x * x * (3 - 2 * x); };
 const lerp = (a, b, k) => a + (b - a) * k;
 const gcol = (f) => (f >= 0.85 ? '#ff5a6e' : f >= 0.6 ? '#ffb347' : '#5ee6a8');
+const fmtM = (m) => (m >= 1000 ? `${(m / 1000).toFixed(m >= 10000 ? 0 : 1)} KM` : m >= 10 ? `${Math.round(m)} M` : `${Math.max(0, m).toFixed(1)} M`);
 const mmss = (s) => { s = Math.max(0, Math.round(s)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
 const sum = (m) => { let s = 0; for (const k in m || {}) s += m[k] || 0; return s; };
 
@@ -36,6 +39,7 @@ export function createMine(canvas, get, hooks = {}) {
   const SHIP = new Map(); // per-ship smoothed sprite position
   const padMap = new Map(), lastPad = new Map();
   const keys = new Set();
+  let rockEnd = 0; // right end of the longest drawn tunnel (camera bounds)
   let hits = [], pops = [], lastLaunch = new Map(), lastT = 0, prevUp = false, flowShown = new Map();
   const maxParts = () => (prefs.reduced ? 40 : 240);
   const emit = (p) => { if (parts.length < maxParts()) parts.push(p); };
@@ -47,7 +51,7 @@ export function createMine(canvas, get, hooks = {}) {
     const c = st && st.colony;
     const n = c ? c.shafts.length : 1;
     const pads = c ? Math.max(c.pads, 1) : 1;
-    return { x0: -90, x1: Math.max(L.GX0 + L.GLEN + 40, L.PAD_X0 + pads * L.PAD_W + 280), y0: -150, y1: galleryTop(n + 1) + 30 };
+    return { x0: -90, x1: Math.max(L.GX0 + L.GLEN + 40, rockEnd + 30, L.PAD_X0 + pads * L.PAD_W + 280), y0: -150, y1: galleryTop(n + 1) + 30 };
   }
   const fitZ = () => { const b = bounds(); return Math.min(cssW() / (b.x1 - b.x0), cssH() / (b.y1 - b.y0)); };
   const zMin = () => Math.max(0.3, Math.min(fitZ(), 1.5) * 0.9);
@@ -121,16 +125,19 @@ export function createMine(canvas, get, hooks = {}) {
   // ---------------------------------------------------------------- shared per-frame helpers
   function stepShaft(s, r, inf, dt) {
     let o = SH.get(s.id);
-    if (!o) { o = { mined: 0, fr: null, f: inf.f, full: false, cph: (hash(s.id) % 100) / 100 * 0.2, last: {}, flash: 0, tossT: 0 }; SH.set(s.id, o); }
+    if (!o) { o = { mined: 0, fv: null, f: inf.f, full: false, cph: (hash(s.id) % 100) / 100 * 0.2, last: {}, flash: 0, tossT: 0, pkey: undefined, strike: -9 }; SH.set(s.id, o); }
     o.full = inf.f >= 0.97 || (o.full && inf.f > 0.88);
     o.f += (inf.f - o.f) * Math.min(1, dt * 3);
     const run = inf.active && !o.full;
     o.run = run;
     if (run) o.mined += r.orePerMin / 60 * dt;
-    const vp = s.vein ? 1 - clamp(s.vein.left / Math.max(1, s.vein.total), 0, 1) : 0;
-    const lp = 1 - Math.exp(-o.mined / (s.vein ? 500 : 250));
-    const tv = RECEDE * clamp(s.vein ? vp * 0.75 + lp * 0.25 : lp, 0, 1);
-    o.fr = o.fr == null ? tv : o.fr + (tv - o.fr) * Math.min(1, dt * 0.6);
+    // the drawn face glides after the engine's face; a strike is a new pocket the crew breaks into
+    const F = s.face || 0;
+    o.fv = o.fv == null || Math.abs(F - o.fv) > 4 ? F : o.fv + (F - o.fv) * Math.min(1, dt * 4);
+    const cur = r && r.pocket && !r.blocked ? (s.pk || []).find((p) => p.start <= F + 1e-6 && p.start + p.len > F + 1e-6) : null;
+    const key = cur ? cur.ore + '@' + cur.start : null;
+    if (o.pkey !== undefined && key && key !== o.pkey) { o.strike = performance.now() / 1000; o.strikeOre = cur.ore; o.burst = true; }
+    o.pkey = key;
     // cart cycle: speed follows real rate; parks when idle or when the tunnel is full
     const T = clamp(9 - Math.log2(1 + (r ? r.orePerMin : 0) / 10), 3, 9);
     if (run) {
@@ -178,7 +185,7 @@ export function createMine(canvas, get, hooks = {}) {
       const w = (r && r.ok ? r.orePerMin : 0) + 0.01 * (s.miners || 0) + 0.001;
       const f = clamp(((c.tunnel[s.ore] || 0) * w / wOre[s.ore]) / (capT / n), 0, 1);
       const halted = !!(s.haltUntil && s.haltUntil > now);
-      const inf = { r, f, halted, haltSecs: halted ? (s.haltUntil - now) / 1000 : 0, active: !halted && !!(r && r.ok && r.orePerMin > 0 && !(s.vein && s.vein.left <= 0)) };
+      const inf = { r, f, halted, haltSecs: halted ? (s.haltUntil - now) / 1000 : 0, active: !halted && !!(r && r.ok && r.orePerMin > 0) };
       stepShaft(s, r || { orePerMin: 0 }, inf, dt);
       inf.o = SH.get(s.id);
       return inf;
@@ -191,6 +198,7 @@ export function createMine(canvas, get, hooks = {}) {
     Pn.rect(-8, 0, 2, bottom, '#5a3e26'); Pn.rect(6, 0, 2, bottom, '#5a3e26');
     for (let y = 4; y < bottom; y += 10) Pn.rect(-6, y, 12, 1, '#2a1c14');
     const mineFlow = Math.min(R.minePerMin, R.liftPerMin);
+    rockEnd = 0;
     for (let k = 0; k < n; k++) drawGallery(Pn, view, c.shafts[k], infos[k], ores, t, look, dt);
     // pile of ore waiting at the lift bottom
     if (tunTot > 0.5) drawMound(Pn, -0.5, bottom - 6, 2 + 9 * Math.sqrt(tunF), 6.5, topOreColor(c.tunnel, ores), tunF >= 0.97 && Math.floor(t * 3) % 2 ? '#ff5a6e' : null);
@@ -273,6 +281,10 @@ export function createMine(canvas, get, hooks = {}) {
     } else label(g, S(L.YARD_X, -34), `YARD ${Math.round(yardF * 100)}%`, fs, 'center', yardF >= 0.85 ? '#ff7a8a' : null);
     if (tunTot > 0.5 && z >= 1) label(g, S(0, bottom + 2), `LIFT BASE ${fmt(tunTot)}${tunF >= 0.97 ? ' FULL' : ''}`, fs, 'center', tunF >= 0.97 ? '#ff7a8a' : null);
     const gap = L.LV * Sc;
+    for (let k = 0; k < n; k++) {
+      const G = geo(c.shafts[k], infos[k].o);
+      if (G.broken && z >= 1.2) label(g, S(G.xs + BREAK / 2, galleryTop(c.shafts[k].idx) + 8), `… ${fmt(Math.round(G.F))} M`, Math.round(fs * 0.85), 'center', '#b3a5d3');
+    }
     for (let k = 0; k < n; k++) badge(g, S, c.shafts[k], infos[k], fs, ores, gap, t);
     if (unl.panels.includes('shafts') && n < 30) {
       const p = S(L.GX0 + 6, galleryTop(n) + 7);
@@ -341,48 +353,117 @@ export function createMine(canvas, get, hooks = {}) {
     bg.globalAlpha = 1;
   }
 
+  // Tunnel geometry in art px: landing x0..xs, optional break xs..xs+BREAK, dug tunnel to the face xf, rock to xr.
+  function geo(s, o) {
+    const F = o && o.fv != null ? o.fv : (s.face || 0);
+    const x0 = L.GX0, xs = x0 + STATION, broken = F > DUG_MAX;
+    const xf = Math.round(broken ? xs + BREAK + DUG_MAX * PXM : xs + F * PXM);
+    let ahead = 10;
+    for (const p of s.pk || []) ahead = Math.max(ahead, p.start + p.len - F + 6);
+    const xr = xf + Math.round(clamp(ahead, 14, 60) * PXM);
+    const X = (m) => xf + (m - F) * PXM;          // metres -> x (valid from the visible dug part onward)
+    const mMin = broken ? F - DUG_MAX : 0;        // leftmost metre drawn to scale
+    return { F, x0, xs, xf, xr, broken, X, mMin };
+  }
+
   function drawGallery(Pn, view, s, inf, ores, t, look, dt) {
-    const k = s.idx, y0 = galleryTop(k), y1 = y0 + L.GH, x0 = L.GX0, x1 = L.GX0 + L.GLEN;
-    hits.push({ kind: 'shaft', id: s.id, x0: x0 - 10, x1, y0, y1 });
-    if (y1 < view.y - 4 || y0 > view.y + view.h + 4) return;
+    const k = s.idx, y0 = galleryTop(k), y1 = y0 + L.GH;
     const r = inf.r, o = inf.o;
+    const G = geo(s, o), { x0, xs, xf, xr, X } = G;
+    rockEnd = Math.max(rockEnd, xr);
+    hits.push({ kind: 'shaft', id: s.id, x0: x0 - 10, x1: xr, y0, y1 });
+    if (y1 < view.y - 4 || y0 > view.y + view.h + 4) return;
     const ore = ores[s.ore];
-    const exhausted = s.vein && s.vein.left <= 0;
     const ok = r ? r.ok : true;
+    const blocked = !!(r && r.blocked);
     const H = hash(s.id);
-    const xf = Math.round(x1 - 16 - (RECEDE - o.fr));
+    const len = xf - x0;
     // carve
     Pn.rect(-6, y0 + 4, x0 + 8, L.GH - 4, '#1b1226');
-    Pn.rect(x0, y0 - 1, L.GLEN + 1, L.GH + 2, '#120a18');
-    Pn.rect(x0, y0, L.GLEN, L.GH, '#21162e');
-    for (let i = 0; i < 14; i++) { const hx = x0 + ((H >> (i % 16)) * 7 + i * 37) % L.GLEN; const hy = y0 + 2 + (i * 5 + (H >> 3)) % (L.GH - 8); Pn.rect(hx, hy, 2, 1, '#2c1f3a'); }
+    Pn.rect(x0, y0 - 1, len + 1, L.GH + 2, '#120a18');
+    Pn.rect(x0, y0, len, L.GH, '#21162e');
+    for (let i = 0; i < Math.min(60, len / 12); i++) { const hx = x0 + ((H >> (i % 16)) * 7 + i * 37) % Math.max(1, len); const hy = y0 + 2 + (i * 5 + (H >> 3)) % (L.GH - 8); Pn.rect(hx, hy, 2, 1, '#2c1f3a'); }
     // floor + rails (the tunnel is as long as the face has been driven)
-    Pn.rect(x0, y1 - 3, L.GLEN, 3, '#3b2b2a');
+    Pn.rect(x0, y1 - 3, len, 3, '#3b2b2a');
     for (let x = x0 + 2; x < xf - 2; x += 4) Pn.rect(x, y1 - 3, 2, 1, '#5a3e26');
-    Pn.rect(x0, y1 - 4, xf - x0 - 2, 1, '#9aa0aa');
+    Pn.rect(x0, y1 - 4, Math.max(0, len - 2), 1, '#9aa0aa');
     // supports + lamps
     for (let x = x0 + 40; x < xf - 14; x += 34) {
+      if (G.broken && x > xs - 4 && x < xs + BREAK + 4) continue;
       Pn.rect(x, y0, 2, L.GH - 3, '#6a4a2a'); Pn.rect(x - 3, y0, 8, 2, '#7a5634');
       const fl = prefs.reduced ? 0.25 : 0.2 + 0.08 * Math.sin(t * 9 + x);
       bg.globalAlpha = fl; Pn.disc(x + 1, y0 + 4, 6, '#ffd27a'); bg.globalAlpha = 1;
       Pn.rect(x + 1, y0 + 3, 1, 2, '#ffe9a8');
     }
-    // rock face
+    // break marker: the long middle of the tunnel is cut out
+    if (G.broken) {
+      Pn.rect(xs, y0 - 1, BREAK, L.GH + 2, '#120a18');
+      for (let y = y0; y < y1; y += 2) { const w = (y >> 1) % 2; Pn.rect(xs + 3 + w, y, 2, 2, '#5a4a6a'); Pn.rect(xs + BREAK - 5 - w, y, 2, 2, '#5a4a6a'); }
+      Pn.rect(xs + 6, y1 - 4, BREAK - 12, 1, '#9aa0aa');
+    }
+    // the current pocket's dug part stains the tunnel walls
+    for (const p of s.pk || []) {
+      const a = Math.max(p.start, G.mMin), b = Math.min(p.start + p.len, G.F);
+      if (b <= a || !ores[p.ore]) continue;
+      const po = ores[p.ore], xa = X(a), xb = X(b);
+      bg.globalAlpha = 0.16; Pn.rect(xa, y0, xb - xa, L.GH - 4, po.color); bg.globalAlpha = 1;
+      for (let x = xa + 1, i = 0; x < xb - 1; x += 3, i++) { Pn.rect(x, y0 + (i % 3), 2, 1, po.color); if (i % 2) Pn.rect(x + 1, y1 - 5 - (i % 2), 1, 1, po.color); }
+    }
+    // rock ahead of the face, fading into the planet
     const faceCol = '#33263f';
     const shake = o.flash > 0 && t - o.flash < 0.08 ? 1 : 0;
-    Pn.rect(xf + shake, y0, x1 - xf - shake, L.GH, faceCol);
+    Pn.rect(xf + shake, y0 - 1, xr - xf - shake, L.GH + 2, faceCol);
+    for (let i = 0; i < 6; i++) { bg.globalAlpha = 1 - (i + 1) / 7; Pn.rect(xr + i * 3, y0 - 1, 3, L.GH + 2, faceCol); }
+    bg.globalAlpha = 1;
     for (let y = y0; y < y1; y += 3) Pn.rect(xf - 1 - ((y * 7 + H) % 3) + shake, y, 2, 3, faceCol);
-    for (let i = 0; i < 10; i++) Pn.rect(xf + 3 + ((H >> i) * 11 + i * 17) % Math.max(4, x1 - xf - 6), y0 + 1 + (i * 7 + (H >> 2)) % (L.GH - 3), 2, 1, '#3f3050');
-    if (ore && !exhausted) {
-      const sp = specOf(ore);
-      const pct = s.vein ? s.vein.left / Math.max(1, s.vein.total) : 1;
-      const cnt = s.vein ? Math.max(1, Math.ceil(pct * 4)) : 4;
-      const spots = [[xf + 8, y0 + 6, 11], [xf + 9, y0 + 17, 10], [xf + 3, y0 + 12, 9], [xf + 4, y0 + 20, 7]];
-      for (let i = 0; i < cnt; i++) drawOre(bg, view, sp, spots[i][0] + shake, spots[i][1], spots[i][2], t);
-      for (let i = 0; i < 6; i++) Pn.rect(xf + 5 + ((H >> i) * 9 + i * 13) % Math.max(4, x1 - xf - 8), y0 + 2 + (i * 5 + (H >> 4)) % (L.GH - 5), 2, 1, ore.color);
-    } else if (exhausted) {
-      for (let i = 0; i < 6; i++) Pn.rect(xf + 2 + (i * 5) % 12, y1 - 4 - (i % 3) * 3, 4, 3, '#5a5260');
+    for (let i = 0; i < 18; i++) Pn.rect(xf + 3 + ((H >> (i % 12)) * 11 + i * 17) % Math.max(4, xr - xf - 6), y0 + 1 + (i * 7 + (H >> 2)) % (L.GH - 3), 2, 1, '#3f3050');
+    // ore pockets embedded in the rock: what is left of each, to scale (the engine's own pockets)
+    for (const p of s.pk || []) {
+      const a = Math.max(p.start, G.F), b = p.start + p.len;
+      const po = ores[p.ore];
+      if (b <= a || !po) continue;
+      const xa = X(a) + shake, xb = X(b) + shake;
+      if (xa > xr + 12) continue;
+      const hard = r && (r.blocked ? p.start <= G.F + 1e-6 : false) || (r && r.next && r.next.blocked && r.next.ore === p.ore && p.start > G.F);
+      // a seam with ragged edges, darker rim, then crystals
+      const cut = p.start < G.F; // partly dug: flat side at the face
+      for (let x = Math.floor(xa); x < xb; x += 2) {
+        const e = Math.min(x - xa, xb - x), hh = hash(s.id + ':' + p.start + ':' + x);
+        const inset = (cut && x - xa < 3 ? 0 : Math.max(0, 6 - e * 1.5)) + (hh % 3);
+        const top = y0 + 1 + inset, bot = y1 - 2 - inset - ((hh >> 3) % 3);
+        if (bot <= top) continue;
+        bg.globalAlpha = 0.42; Pn.rect(x, top, 2, bot - top, color.shade(po.color, -0.35)); bg.globalAlpha = 1;
+        bg.globalAlpha = 0.3; Pn.rect(x, top + 1, 2, Math.max(1, bot - top - 2), po.color); bg.globalAlpha = 1;
+      }
+      const sp = specOf(po), sz = po.tier === 'mythic' ? 10 : 8;
+      const step = Math.max(6, (xb - xa) / 12);
+      for (let x = xa + 3, i = 0; x < xb - 1; x += step, i++) {
+        const yy = y0 + 5 + ((i * 5 + (H >> (i % 8))) % 3) * 6;
+        drawOre(bg, view, sp, x, yy, sz - (i % 2) * 2, t + i);
+      }
+      if (hard) { bg.globalAlpha = 0.35; Pn.rect(xa, y0 + 1, xb - xa, L.GH - 3, '#1a1622'); bg.globalAlpha = 1; }
     }
+    // a face stuck at a pocket the drill can't cut: hard crust
+    if (blocked) {
+      const pulse = Math.floor(t * 2) % 2;
+      Pn.rect(xf, y0, 5, L.GH, '#6b6f7a');
+      for (let y = y0 + 1; y < y1 - 1; y += 3) Pn.rect(xf + 1 + (y % 2), y, 2, 1, '#a8adb8');
+      Pn.line(xf + 1, y0 + 4, xf + 4, y0 + 10, '#2a2a33', 1); Pn.line(xf + 4, y0 + 13, xf + 1, y0 + 19, '#2a2a33', 1);
+      if (pulse) { Pn.rect(xf - 1, y0, 1, L.GH, '#ff5a6e'); }
+    }
+    // strike: flash and a burst of the pocket's own crystals
+    const now = performance.now() / 1000, sa = now - o.strike;
+    if (o.burst) {
+      o.burst = false;
+      const po = ores[o.strikeOre];
+      if (po) {
+        const pal = specOf(po).palette || [po.color];
+        const nb = prefs.reduced ? 6 : 26;
+        for (let i = 0; i < nb; i++) { const ang = (i / nb) * Math.PI * 2; emit({ x: xf + 2, y: y0 + L.GH / 2, vx: Math.cos(ang) * (20 + Math.random() * 40) - 10, vy: Math.sin(ang) * (20 + Math.random() * 30) - 20, g: 60, t0: t, life: 0.9 + Math.random() * 0.5, sz: i % 3 ? 1 : 2, col: i % 4 === 0 ? '#ffffff' : pal[1 + (i % Math.max(1, pal.length - 1))] || po.color, spark: i % 2 === 0 }); }
+        pops.push({ x: xf - 10, y: y0 - 2, text: `STRIKE! ${po.name.toUpperCase()}`, color: po.tier === 'mythic' ? '#ffffff' : po.color, t0: t });
+      }
+    }
+    if (sa >= 0 && sa < 0.6 && !prefs.reduced) { bg.globalAlpha = 0.5 * (1 - sa / 0.6); Pn.rect(x0, y0, xr - x0, L.GH, '#ffffff'); bg.globalAlpha = 1; }
     // tunnel buffer: ore piled at the lift end of the gallery
     const f = o.f;
     if (f > 0.02) drawMound(Pn, x0 + 9, y1 - 3, 2 + 12 * f, 8 + 4 * f, ore ? ore.color : '#8a7a6a', o.full && Math.floor(t * 3) % 2 ? '#ff5a6e' : null);
@@ -404,15 +485,15 @@ export function createMine(canvas, get, hooks = {}) {
         const ph = t * hz + i * 0.37 + (H % 7) / 7;
         fr = Math.floor((ph % 1) * 3);
         const lastFr = o.last[i];
-        if (fr === 1 && lastFr !== 1) impact(o, s, ore, mx, y1, i, xf, ct, xb, t);
+        if (fr === 1 && lastFr !== 1) impact(o, s, blocked && i === 0 ? { color: '#a8adb8' } : ore, mx, y1, i, xf, ct, xb, t);
         o.last[i] = fr;
       }
       Pn.sprite(minerImg(look, o.run ? 'swing' : 'walk', fr), mx, y1 - 3, 12, 24);
     }
     // rock/ore flash at the face
     if (t - o.flash < 0.1) { Pn.rect(xf - 2, y1 - 13, 3, 3, '#ffffff'); Pn.rect(xf - 4, y1 - 12, 7, 1, '#ffe9a8'); }
-    if (inf.halted) { bg.globalAlpha = 0.18 + (Math.floor(t * 2) % 2) * 0.1; Pn.rect(x0, y0, L.GLEN, L.GH, '#ff9a2a'); bg.globalAlpha = 1; for (let x = xf - 40; x < xf; x += 6) Pn.rect(x, y1 - 6 - (x % 4), 3, 3, '#5a5260'); }
-    if (!ok) { bg.globalAlpha = 0.35; Pn.rect(x0, y0, L.GLEN, L.GH, '#000000'); bg.globalAlpha = 1; }
+    if (inf.halted) { bg.globalAlpha = 0.18 + (Math.floor(t * 2) % 2) * 0.1; Pn.rect(x0, y0, len, L.GH, '#ff9a2a'); bg.globalAlpha = 1; for (let x = xf - 40; x < xf; x += 6) Pn.rect(x, y1 - 6 - (x % 4), 3, 3, '#5a5260'); }
+    if (!ok) { bg.globalAlpha = 0.35; Pn.rect(x0, y0, len, L.GH, '#000000'); bg.globalAlpha = 1; }
   }
   function impact(o, s, ore, mx, y1, i, xf, ct, xb, t) {
     if (i === 0 || i === 1) o.flash = t;
@@ -436,38 +517,45 @@ export function createMine(canvas, get, hooks = {}) {
     if (gap < fs + 9 * dpr) { g.fillStyle = o.full ? '#ff5a6e' : (ores[s.ore] ? ores[s.ore].color : '#fff'); g.fillRect(p.x, p.y, 3 * dpr, Math.max(3 * dpr, gap * 0.5)); return; }
     const ore = ores[s.ore];
     const full = o.full;
+    const blocked = !!(r && r.blocked);
     const idle = !full && !inf.halted && r && r.ok && !inf.active;
     const line1 = s.name.toUpperCase();
-    const line2 = inf.halted ? `CAVE-IN - HALTED ${mmss(inf.haltSecs)}` : r && !r.ok ? r.reason.toUpperCase() : full ? 'TUNNEL FULL - BACKED UP' : idle ? (s.vein && s.vein.left <= 0 ? 'VEIN EXHAUSTED' : 'IDLE - NO MINERS') : `${s.miners}/${r ? r.cap : '?'} MINERS  C${s.up.cart} B${s.up.bunk}`;
+    const line2 = inf.halted ? `CAVE-IN - HALTED ${mmss(inf.haltSecs)}` : r && !r.ok ? r.reason.toUpperCase() : full ? 'TUNNEL FULL - BACKED UP' : idle ? 'IDLE - NO MINERS' : `${s.miners}/${r ? r.cap : '?'} MINERS  C${s.up.cart} B${s.up.bunk}`;
     const col2 = inf.halted || (r && !r.ok) || full ? '#ff5a6e' : idle ? '#ffb347' : '#b3a5d3';
+    // what the face is cutting now, and what's next in the rock
+    const nm = (id) => (ores[id] ? ores[id].name.toUpperCase() : '?');
+    const pk = r && r.pocket, nx = r && r.next;
+    const line3 = blocked ? `NEEDS DRILL ${r.need >= 6 ? 'MYTHIC' : r.need} FOR ${nm(nx && nx.ore)}` : pk ? `MINING ${nm(s.ore)} · ${fmtM(pk.left)} LEFT` : `MINING ${nm(s.ore)} · ${fmtM(r ? r.face : s.face || 0)} DUG`;
+    const col3 = blocked ? (Math.floor(t * 2) % 2 ? '#ff5a6e' : '#ffb0ba') : pk && ore ? lite(ore.color) : '#d8cfe8';
+    const line4 = !blocked && nx ? `NEXT: ${nm(nx.ore)} IN ${fmtM(nx.at)}${nx.blocked ? ' (HARD)' : ''}` : '';
+    const strikeOn = performance.now() / 1000 - o.strike < 2.5;
     const pct = Math.round(o.f * 100);
-    const tag = full ? 'FULL' : '';
+    const tag = full ? 'FULL' : strikeOn ? 'STRIKE!' : '';
     g.font = `${fs}px Silkscreen, monospace`;
-    const tall = fs * 3 + 14 * dpr + (s.vein ? 5 * dpr : 0);
+    const extra = 1 + (line4 ? 1 : 0);
+    const tall = fs * (3 + extra) + (14 + 3 * extra) * dpr;
     const compact = gap < tall + 4 * dpr;
-    const w = Math.max(g.measureText(line1).width + (tag ? g.measureText(tag).width + 10 * dpr : 0), compact ? 0 : g.measureText(line2).width, fs * 9) + 12 * dpr;
+    const w = Math.max(g.measureText(line1).width + (tag ? g.measureText(tag).width + 10 * dpr : 0), compact ? 0 : Math.max(g.measureText(line2).width, g.measureText(line3).width, line4 ? g.measureText(line4).width : 0), fs * 9) + 12 * dpr;
     const barH = Math.max(fs * 0.9, 7 * dpr);
-    const h = compact ? fs + barH + 9 * dpr : fs * 2 + barH + 13 * dpr + (s.vein ? 5 * dpr : 0);
+    const h = compact ? fs + barH + 9 * dpr : fs * (2 + extra) + barH + (13 + 3 * extra) * dpr;
     g.fillStyle = 'rgba(12,7,20,0.78)'; g.fillRect(p.x, p.y, w, h);
-    g.fillStyle = full ? '#ff5a6e' : ore ? ore.color : '#fff'; g.fillRect(p.x, p.y, 2 * dpr, h);
+    g.fillStyle = full || blocked ? '#ff5a6e' : ore ? ore.color : '#fff'; g.fillRect(p.x, p.y, 2 * dpr, h);
     g.fillStyle = '#f4edff'; g.fillText(line1, p.x + 6 * dpr, p.y + 3 * dpr);
-    if (tag) { g.fillStyle = Math.floor(t * 3) % 2 ? '#ff5a6e' : '#ffb0ba'; g.textAlign = 'right'; g.fillText(tag, p.x + w - 4 * dpr, p.y + 3 * dpr); g.textAlign = 'left'; }
+    if (tag) { g.fillStyle = full ? (Math.floor(t * 3) % 2 ? '#ff5a6e' : '#ffb0ba') : (Math.floor(t * 6) % 2 ? '#ffffff' : '#ffd23f'); g.textAlign = 'right'; g.fillText(tag, p.x + w - 4 * dpr, p.y + 3 * dpr); g.textAlign = 'left'; }
     let y = p.y + fs + 5 * dpr;
-    if (!compact) { g.fillStyle = col2; g.fillText(line2, p.x + 6 * dpr, y); y += fs + 3 * dpr; }
+    if (!compact) {
+      g.fillStyle = col2; g.fillText(line2, p.x + 6 * dpr, y); y += fs + 3 * dpr;
+      g.fillStyle = col3; g.fillText(line3, p.x + 6 * dpr, y); y += fs + 3 * dpr;
+      if (line4) { g.fillStyle = nx.blocked ? '#ffb347' : (ores[nx.ore] ? lite(ores[nx.ore].color) : '#b3a5d3'); g.fillText(line4, p.x + 6 * dpr, y); y += fs + 3 * dpr; }
+    }
     // tunnel buffer gauge
     const bx = p.x + 6 * dpr, bw = w - 12 * dpr;
     g.fillStyle = '#2a2040'; g.fillRect(bx, y, bw, barH);
     g.fillStyle = gcol(o.f); g.fillRect(bx, y, bw * clamp(o.f, 0, 1), barH);
-    g.fillStyle = 'rgba(12,7,20,0.9)'; g.font = `${Math.round(fs * 0.8)}px Silkscreen, monospace`;
+    g.font = `${Math.round(fs * 0.8)}px Silkscreen, monospace`;
     g.fillStyle = o.f > 0.5 ? '#140c1c' : '#f4edff';
-    g.fillText(compact && (r && !r.ok || idle) ? (r && !r.ok ? r.reason.toUpperCase().slice(0, 14) : 'IDLE') : `TUNNEL ${pct}%`, bx + 3 * dpr, y + (barH - fs * 0.8) / 2);
+    g.fillText(compact && (r && !r.ok || idle || blocked) ? (blocked ? `NEEDS DRILL ${r.need >= 6 ? 'MYTHIC' : r.need}` : r && !r.ok ? r.reason.toUpperCase().slice(0, 14) : 'IDLE') : `TUNNEL ${pct}%`, bx + 3 * dpr, y + (barH - fs * 0.8) / 2);
     g.font = `${fs}px Silkscreen, monospace`;
-    if (s.vein && !compact) {
-      const vp = s.vein.left / Math.max(1, s.vein.total), by = y + barH + 2 * dpr;
-      g.fillStyle = '#2a2040'; g.fillRect(bx, by, bw, 3 * dpr);
-      g.fillStyle = vp <= 0 ? '#5a5260' : vp <= 0.05 ? '#ff5a6e' : vp <= 0.2 ? '#ffb347' : '#5ee6a8';
-      g.fillRect(bx, by, bw * clamp(vp, 0, 1), 3 * dpr);
-    }
   }
 
   // ---------------------------------------------------------------- ships
@@ -623,7 +711,7 @@ export function createMine(canvas, get, hooks = {}) {
       case 'yard': return { x: L.YARD_X, y: -40 };
       case 'conveyor': return { x: (L.CONV_X0 + padX(0)) / 2, y: -26 };
       case 'ships': return { x: padX(0), y: -70 };
-      case 'blocked': { const s = c.shafts.find((x) => x.id === b.shaft?.id) || c.shafts.find((x) => x.vein && x.vein.left <= 0) || c.shafts[0]; return { x: L.GX0 + L.GLEN - 30, y: galleryTop(s ? s.idx : 0) + 2 }; }
+      case 'blocked': { const s = c.shafts.find((x) => x.id === b.shaft?.id) || c.shafts[0]; return { x: geo(s, SH.get(s.id)).xf + 2, y: galleryTop(s ? s.idx : 0) + 2 }; }
       default: return { x: L.GX0 + L.GLEN - 30, y: galleryTop(0) + 2 };
     }
   }
@@ -747,6 +835,7 @@ function composition(m, ores) {
   return out;
 }
 const pickIdx = (comp, u) => { for (let i = 0; i < comp.length; i++) if (u <= comp[i].w) return i; return comp.length - 1; };
+function lite(col) { return color.mix ? color.mix(col, '#ffffff', 0.45) : col; }
 function mixRed(col, k) { return color.mix ? color.mix(col, '#ff3a4e', k) : col; }
 function drawMound(P, cx, baseY, h, hw, col, flash) {
   const H = Math.round(h);

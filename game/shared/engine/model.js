@@ -1,6 +1,7 @@
-// Derived numbers: per-level stats, miner assignment, veins, market prices.
+// Derived numbers: per-level stats, miner assignment, shaft status, market prices.
 import { T } from './tuning.js';
-import { info, rngNext, num, pos } from './util.js';
+import { info, num, pos } from './util.js';
+import { syncTunnel, tunnelAt, needOf, needText } from './pockets.js';
 
 // Every T.milestoneEvery levels a stat doubles (a "milestone"), on top of its per-level gain.
 export const milestone = (lvl) => Math.pow(2, Math.floor(lvl / T.milestoneEvery));
@@ -60,21 +61,25 @@ export function hazardRates(c, t) {
   };
 }
 
-// Why a shaft is (not) producing.
+// Why a shaft is (not) producing. A face stuck at a too-hard pocket still produces (wall rate):
+// { ok: true, blocked: true, need, reason: 'Needs drill N to break into X' }.
 export function shaftStatus(c, I, s) {
-  const ore = I.ores[I.idx[s.ore]];
-  if (!ore) return { ok: false, reason: 'No vein' };
-  if (s.vein && s.vein.left <= 0) return { ok: false, reason: 'Vein exhausted: re-drill it' };
-  if (ore.tier === 'mythic' && c.drill < T.drillMax) return { ok: false, reason: 'Needs the mythic drill' };
-  if (ore.hardness > c.drill) return { ok: false, reason: `Needs drill ${ore.hardness}` };
+  if (!Array.isArray(s.pk)) syncTunnel(c, I, s);
+  const st = tunnelAt(c, I, s);
+  if (!I.ores[I.idx[st.ore]]) return { ok: false, reason: 'No ore' };
+  if (st.blocked) return { ok: true, blocked: true, need: needOf(st.pocketOre), pocketOre: st.pocketOre.id, reason: needText(st.pocketOre) };
   return { ok: true, reason: '' };
 }
 
-// Miners fill the most valuable open slots. Mutates c.shafts[*].miners.
+// Syncs every shaft's tunnel (s.ore = what it mines now), then miners fill the most valuable open slots.
+// Mutates c.shafts[*].miners / ore / pockets.
 export function assignMiners(c, world) {
   const I = info(world);
   const order = c.shafts
-    .map((s, k) => ({ k, ok: shaftStatus(c, I, s).ok, v: (I.ores[I.idx[s.ore]]?.value || 0) * grade(s.idx) * perMiner(s.up.cart, s.idx) }))
+    .map((s, k) => {
+      const st = syncTunnel(c, I, s);
+      return { k, ok: true, v: (I.ores[I.idx[s.ore]]?.value || 0) * (st.blocked ? T.pk.wall : 1) * grade(s.idx) * perMiner(s.up.cart, s.idx) };
+    })
     .sort((a, b) => (b.ok - a.ok) || (b.v - a.v) || (a.k - b.k));
   let left = c.miners;
   for (const o of order) {
@@ -84,39 +89,6 @@ export function assignMiners(c, world) {
     left -= n;
   }
   c.idle = left;
-}
-
-// Roll the vein for shaft index `idx` from rng state. Pure: returns { vein, ore, rng }.
-export function rollVein(world, idx, rng, { redrill = false, up = null } = {}) {
-  const I = info(world);
-  let cands = I.ores.filter((o) => o.depthMin <= idx);
-  if (redrill && cands.some((o) => o.tier !== 'common')) cands = cands.filter((o) => o.tier !== 'common');
-  // The first shafts always hit ore the starting drill can cut, so the early game has no dead ends.
-  if (!redrill && idx < 3 && cands.some((o) => o.hardness <= 1)) cands = cands.filter((o) => o.hardness <= 1);
-  const pool = cands.length ? cands : I.ores.filter((o) => o.tier === 'common').slice(0, 1);
-  if (!pool.length) pool.push(I.ores[0]);
-  const w = pool.map((o) => {
-    const deep = Math.max(0, idx - o.depthMin);
-    if (o.tier === 'common') return idx === 0 ? 1 : 2 / (1 + idx / 3);
-    if (o.tier === 'rare') return 1 + o.depthMin * 0.4;
-    return 1 + deep * 0.3;
-  });
-  const sum = w.reduce((a, b) => a + b, 0);
-  const [r, next] = rngNext(rng >>> 0);
-  let x = r * sum, pick = pool[pool.length - 1];
-  for (let i = 0; i < pool.length; i++) { x -= w[i]; if (x <= 0) { pick = pool[i]; break; } }
-  let vein = null;
-  if (pick.tier !== 'common') {
-    // Sized to last about T.veinHours at a well-upgraded shaft of this depth
-    // (re-drills use the shaft's own upgrades if that is bigger).
-    const mid = Math.floor((T.upMax0 + T.upMaxPerDepth * idx) / 2);
-    const typical = bunkCap(mid) * perMiner(mid, idx);
-    const own = up ? bunkCap(up.bunk) * perMiner(up.cart, idx) : 0;
-    const k = pick.tier === 'mythic' ? T.veinMythicK : 1;
-    const total = Math.round(Math.max(typical, own) * 60 * T.veinHours * k * (0.75 + 0.5 * rngNext(next)[0]));
-    vein = { total, left: total, warn: 0 };
-  }
-  return { ore: pick.id, vein, rng: rngNext(next)[1] };
 }
 
 // Market --------------------------------------------------------------

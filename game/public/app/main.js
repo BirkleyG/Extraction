@@ -49,7 +49,7 @@ async function loadState() {
 
 // ------------------------------------------------------------------ events
 const seen = new Map();
-const WIN = { sale: 2500, launch: 8000, vein20: 6e5, vein5: 6e5, veinOut: 6e5, unlock: Infinity, license: Infinity, salesSummary: 5000, hazard: 1, hazardSummary: 60_000 };
+const WIN = { sale: 2500, launch: 8000, strike: 1, blocked: 6e5, pocketOut: 60_000, pocketSummary: 60_000, unlock: Infinity, license: Infinity, salesSummary: 5000, hazard: 1, hazardSummary: 60_000 };
 const HZ_TITLE = { cavein: 'Cave-in', insanity: 'Madness in the dark', gas: 'Toxic gas', flood: 'Flood', fire: 'Fire', quake: 'Earthquake' };
 function handleEvents(evs) {
   for (const e of evs || []) {
@@ -78,9 +78,15 @@ function react(e) {
     }
     case 'salesSummary': toast(esc(e.text), 'sale'); break;
     case 'launch': toast(esc(e.text), 'info', 2800); sfx.launch(); break;
-    case 'vein20': toast(esc(e.text), 'warn'); sfx.warn(); break;
-    case 'vein5': toast(esc(e.text), 'bad'); sfx.warn(); break;
-    case 'veinOut': toast(esc(e.text), 'bad', 5000); sfx.warn(); break;
+    case 'strike': {
+      const tier = e.data && e.data.tier;
+      if (tier === 'mythic') { banner('MYTHIC STRIKE', e.text.replace(/!$/, ''), 'license'); sfx.big && sfx.big(); }
+      else { toast('⛏ ' + esc(e.text), tier === 'rare' ? 'sale' : 'info', tier === 'rare' ? 4200 : 2600); if (tier === 'rare') sfx.unlock && sfx.unlock(); }
+      break;
+    }
+    case 'blocked': toast('🪨 ' + esc(e.text), 'warn', 5000); sfx.warn(); break;
+    case 'pocketOut': toast(esc(e.text), 'info', 2600); break;
+    case 'pocketSummary': toast(esc(e.text), 'info'); break;
     case 'autoSpend': toast(esc(e.text), 'sale'); sfx.big && sfx.big(); break;
     case 'unlock': banner(E.PANELS.find((p) => p.id === e.data?.panel)?.label || e.text, PANEL_SUB[e.data?.panel] || ''); break;
     case 'hazard': {
@@ -161,7 +167,7 @@ let A_send = () => {};
 const awayKey = () => `msc2_seen_${S.me.id}_${S.world.month}`;
 function snapshot() {
   const c = S.colony;
-  return { t: S.now(), earned: c.earned, sold: c.stats.sold, launches: c.stats.launches, sales: c.stats.sales, out: c.shafts.filter((s) => s.vein && s.vein.left <= 0).length };
+  return { t: S.now(), earned: c.earned, sold: c.stats.sold, launches: c.stats.launches, sales: c.stats.sales, out: c.shafts.reduce((a, s) => a + (s.dug || 0), 0) };
 }
 function checkAway() {
   if (document.querySelector('.awaysheet')) return; // one away sheet at a time
@@ -174,7 +180,7 @@ function checkAway() {
     const sug = E.bottleneck(S.colony, S.ew)?.suggestion;
     if (sug && sug.cmd) next = { label: sug.label, cost: sug.cost, canAfford: S.colony.coin >= sug.cost, spend: () => A_send(sug.cmd) };
   } catch {}
-  ui.awaySheet({ ms: cur.t - prev.t, coin: cur.earned - prev.earned, sold: cur.sold - prev.sold, launches: cur.launches - prev.launches, sales: cur.sales - prev.sales, veins: Math.max(0, cur.out - prev.out), next });
+  ui.awaySheet({ ms: cur.t - prev.t, coin: cur.earned - prev.earned, sold: cur.sold - prev.sold, launches: cur.launches - prev.launches, sales: cur.sales - prev.sales, pockets: Math.max(0, cur.out - prev.out), next });
 }
 
 // ------------------------------------------------------------------ loops
