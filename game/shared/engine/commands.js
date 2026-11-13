@@ -120,13 +120,13 @@ function plan(c, world, cmd, now) {
     case 'redrill': {
       const s = c.shafts.find((x) => x.id === cmd.shaftId);
       if (!s) return { error: 'No such shaft' };
-      if (!s.vein || s.vein.left > 0) return { error: 'Only exhausted veins can be re-drilled' };
+      if (!s.spent && (!s.vein || s.vein.left > 0)) return { error: 'Only exhausted veins can be re-drilled' };
       const roll = rollVein(world, s.idx, c.rng, { redrill: true, up: s.up });
       const ore = I.ores[I.idx[roll.ore]];
       return {
         cost: Math.max(50, T.redrillFrac * shaftCost(s.idx)), n: 1, k: 1,
         effect: `${s.name}: new ${ore.name} vein (${ore.tier}${roll.vein ? ', ' + fmt(roll.vein.total) + ' ore' : ''})`,
-        apply: (x) => { const y = x.shafts.find((q) => q.id === s.id); y.ore = roll.ore; y.vein = roll.vein; x.rng = roll.rng; },
+        apply: (x) => { const y = x.shafts.find((q) => q.id === s.id); y.ore = roll.ore; y.vein = roll.vein; delete y.spent; x.rng = roll.rng; },
       };
     }
     case 'upgradeShaft': {
@@ -185,7 +185,8 @@ function plan(c, world, cmd, now) {
       if (c.ships.length >= T.maxShips) return { error: 'Fleet is full' };
       // New ships join near your fleet's best level, and that refit is in the price.
       const lvl = Math.floor(T.shipJoinLevel * c.ships.reduce((a, s) => Math.max(a, s.lvl), 0));
-      const cost = T.ship[cls].cost * Math.pow(T.shipFleetGrowth, Math.max(0, c.ships.length - 1)) + (lvl ? geoSum(shipUpBase(cls), T.shipUpGrowth, 0, lvl) : 0);
+      const owned = c.ships.filter((q) => q.cls === cls).length - (cls === 'hauler' ? 1 : 0);
+      const cost = T.ship[cls].cost * Math.pow(T.shipFleetGrowth, Math.max(0, owned)) + (lvl ? geoSum(shipUpBase(cls), T.shipUpGrowth, 0, lvl) : 0);
       const near = I.buyers.reduce((a, b) => (T.tripSecs[b.distance] < T.tripSecs[a.distance] ? b : a));
       return {
         cost, n: 1, k: 1,

@@ -18,7 +18,8 @@ export function candidateMoves(c, world) {
   for (const cls of Object.keys(T.ship)) list.push({ type: 'buyShip', cls });
   for (const s of c.ships) list.push({ type: 'upgradeShip', shipId: s.id });
   for (const s of c.shafts) {
-    if (s.vein && s.vein.left <= 0) { list.push({ type: 'redrill', shaftId: s.id }); continue; }
+    if (s.spent || (s.vein && s.vein.left <= 0)) list.push({ type: 'redrill', shaftId: s.id });
+    if (s.vein && s.vein.left <= 0) continue;
     if (!shaftStatus(c, I, s).ok) continue;
     list.push({ type: 'upgradeShaft', shaftId: s.id, kind: 'cart' }, { type: 'upgradeShaft', shaftId: s.id, kind: 'bunk' });
   }

@@ -7,22 +7,29 @@ import { rates } from './rates.js';
 // Panels in reveal order. `when(c, I)` is checked against monotonic progress.
 // Progress counts a late joiner's catch-up grant, so the grant can be spent right away.
 const got = (c) => c.earned + (c.grant || 0);
+// Each panel opens at `at` coin earned (grant counts). Later panels also wait for `hours` of colony age,
+// so new things keep arriving through the first day instead of all at once (late joiners skip the wait).
+// `early` opens a panel sooner when it is the thing holding the colony back.
 export const PANELS = [
-  { id: 'mine', label: 'Mine', when: () => true },
-  { id: 'hire', label: 'Hire miners', when: () => true },
-  { id: 'shafts', label: 'Dig shafts', when: (c) => c.miners >= 3 || got(c) >= 30 },
-  { id: 'carts', label: 'Carts & rails', when: (c) => got(c) >= 45 },
-  { id: 'lift', label: 'Lift', when: (c, I, r) => got(c) >= 150 || (r().limit === 'lift' && got(c) >= 15) },
-  { id: 'ships', label: 'Ship upgrades', when: (c, I, r) => got(c) >= 300 || (r().limit === 'ships' && got(c) >= 15) },
-  { id: 'bunks', label: 'Bunkhouses', when: (c) => got(c) >= 400 || c.miners >= 5 },
-  { id: 'conveyor', label: 'Conveyors', when: (c, I, r) => got(c) >= 700 || (r().limit === 'conveyor' && got(c) >= 15) },
-  { id: 'yard', label: 'Surface yard', when: (c, I, r) => got(c) >= 1_200 || (r().yardLoss > 0.03 && got(c) >= 15) },
-  { id: 'drill', label: 'Drill', when: (c, I) => got(c) >= 2_000 || c.shafts.some((s) => /drill/.test(shaftStatus(c, I, s).reason)) },
-  { id: 'routes', label: 'Routes & buyers', when: (c) => got(c) >= 3_000 },
-  { id: 'fleet', label: 'Fleet', when: (c, I, r) => got(c) >= 5_000 || (r().limit === 'ships' && got(c) >= 1_000) },
-  { id: 'pads', label: 'Launch pads', when: (c) => c.ships.length >= 2 || got(c) >= 12_000 },
-  { id: 'market', label: 'Market', when: (c) => got(c) >= 25_000 },
+  { id: 'mine', label: 'Mine', at: 0 },
+  { id: 'hire', label: 'Hire miners', at: 0 },
+  { id: 'shafts', label: 'Dig shafts', at: 30, early: (c) => c.miners >= 3 },
+  { id: 'carts', label: 'Carts & rails', at: 45 },
+  { id: 'lift', label: 'Lift', at: 150, early: (c, I, r) => r().limit === 'lift' && got(c) >= 15 },
+  { id: 'ships', label: 'Ship upgrades', at: 300, early: (c, I, r) => r().limit === 'ships' && got(c) >= 15 },
+  { id: 'bunks', label: 'Bunkhouses', at: 400, early: (c) => c.miners >= 5 },
+  { id: 'conveyor', label: 'Conveyors', at: 700, early: (c, I, r) => r().limit === 'conveyor' && got(c) >= 15 },
+  { id: 'yard', label: 'Surface yard', at: 1_200, early: (c, I, r) => r().yardLoss > 0.03 && got(c) >= 15 },
+  { id: 'drill', label: 'Drill', at: 2_000, early: (c, I) => c.shafts.some((s) => /drill/.test(shaftStatus(c, I, s).reason)) },
+  { id: 'routes', label: 'Routes & buyers', at: 3_000, hours: 1 },
+  { id: 'fleet', label: 'Fleet', at: 5_000, hours: 3, early: (c, I, r) => r().limit === 'ships' && got(c) >= 1_000 },
+  { id: 'pads', label: 'Launch pads', at: 12_000, hours: 6, early: (c) => c.ships.length >= 2 },
+  { id: 'market', label: 'Market', at: 25_000, hours: 12 },
 ];
+const ageH = (c) => (num(c.t) - num(c.born, c.t)) / 3_600_000;
+const waited = (c, p) => !p.hours || num(c.grant) > 0 || ageH(c) >= p.hours;
+for (const p of PANELS) p.when = (c, I, r) => (got(c) >= p.at && waited(c, p)) || !!(p.early && p.early(c, I, r));
+
 
 // Which panel a command needs.
 export function panelFor(cmd) {
@@ -82,7 +89,13 @@ export function unlocks(colony, world, now) {
   return {
     panels, licenses,
     tutorial: { step, id: TUTORIAL[step].id, hint: TUTORIAL[step].hint },
-    next: { panel: nextPanel ? { id: nextPanel.id, label: nextPanel.label } : null, license: nextLicense },
+    next: {
+      panel: nextPanel ? {
+        id: nextPanel.id, label: nextPanel.label, at: nextPanel.at, have: got(colony),
+        waitH: waited(colony, nextPanel) ? 0 : Math.max(0, nextPanel.hours - ageH(colony)),
+      } : null,
+      license: nextLicense,
+    },
     day: dayOf(world, now),
   };
 }
