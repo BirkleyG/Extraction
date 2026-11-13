@@ -9,8 +9,13 @@ import { advance, toArr, toMap } from './sim.js';
 import { licensesOpen, panelFor, syncUnlocks } from './unlocks.js';
 import { ensureHz, ensureShaftHz } from './hazards.js';
 import { syncTunnel, cuts, commonOre } from './pockets.js';
+import {
+  REF_KINDS, emptyRefinery, ensureRef, newRefinery, refThru, refYield, refCap, refDocks, refCfg, refUnit, clampMarkup, refTrip, hasParties,
+} from './refinery.js';
+import { ensureLedger, ledgerIn, ledgerOut, spendCategory, freshBook } from './ledger.js';
 
-export const ENGINE_VERSION = 3;
+export const ENGINE_VERSION = 4;
+const SITE_NAME = { planet: 'on-planet refinery', orbital: 'orbital refinery' };
 const SAFETY = { ventilation: 'Ventilation (gas)', pumps: 'Pumps (floods)', firebreaks: 'Firebreaks (yard fires)' };
 const MAX_LVL = 400;
 
@@ -64,8 +69,11 @@ export function newColony({ id, uid, name, species, planet, siteRegion, now, gra
     shafts: [], ships: [],
     stats: freshStats(),
     unlocked: { panels: [], licenses: [] }, tutorial: 0, nextId: 1,
+    refinery: emptyRefinery(), refineMemo: {},
   };
   ensureHz(c);
+  ensureLedger(c);
+  ledgerIn(c, 'grant', g);
   starter(c, world);
   assignMiners(c, world);
   syncUnlocks(c, world, now, []);
@@ -252,13 +260,67 @@ function plan(c, world, cmd, now, quoting = false) {
     case 'setRoute': {
       const s = c.ships.find((x) => x.id === cmd.shipId);
       if (!s) return { error: 'No such ship' };
-      if (!['best', 'nearest', 'fixed'].includes(cmd.policy)) return { error: 'Unknown route policy' };
+      if (!['best', 'nearest', 'fixed', 'refinery'].includes(cmd.policy)) return { error: 'Unknown route policy' };
+      if (cmd.policy === 'refinery' && !c.refinery?.orbital) return { error: 'Build an orbital refinery first' };
       if (cmd.policy === 'fixed' && I.buyerIdx[cmd.destId] === undefined) return { error: 'Unknown destination' };
       const dest = cmd.policy === 'fixed' ? I.buyers[I.buyerIdx[cmd.destId]].name : null;
       return {
         cost: 0, n: 1, k: 1, free: true,
-        effect: cmd.policy === 'fixed' ? `${s.name} always flies to ${dest}` : cmd.policy === 'nearest' ? `${s.name} flies to the nearest buyer` : `${s.name} picks the best coin/min`,
+        effect: cmd.policy === 'refinery' ? `${s.name} delivers ore to your orbital refinery` : cmd.policy === 'fixed' ? `${s.name} always flies to ${dest}` : cmd.policy === 'nearest' ? `${s.name} flies to the nearest buyer` : `${s.name} picks the best coin/min`,
         apply: (x) => { const y = x.ships.find((q) => q.id === s.id); y.policy = cmd.policy; y.destId = cmd.policy === 'fixed' ? cmd.destId : null; },
+      };
+    }
+    case 'buildRefinery': {
+      const site = cmd.site;
+      if (!T.ref[site] || !['planet', 'orbital'].includes(site)) return { error: 'Unknown refinery site' };
+      if (!lic.has('refinery')) return { error: `Needs the ${T.licenses.refinery.label}` };
+      if (c.refinery?.[site]) return { error: `You already own an ${SITE_NAME[site]}` };
+      const B = T.ref[site], R0 = newRefinery(site);
+      const how = site === 'planet' ? 'fed straight from the yard' : `ships fly ${Math.round(refTrip('hauler', c))}s to unload, ${refDocks(R0)} docks`;
+      return {
+        cost: B.cost, n: 1, k: 1,
+        effect: `${B.label}: ${fmt(refThru(site, R0))} ore/min, ${refYield(site, R0).toFixed(2)} refined per ore, stores ${fmt(refCap(site, R0))} (${how})`,
+        apply: (x) => { ensureRef(x); x.refinery[site] = newRefinery(site, x.refineMemo?.[site]); },
+      };
+    }
+    case 'upgradeRefinery': {
+      const site = cmd.site, kind = cmd.kind;
+      const R = c.refinery?.[site];
+      if (!R) return { error: `Build the ${SITE_NAME[site] || 'refinery'} first` };
+      if (!REF_KINDS.includes(kind)) return { error: 'Unknown refinery upgrade' };
+      if (kind === 'docks' && site !== 'orbital') return { error: 'Only the orbital refinery has docks' };
+      const U = T.ref.up[kind], lv = num(R.lvl?.[kind]);
+      const p = levelPlan(c, lv, U.max, T.ref[site].cost * U.base, U.growth, n);
+      if (p.maxed) return { error: 'Maxed out' };
+      const R1 = { ...R, lvl: { ...R.lvl, [kind]: lv + p.k } };
+      const pct = (a, b) => `+${Math.round((b / a - 1) * 100)}%`;
+      let effect;
+      if (kind === 'throughput') { const a = refThru(site, R), b = refThru(site, R1); effect = `${pct(a, b)} throughput (${fmt(a)} → ${fmt(b)} ore/min)`; }
+      else if (kind === 'yield') { const a = refYield(site, R), b = refYield(site, R1); effect = `${pct(a, b)} yield (${a.toFixed(2)} → ${b.toFixed(2)} refined per ore)`; }
+      else if (kind === 'storage') { const a = refCap(site, R), b = refCap(site, R1); effect = `${pct(a, b)} storage (${fmt(a)} → ${fmt(b)})`; }
+      else effect = `Docks ${refDocks(R)} → ${refDocks(R1)}: ${refDocks(R1)} ships can fly to the refinery at once`;
+      return { ...p, n: p.k, effect, apply: (x) => { const y = x.refinery[site]; y.lvl = { throughput: 0, yield: 0, storage: 0, docks: 0, ...y.lvl }; y.lvl[kind] = lv + p.k; } };
+    }
+    case 'setRefine': {
+      const site = cmd.site;
+      const R = c.refinery?.[site];
+      if (!R) return { error: `Build the ${SITE_NAME[site] || 'refinery'} first` };
+      const o = I.idx[cmd.oreId];
+      if (o === undefined) return { error: 'Unknown ore' };
+      if (cmd.markup !== undefined && !Number.isFinite(Number(cmd.markup))) return { error: 'Bad markup' };
+      const cur = refCfg(R, cmd.oreId);
+      const on = cmd.on === undefined ? cur.on : !!cmd.on;
+      const markup = cmd.markup === undefined ? cur.markup : Math.round(clampMarkup(cmd.markup) * 100) / 100;
+      const unit = refUnit(I, o) * evoMult(c, 'sell');
+      const priced = hasParties(world, I) ? `ask ${markup.toFixed(2)}x (${fmt(markup * unit)} coin per refined unit)` : `the Guild computer buys at ${T.ref.computer}x (${fmt(T.ref.computer * unit)} coin per unit)`;
+      return {
+        cost: 0, n: 1, k: 1, free: true,
+        effect: `${I.ores[o].name}: ${on ? 'refine' : 'stop refining'}, ${priced}`,
+        apply: (x) => {
+          const y = x.refinery[site];
+          y.ores = { ...y.ores, [cmd.oreId]: { on, markup } };
+          x.refineMemo = { ...(x.refineMemo || {}), [site]: { ...y.ores } };
+        },
       };
     }
     case 'rename': {
@@ -295,6 +357,7 @@ export function quote(colony, world, cmd) {
 // `sales` (optional array) collects ore sold by the command itself (a nuke settles ships in flight).
 export function applyNow(c, world, cmd, events, sales) {
   ensureHz(c);
+  ensureRef(c);
   const p = plan(c, world, cmd, c.t);
   if (p.error) return p.error;
   if (!Number.isFinite(p.cost)) return 'Maxed out';
@@ -310,6 +373,8 @@ export function applyNow(c, world, cmd, events, sales) {
   c.coin = Math.max(0, c.coin - p.cost);
   p.apply(c, { events, sales });
   if (!p.free) {
+    ensureLedger(c);
+    ledgerOut(c, spendCategory(cmd), p.cost);
     c.stats.spent += p.cost;
     if (cmd.type !== 'hire') c.stats.upgrades++;
     events.push({ type: 'buy', text: p.effect, at: c.t, data: { cmd: cmd.type, cost: p.cost, n: p.n } });
@@ -350,6 +415,8 @@ function nukeColony(c, world, spect, ctx = {}) {
   }
   paid = Math.max(0, paid);
   c.earned += paid; c.runEarned += paid; c.monthEarned += paid;
+  ensureLedger(c);
+  ledgerIn(c, 'nukeCargo', paid);
   const runEarned = c.runEarned;
   spect = spectacleOf(c, runEarned); // cargo paid on the way out counts toward the blast
   if (ctx.sales) for (let o = 0; o < I.n; o++) if (sold[o] > 0) ctx.sales.push({ oreId: I.ores[o].id, amount: sold[o] });
@@ -366,6 +433,12 @@ function nukeColony(c, world, spect, ctx = {}) {
     sp: keep.sp, nukes: keep.nukes, lastNuke: keep.lastNuke,
   });
   c.stats.hazards = keep.hazards; c.stats.lost = keep.lost;
+  // refineries go up with the rest; their buy settings are remembered for the rebuild
+  const memo = { ...(c.refineMemo || {}) };
+  for (const site of ['planet', 'orbital']) if (c.refinery?.[site]) memo[site] = { ...c.refinery[site].ores };
+  c.refineMemo = memo;
+  c.refinery = emptyRefinery();
+  c.ledger.run = freshBook();
   starter(c, world);
   if (ctx.events) {
     const settled = paid > 0 ? ` Ships in flight delivered ${fmt(paid)} coin on the way out.` : '';

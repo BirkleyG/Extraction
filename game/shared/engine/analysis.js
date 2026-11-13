@@ -29,6 +29,12 @@ export function candidateMoves(c, world) {
     }
     for (const kind of ['ventilation', 'pumps', 'firebreaks']) list.push({ type: 'upgradeSafety', kind });
   }
+  if ((c.unlocked?.panels || []).includes('refinery')) {
+    for (const site of ['planet', 'orbital']) {
+      if (!c.refinery?.[site]) { list.push({ type: 'buildRefinery', site }); continue; }
+      for (const kind of ['throughput', 'yield', 'storage', 'docks']) if (kind !== 'docks' || site === 'orbital') list.push({ type: 'upgradeRefinery', site, kind });
+    }
+  }
   return list.map(n1);
 }
 
@@ -46,6 +52,8 @@ export function moveLabel(c, cmd) {
     case 'upgradeDrill': return 'Upgrade the drill';
     case 'buyShip': return `Buy a ${T.ship[cmd.cls]?.label.toLowerCase() || 'ship'}`;
     case 'upgradeShip': return `Upgrade ${c.ships.find((s) => s.id === cmd.shipId)?.name || 'a ship'}`;
+    case 'buildRefinery': return cmd.site === 'orbital' ? 'Build an orbital refinery' : 'Build an on-planet refinery';
+    case 'upgradeRefinery': return `Refinery ${cmd.kind} (${cmd.site === 'orbital' ? 'orbital' : 'on-planet'})`;
     default: return cmd.type;
   }
 }
@@ -61,8 +69,12 @@ export function planClone(c) {
     stats: { ...c.stats },
     unlocked: { panels: [...(c.unlocked?.panels || [])], licenses: [...(c.unlocked?.licenses || [])] },
     safety: { ...c.safety }, evo: { ...c.evo },
+    refinery: c.refinery ? { planet: refCopy(c.refinery.planet), orbital: refCopy(c.refinery.orbital) } : undefined,
+    ledger: c.ledger ? clone(c.ledger) : undefined,
   };
 }
+
+function refCopy(R) { return R ? { ...R, lvl: { ...R.lvl }, ores: { ...R.ores } } : null; }
 
 function expand(c, world, cmd) {
   const I = info(world);

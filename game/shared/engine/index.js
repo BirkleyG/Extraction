@@ -86,4 +86,6 @@ export { rates, bottleneck, destinations, marketPrice, recordSales, bestMoves, c
 export { spectacleOf, evoMult } from './model.js';
 export { unlocks, PANELS, TUTORIAL } from './unlocks.js';
 export { fmt } from './util.js';
+export { demandAt, growth as demandGrowth, REF_DEST } from './refinery.js';
+export { LEDGER_IN, LEDGER_OUT } from './ledger.js';
 export { T as TUNING } from './tuning.js';

@@ -75,6 +75,30 @@ export const T = {
     cruiser:     { day: 1, coin: 6_000,     label: 'Cruiser license' },
     freighter:   { day: 2, coin: 150_000,   label: 'Freighter license' },
     mythicDrill: { day: 3, coin: 3_000_000, label: 'Mythic drill license' },
+    refinery:    { day: 4, coin: 20_000_000, label: 'Refinery license' },
+  },
+
+  // Refineries (refinery.js). thru = raw ore/min, storage = refined units, costs in coin.
+  // A refined unit is worth valueMult x the raw ore's base value; output = raw grade units x yield.
+  // Party demand (units/min) = demand x growth(day) x wants x (ask/ref)^-sigma x demandScale x tierDemand,
+  // zero above ref x cap. growth(day) = day^growthPow (day 1 = 1).
+  ref: {
+    valueMult: 4,
+    computer: 0.6,              // no parties: a computer buyer takes everything at 0.6x base value
+    tripSecs: 12,               // one way to the orbital refinery at speed 1
+    growthPow: 2,
+    demandScale: 1,
+    tierDemand: { common: 1, rare: 0.5, mythic: 0.1 },
+    markupMin: 0.5, markupMax: 3,
+    planet:  { cost: 3_000_000,  thru: 4_000,  yield: 1,    storage: 60_000,  label: 'On-planet refinery' },
+    orbital: { cost: 40_000_000, thru: 15_000, yield: 1.25, storage: 300_000, docks: 2, label: 'Orbital refinery' },
+    // upgrade cost = build cost x base x growth^level
+    up: {
+      throughput: { base: 0.2,  growth: 1.5, mult: 1.25, max: 200 },
+      yield:      { base: 0.5,  growth: 2.6, add: 0.1, max: 15 },
+      storage:    { base: 0.08, growth: 1.45, mult: 1.5, max: 200 },
+      docks:      { base: 0.25, growth: 2.4, add: 1, max: 10 },
+    },
   },
 
   // World changes (Maker deals, galactic events): combined price multiplier is clamped.

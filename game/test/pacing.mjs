@@ -24,12 +24,29 @@ export const PLANET = {
   ],
 };
 
+// Fixture buyer parties in the Phase 3 contract shape (the real generator lives in game/shared/market/).
+const TYPES = { industrial: 1.5, traders: 1.5, military: 2, research: 2.5, political: 3, fringe: 4 };
+export function makeParties(planet, { seed = 7, perType = 4, demand = 60 } = {}) {
+  let st = seed >>> 0;
+  const rnd = () => { st = (Math.imul(st, 1664525) + 1013904223) >>> 0; return st / 4294967296; };
+  const out = [];
+  for (const type of Object.keys(TYPES)) for (let i = 0; i < perType; i++) {
+    const wants = {};
+    const ores = [...planet.ores].sort(() => rnd() - 0.5).slice(0, 2 + Math.floor(rnd() * 3));
+    for (const o of ores) wants[o.id] = Math.round((0.2 + 0.8 * rnd()) * 100) / 100;
+    out.push({ id: `${type}${i}`, name: `${type} ${i}`, type, blurb: '', personality: '', wants,
+      demand: demand * (0.5 + rnd()), ref: 0.8 + 0.8 * rnd(), sigma: TYPES[type] * (0.8 + 0.4 * rnd()), cap: 1.2 + 1.3 * rnd() });
+  }
+  return out;
+}
+
 const MIN = 60_000, HOUR = 3_600_000, DAY = 86_400_000;
 const HOARD_FROM = 27; // the bot stops spending on this day so month-end coin compares income, not savings timing
 
 // Greedy: buy the move with the best coin/min per coin; if it is not affordable yet,
 // buy an affordable one that is at least half as good, else wait.
-export function spend(c, world, now, maxBuys = 400) {
+const isRef = (m) => m.type === 'buildRefinery' || m.type === 'upgradeRefinery';
+export function spend(c, world, now, maxBuys = 400, { noRefine = false } = {}) {
   let buys = 0;
   const exec = (steps) => {
     for (const st of steps) {
@@ -40,7 +57,8 @@ export function spend(c, world, now, maxBuys = 400) {
     return true;
   };
   while (buys < maxBuys) {
-    const moves = E.bestMoves(c, world, { limit: 0 }).filter((m) => m.gain > 0);
+    const cmds = noRefine ? E.candidateMoves(c, world).filter((m) => !isRef(m)) : undefined;
+    const moves = E.bestMoves(c, world, { cmds, limit: 0 }).filter((m) => m.gain > 0);
     if (!moves.length) break;
     const best = moves[0];
     let pick = best.canAfford ? best : moves.find((m) => m.canAfford && m.ratio >= 0.5 * best.ratio);
@@ -70,10 +88,38 @@ export function evolveGreedy(c, world, now) {
   return c;
 }
 
+// Price search: per refined ore, try a few markups around the current one and keep the best planning score.
+// With refine = 'bad' the bot instead leaves every markup at 3.0.
+export function tunePrices(c, world, now, refine = 'tune') {
+  for (const site of ['planet', 'orbital']) {
+    const R = c.refinery?.[site];
+    if (!R) continue;
+    for (const o of world.planet.ores) {
+      const cur = R.ores?.[o.id]?.markup ?? 1;
+      if (refine === 'bad') { if (cur !== 3) c = E.applyCommand(c, world, { type: 'setRefine', site, oreId: o.id, markup: 3 }, now).colony; continue; }
+      const row = E.rates(c, world).refinery?.[site]?.byOre?.[o.id];
+      if (!row || !(row.inPerMin > 0 || row.stock > 0)) continue;
+      let best = null;
+      for (const k of [0.7, 0.85, 1, 1.15, 1.3]) {
+        const m = Math.min(3, Math.max(0.5, Math.round(cur * k * 100) / 100));
+        const r = E.applyCommand(c, world, { type: 'setRefine', site, oreId: o.id, markup: m }, now);
+        if (r.error) continue;
+        const sc = E.rates(r.colony, world).score;
+        if (!best || sc > best.sc + 1e-9) best = { sc, c: r.colony };
+      }
+      if (best) c = best.c;
+    }
+  }
+  return c;
+}
+
 // strategy: 'none' | 'first' (nuke at the first eligible check-in) | a day number (first check-in of that day)
-function run({ quiet = false, strategy = 'none' } = {}) {
+// refine: 'tune' (builds refineries when they pay, searches prices) | 'none' (never refines) | 'bad' (markup 3.0)
+function run({ quiet = false, strategy = 'none', refine = 'tune' } = {}) {
   const t0 = performance.now();
-  let world = { month: 'pace', planet: PLANET, market: {}, startedAt: 0, endsAt: 30 * DAY };
+  let world = { month: 'pace', planet: PLANET, market: {}, startedAt: 0, endsAt: 30 * DAY, parties: makeParties(PLANET) };
+  const noRefine = refine === 'none';
+  let refBuilt = null;
   const born = 8 * HOUR;
   let c = E.newColony({ uid: 'bot', name: 'Pace Colony', planet: PLANET, now: born });
   let hazards = [];
@@ -88,7 +134,7 @@ function run({ quiet = false, strategy = 'none' } = {}) {
   const active = (from, mins, onTick) => {
     for (let t = from; t <= from + mins * MIN; t += 3000) {
       const ev = step(t);
-      const r = spend(c, world, t, 20);
+      const r = spend(c, world, t, 20, { noRefine });
       c = r.c;
       if (onTick) onTick(t, ev, r.buys);
     }
@@ -142,29 +188,35 @@ function run({ quiet = false, strategy = 'none' } = {}) {
           continue;
         }
       }
-      if (day < HOARD_FROM - 1) c = spend(c, world, t).c; // closing bell: the bot hoards the last days
+      if (day < HOARD_FROM - 1) c = spend(c, world, t, 400, { noRefine }).c; // closing bell: the bot hoards the last days
+      if (!noRefine) c = tunePrices(c, world, t, refine);
+      if (refBuilt == null && (c.refinery?.planet || c.refinery?.orbital)) refBuilt = t;
     }
     const end = (day + 1) * DAY;
     while (t < end) { t = Math.min(end, t + 30 * MIN); step(t); if (first20M == null && c.earned >= 2e7) first20M = t; }
     const r = E.rates(c, world);
-    rows.push({ day: day + 1, coin: c.coin, earned: c.earned, cpm: r.coinPerMin, shafts: c.shafts.length, ships: c.ships.length, mix: ['hauler','cruiser','freighter'].map(k => c.ships.filter(s => s.cls === k).length).join('/'), miners: c.miners, drill: c.drill,
+    const refCpm = Object.values(r.refinery || {}).reduce((a, x) => a + x.coinPerMin, 0);
+    rows.push({ ref: refCpm, sites: ['planet', 'orbital'].filter((k) => c.refinery?.[k]).map((k) => k[0]).join(''), asks: c.refinery?.planet ? Object.values(c.refinery.planet.ores).map((x) => x.markup).join('/') : '', day: day + 1, coin: c.coin, earned: c.earned, cpm: r.coinPerMin, shafts: c.shafts.length, ships: c.ships.length, mix: ['hauler','cruiser','freighter'].map(k => c.ships.filter(s => s.cls === k).length).join('/'), miners: c.miners, drill: c.drill,
       bn: E.bottleneck(c, world).stage, exh: r.shafts.filter((x) => x.blocked).length, dug: c.shafts.reduce((a, s) => a + (s.dug || 0), 0), face: Math.max(0, ...c.shafts.map((s) => s.face || 0)), month: c.monthEarned });
   }
   const result = {
     strategy, coin: c.coin, monthEarned: c.monthEarned, sp: c.sp, evo: c.evo, nukedAt, nukeInfo, first20M, prestigeAt,
     hazards: hazards.length, lost: c.stats.lost, safety: c.safety,
     byKind: hazards.reduce((a, e) => { a[e.data.kind] = (a[e.data.kind] || 0) + 1; return a; }, {}),
-    rows: rows.map((r) => ({ day: r.day, coin: r.coin, month: r.month, cpm: r.cpm })), secs: (performance.now() - t0) / 1000,
+    refine, refBuilt, ledger: c.ledger,
+    rows: rows.map((r) => ({ day: r.day, coin: r.coin, month: r.month, cpm: r.cpm, ref: r.ref })), secs: (performance.now() - t0) / 1000,
   };
-  if (strategy !== 'none') return result;
+  if (strategy !== 'none' || refine !== 'tune') return result;
   out.push('');
   out.push('== (b) 30-day month, 4 check-ins/day, greedy ==');
-  out.push('day  coin     earned   coin/min  shafts ships miners drill stuck dug longest bottleneck');
-  for (const r of rows) out.push(`${String(r.day).padStart(3)}  ${E.fmt(r.coin).padEnd(8)} ${E.fmt(r.earned).padEnd(8)} ${E.fmt(r.cpm).padEnd(9)} ${String(r.shafts).padStart(6)} ${String(r.ships).padStart(5)} ${String(r.miners).padStart(6)} ${String(r.drill).padStart(5)} ${String(r.exh).padStart(5)} ${String(r.dug).padStart(4)} ${(Math.round(r.face) + 'm').padStart(7)} ${r.bn}`);
+  out.push('day  coin     earned   coin/min  refined/m  shafts ships miners drill stuck dug longest bottleneck  refineries');
+  for (const r of rows) out.push(`${String(r.day).padStart(3)}  ${E.fmt(r.coin).padEnd(8)} ${E.fmt(r.earned).padEnd(8)} ${E.fmt(r.cpm).padEnd(9)} ${E.fmt(r.ref).padEnd(10)} ${String(r.shafts).padStart(6)} ${String(r.ships).padStart(5)} ${String(r.miners).padStart(6)} ${String(r.drill).padStart(5)} ${String(r.exh).padStart(5)} ${String(r.dug).padStart(4)} ${(Math.round(r.face) + 'm').padStart(7)} ${r.bn.padEnd(10)}  ${r.sites} ${r.asks}`);
   out.push(`first 20M earned: ${first20M == null ? 'never' : 'day ' + (first20M / DAY + 1).toFixed(2)} · prestige panel: day ${prestigeAt == null ? '-' : (prestigeAt / DAY + 1).toFixed(2)}`);
   out.push(`hazards: ${hazards.length} (${Object.entries(result.byKind).map(([k, v]) => k + ' ' + v).join(', ')}), miners lost ${c.stats.lost}, safety ${JSON.stringify(c.safety)}, lights/supports avg ${(c.shafts.reduce((a, s) => a + (s.up.lights || 0), 0) / c.shafts.length).toFixed(1)}/${(c.shafts.reduce((a, s) => a + (s.up.supports || 0), 0) / c.shafts.length).toFixed(1)}`);
   for (const e of hazards.slice(0, 4)) out.push(`  day ${(e.at / DAY + 1).toFixed(2)}: ${e.text}`);
   if (!quiet) console.log('ship mix hauler/cruiser/freighter by day:', rows.filter((r) => [1, 3, 5, 10, 20, 30].includes(r.day)).map((r) => r.day + ':' + r.mix).join('  '));
+  const lg = c.ledger.month;
+  out.push(`ledger (month): in ${Object.entries(lg.in).map(([k, v]) => k + ' ' + E.fmt(v)).join(', ')} · out ${Object.entries(lg.out).map(([k, v]) => k + ' ' + E.fmt(v)).join(', ')}`);
   out.push(`colony JSON size: ${(JSON.stringify(c).length / 1024).toFixed(1)} KB · market: ${E.marketTable(world, t).map((m) => m.id + ' ' + m.index.toFixed(2)).join(', ')}`);
   out.push(`ran in ${((performance.now() - t0) / 1000).toFixed(1)}s`);
   if (!quiet) console.log(out.join('\n'));
@@ -174,12 +226,25 @@ function run({ quiet = false, strategy = 'none' } = {}) {
 // (c) prestige strategies, one worker each (they all play the same month from the start).
 async function strategies() {
   const t0 = performance.now();
-  const strats = ['first', 15, 28];
-  const jobs = strats.map((strategy) => new Promise((res, rej) => {
-    const w = new Worker(new URL(import.meta.url), { workerData: { strategy } });
+  const only = process.argv.includes('--refine') ? 'refine' : process.argv.includes('--nuke') ? 'nuke' : null;
+  const strats = only === 'refine' ? [] : ['first', 15, 28];
+  const refs = only === 'nuke' ? [] : ['none', 'bad'];
+  const job = (data) => new Promise((res, rej) => {
+    const w = new Worker(new URL(import.meta.url), { workerData: data });
     w.once('message', res); w.once('error', rej);
-  }));
-  const base = run({ quiet: false, strategy: 'none' });
+  });
+  const jobs = strats.map((strategy) => job({ strategy }));
+  const rjobs = refs.map((refine) => job({ strategy: 'none', refine }));
+  const base = run({ quiet: process.argv.includes('--quiet'), strategy: 'none' });
+  const rres = await Promise.all(rjobs);
+  console.log(`\n== (d) Refining: month-end coin (bot hoards from day ${HOARD_FROM}) ==`);
+  console.log('bot               built   coin@30   earned@10 earned@20 earned@30  refined in   vs no refine');
+  const noRef = rres.find((r) => r.refine === 'none') || base;
+  for (const r of [base, ...rres]) {
+    const nm = { tune: 'refine, tuned', none: 'never refines', bad: 'refine, markup 3' }[r.refine];
+    console.log(`${nm.padEnd(17)} ${(r.refBuilt == null ? '-' : 'day ' + (r.refBuilt / DAY + 1).toFixed(1)).padEnd(7)} ${E.fmt(r.coin).padEnd(9)} ${E.fmt(r.rows[9].month).padEnd(9)} ${E.fmt(r.rows[19].month).padEnd(9)} ${E.fmt(r.rows[29].month).padEnd(10)} ${E.fmt(r.ledger.month.in.refined).padEnd(12)} ${(r.coin / noRef.coin).toFixed(2)}x coin, ${(r.monthEarned / noRef.monthEarned).toFixed(2)}x earned`);
+  }
+  if (!strats.length) return;
   const all = [base, ...(await Promise.all(jobs))];
   const name = (s) => (s === 'none' ? 'no nuke' : s === 'first' ? 'first chance' : 'day ' + s);
   const at = (r, d) => E.fmt(r.rows[d - 1].month);
@@ -192,6 +257,6 @@ async function strategies() {
   console.log(`strategies ran in ${((performance.now() - t0) / 1000).toFixed(1)}s (parallel)`);
 }
 
-if (!isMainThread && workerData) parentPort.postMessage(run({ quiet: true, strategy: workerData.strategy }));
+if (!isMainThread && workerData) parentPort.postMessage(run({ quiet: true, strategy: workerData.strategy, refine: workerData.refine || 'tune' }));
 else if (import.meta.url === `file://${process.argv[1]}`) strategies();
 export { run };

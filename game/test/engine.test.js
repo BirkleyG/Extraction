@@ -582,7 +582,11 @@ test('unlocks: panels drip in, licenses follow the month, tutorial steps', () =>
   assert.deepEqual(E.unlocks({ ...c, earned: 0 }, w, 5 * DAY).licenses.filter((l) => !c.unlocked.licenses.includes(l)), []);
   const adv = E.advance(r1, w, 2 * DAY + HOUR);
   assert.deepEqual(adv.events.filter((e) => e.type === 'license').map((e) => e.data.license).sort(), ['freighter', 'mythicDrill'].filter((l) => !r1.unlocked.licenses.includes(l)).concat(r1.unlocked.licenses.includes('cruiser') ? [] : ['cruiser']).sort());
-  assert.equal(E.unlocks(adv.colony, w, adv.colony.t).next.license, null);
+  assert.equal(E.unlocks(adv.colony, w, adv.colony.t).next.license.id, 'refinery');
+  const late = E.advance({ ...adv.colony, earned: 2e7 }, w, 3 * DAY + HOUR);
+  assert.ok(late.events.some((e) => e.type === 'license' && e.data.license === 'refinery'));
+  assert.ok(late.colony.unlocked.panels.includes('refinery'), 'the refinery panel opens with its license');
+  assert.equal(E.unlocks(late.colony, w, late.colony.t).next.license, null);
 });
 
 test('late joiners get a catch-up grant that counts toward licenses', () => {
