@@ -137,7 +137,7 @@ Planet layout (full spec; weather, wildlife, tribes and scouting land in Phase 5
 
 Painted planet (owner request, 2026-11-13; supersedes discrete site lists)
 - The planet map is a painted, shaded-relief world (height, climate zones blending like a Köppen climate map), not Voronoi cells. Regions are named climate areas with organic borders.
-- Ore is painted as hidden continuous fields: the two common-ore zones cover large areas; each rare covers about 37% of the land in patches; mythic covers part of the tough (rugged, high) ground. Wildlife and tribe territories (Phase 5) are hidden fields too.
+- Ore is painted as hidden fields of splotches and patches (they don't need to be contiguous): the two common ores split the land roughly 50/50; each rare covers about 37% of the land; mythic covers part of the tough (rugged, high) ground. Wildlife and tribe territories (Phase 5) are hidden fields too.
 - Players never see the ore or territory maps. A new player is dropped at a random spot that's equally good for everyone (about +1 SD), with no hostile tribes or bosses nearby. The map shows where you are, other players, refineries and ships flying overhead.
 - Later (outposts, Phase 5) players click any spot far enough from other sites to open a site there; the ores painted under that spot are what's in the ground. Scouting reports reveal estimates.
 
