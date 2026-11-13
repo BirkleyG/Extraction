@@ -167,7 +167,7 @@ export function createUI(S, A) {
     const b = S.bneck;
     if (!b || S.unl.panels.length < 4) return '';
     const sg = b.suggestion;
-    return `<div class="advisor ${b.stage !== 'mine' ? 'hot' : ''}"><b>${b.stage !== 'mine' ? '! Bottleneck' : 'Foreman'}</b><p>${esc(b.message)}</p><div class="btnrow">${sg ? `<button class="buy sm" data-advice="1" ${sg.canAfford ? '' : 'disabled'}>${esc(sg.label)} · ${fmt(sg.cost)}</button>` : ''}<button class="buy sm alt" data-autospend="1" title="Buy the best upgrades in order, keeping 10% in reserve">Auto-spend</button></div></div>`;
+    return `<div class="advisor ${b.stage !== 'mine' ? 'hot' : ''}"><b>${b.stage !== 'mine' ? '! Bottleneck' : 'Foreman'}</b><p>${esc(b.message)}</p><div class="btnrow">${sg ? `<button class="buy sm" data-advice="1" ${sg.canAfford ? '' : 'disabled'}>${esc(sg.label)} · ${fmt(sg.cost)}</button>` : ''}</div></div>`;
   }
   function panelMine() {
     const c = S.colony, u = S.unl, R = S.rates;
@@ -306,8 +306,6 @@ export function createUI(S, A) {
   document.addEventListener('click', (e) => {
     const m = e.target.closest('[data-mktcls]');
     if (m) { S.ui.mktCls = m.dataset.mktcls; sfx.tap(); render(true); return; }
-    const as = e.target.closest('[data-autospend]');
-    if (as) { A.send({ type: 'autoSpend', keep: 0.1 }, as); return; }
     const adv = e.target.closest('[data-advice]');
     if (adv && S.bneck?.suggestion) { A.send(S.bneck.suggestion.cmd, adv); return; }
     const rn = e.target.closest('[data-rename]');
@@ -480,7 +478,7 @@ export function createUI(S, A) {
       <p class="lede">Your crews kept digging. Here's what the colony did without you.</p>
       <div class="awaygrid">${rows.map(([k, v, c]) => `<div><small>${k}</small><b class="${c}">${v}</b></div>`).join('')}</div>
       ${s.next ? `<div class="awaynext"><small>Best next move</small><b>${esc(s.next.label)}</b> <span class="gold">${fmt(s.next.cost)}</span></div>` : ''}
-      <div class="btnrow">${s.next && s.next.canAfford ? `<button class="buy big" data-spend="1" title="Buys the best upgrades in order, starting with ${esc(s.next.label)}">Auto-spend</button>` : ''}<button class="buy big ${s.next && s.next.canAfford ? 'ghost' : ''}" data-x="1">Collect &amp; carry on</button></div></div>`, 'awaysheet');
+      <div class="btnrow">${s.next && s.next.canAfford ? `<button class="buy big" data-spend="1">${esc(s.next.label)} · ${fmt(s.next.cost)}</button>` : ''}<button class="buy big ${s.next && s.next.canAfford ? 'ghost' : ''}" data-x="1">Collect &amp; carry on</button></div></div>`, 'awaysheet');
     const sp = el.querySelector('[data-spend]');
     if (sp) sp.addEventListener('click', () => { s.next.spend(); close(); });
     sfx.big();

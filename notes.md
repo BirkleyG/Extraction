@@ -1,6 +1,6 @@
 # Mineshaft Capital notes
 
-Current version: **0.1.01** (shown in the game under the logo, top left)
+Current version: **0.1.02** (shown in the game under the logo, top left)
 
 ## How versions work
 
@@ -11,6 +11,9 @@ Current version: **0.1.01** (shown in the game under the logo, top left)
 The bump command updates `game/version.json` (what the game displays) and adds an entry below. Every change that lands should come with a bump.
 
 ## Changelog
+
+### 0.1.02 (2026-11-13)
+- Removed Auto-spend: the Foreman suggests the next fix but you make every buy.
 
 ### 0.1.01 (2026-11-13)
 - Rough spots: Auto-spend button (also on the welcome-back sheet), next-unlock progress bar, later panels spread over your first day, each ship class has its own price ladder so cruisers and freighters get used, exhausted veins fall back to common ore instead of stopping.

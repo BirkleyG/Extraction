@@ -160,7 +160,7 @@ function checkAway() {
   let next = null;
   try {
     const sug = E.bottleneck(S.colony, S.ew)?.suggestion;
-    if (sug && sug.cmd) next = { label: sug.label, cost: sug.cost, canAfford: S.colony.coin >= sug.cost, spend: () => A_send({ type: 'autoSpend', keep: 0.1 }) };
+    if (sug && sug.cmd) next = { label: sug.label, cost: sug.cost, canAfford: S.colony.coin >= sug.cost, spend: () => A_send(sug.cmd) };
   } catch {}
   ui.awaySheet({ ms: cur.t - prev.t, coin: cur.earned - prev.earned, sold: cur.sold - prev.sold, launches: cur.launches - prev.launches, sales: cur.sales - prev.sales, veins: Math.max(0, cur.out - prev.out), next });
 }
