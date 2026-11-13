@@ -91,7 +91,7 @@ Stakes and rhythm
 - Month-end wipe: coin, SP, evolutions and galaxy changes reset; all-time stats and the Hall of Fame stay.
 - Richer AI planet generation: colors, look, topography, environment, moons, lore and story.
 - News ticker from the "colony chronicler."
-- Galactic events (wars, booms, recessions, discoveries, rituals) that shift demand.
+- Galactic events (wars, booms, recessions, discoveries, rituals) about once a week, each shifting demand for 1–3 days.
 
 Underground hazards (gives lights and supports a purpose)
 - Lights prevent miner insanity (miners attacking each other). Supports reduce cave-ins.

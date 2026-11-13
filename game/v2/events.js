@@ -1,5 +1,5 @@
-// Galactic events: every 10-20 hours something happens out there (a war, a boom, a cult ritual)
-// and shifts demand for a while. Events change budgets and demand, never set prices directly:
+// Galactic events: about once a week something happens out there (a war, a boom, a cult ritual)
+// and shifts demand for a day or three. Events change budgets and demand, never set prices directly:
 // they are world.changes with an expiry, which the engine folds into prices.
 import crypto from 'node:crypto';
 
@@ -9,11 +9,11 @@ const pick = a => a[Math.floor(rnd() * a.length)];
 const between = (a, b) => a + (b - a) * rnd();
 
 const TEMPLATES = {
-  war: { kind: 'demand', up: true, mult: [1.4, 1.9], hours: [12, 36], heads: ['War erupts in the {far} system; armies scramble for {ore}', 'Border skirmish turns ugly: {ore} armor in short supply'] },
-  boom: { kind: 'global', up: true, mult: [1.15, 1.35], hours: [12, 30], heads: ['Galactic construction boom: every ore is suddenly fashionable', 'Credit flows like syrup; buyers splurge on raw ore'] },
-  recession: { kind: 'global', up: false, mult: [1.15, 1.35], hours: [10, 24], heads: ['Markets wobble; buyers tighten their belts', 'The Exchange sneezes and the whole galaxy catches a recession'] },
-  discovery: { kind: 'supply', up: true, mult: [1.25, 1.6], hours: [16, 40], heads: ['Prospectors strike {ore} in a far nebula; prices sag', 'A rival world floods the market with cheap {ore}'] },
-  ritual: { kind: 'buyer', up: true, mult: [1.4, 1.8], hours: [8, 20], heads: ['{buyer} holds a sacred ritual and pays double for offerings', '{buyer} declares a festival; their buyers are feeling generous'] },
+  war: { kind: 'demand', up: true, mult: [1.4, 1.9], hours: [36, 72], heads: ['War erupts in the {far} system; armies scramble for {ore}', 'Border skirmish turns ugly: {ore} armor in short supply'] },
+  boom: { kind: 'global', up: true, mult: [1.15, 1.35], hours: [24, 60], heads: ['Galactic construction boom: every ore is suddenly fashionable', 'Credit flows like syrup; buyers splurge on raw ore'] },
+  recession: { kind: 'global', up: false, mult: [1.15, 1.35], hours: [24, 48], heads: ['Markets wobble; buyers tighten their belts', 'The Exchange sneezes and the whole galaxy catches a recession'] },
+  discovery: { kind: 'supply', up: true, mult: [1.25, 1.6], hours: [36, 72], heads: ['Prospectors strike {ore} in a far nebula; prices sag', 'A rival world floods the market with cheap {ore}'] },
+  ritual: { kind: 'buyer', up: true, mult: [1.4, 1.8], hours: [24, 48], heads: ['{buyer} holds a sacred ritual and pays double for offerings', '{buyer} declares a festival; their buyers are feeling generous'] },
 };
 
 function makeEvent(world, t) {
@@ -43,7 +43,7 @@ export function createEvents({ ai, currentModel, getWorld, saveWorld, addFeed, c
   async function maybeEvent() {
     const t = clock();
     const world = await getWorld();
-    if (!world.nextEventAt) { world.nextEventAt = t + Math.round(between(6, 14) * HOUR); await saveWorld(world); return null; }
+    if (!world.nextEventAt) { world.nextEventAt = t + Math.round(between(3 * 24, 5 * 24) * HOUR); // first event 3-5 days in await saveWorld(world); return null; }
     if (t < world.nextEventAt || t >= world.endsAt) return null;
     const ev = makeEvent(world, t);
     const model = ai && await currentModel();
@@ -52,7 +52,7 @@ export function createEvents({ ai, currentModel, getWorld, saveWorld, addFeed, c
       catch (e) { console.error('Chronicler AI failed:', e.message); }
     }
     world.changes = [...(world.changes || []).filter(c => !c.until || c.until > t), ev];
-    world.nextEventAt = t + Math.round(between(10, 20) * HOUR);
+    world.nextEventAt = t + Math.round(between(6 * 24, 9 * 24) * HOUR); // then every 6-9 days
     await saveWorld(world);
     await addFeed(`📰 ${ev.title}`, 'news', null, t);
     return ev;

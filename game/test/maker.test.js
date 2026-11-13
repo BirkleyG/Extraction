@@ -73,10 +73,13 @@ test('galactic events arrive on schedule, expire, and reach the news feed', asyn
   const ev = createEvents(await h.deps());
   assert.equal(await ev.maybeEvent(), null, 'first call only schedules');
   assert.ok(h.world.nextEventAt > h.clock());
-  h.tick(15 * 3600_000);
+  h.tick(2 * 24 * 3600_000);
+  assert.equal(await ev.maybeEvent(), null, 'nothing in the first days');
+  h.tick(4 * 24 * 3600_000);
   const e = await ev.maybeEvent();
   assert.ok(e && e.until > e.at && e.source === 'event');
   assert.equal(h.world.changes.length, 1);
   assert.match(h.feed[0], /📰/);
+  assert.ok(h.world.nextEventAt - h.clock() >= 6 * 24 * 3600_000, 'next one about a week later');
   for (let i = 0; i < 50; i++) { const x = ev.makeEvent(h.world, h.clock()); assert.ok(x.mult > 0.4 && x.mult < 2.1); }
 });
