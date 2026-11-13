@@ -193,6 +193,23 @@
     } catch (err) { note.textContent = 'Could not load models: ' + err.message; }
   }
 
+  // Game version under the logo, so the owner can track progress (see notes.md).
+  fetch('/api/config').then(r => r.json()).then(j => {
+    if (!j.version) return;
+    const show = () => {
+      const brand = document.querySelector('.hud .brand');
+      if (!brand) return setTimeout(show, 200);
+      if (brand.querySelector('.msc-ver')) return;
+      const v = document.createElement('small');
+      v.className = 'msc-ver';
+      v.textContent = 'v' + j.version;
+      v.title = 'Game version';
+      v.style.cssText = 'display:block;margin-top:2px;font-size:9px;letter-spacing:.08em;color:var(--text);opacity:.6;font-family:inherit';
+      brand.appendChild(v);
+    };
+    show();
+  }).catch(() => {});
+
   // Shown inside the game's Settings sheet.
   window.MSC_ACCOUNT_HTML = function () {
     if (!me) return '';

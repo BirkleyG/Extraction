@@ -1,5 +1,6 @@
 // Mineshaft Capital server: serves the game, stores shared state in Postgres,
 // pushes live updates over WebSocket, and runs Claude or ChatGPT calls with the server's keys.
+import fs from 'node:fs';
 import http from 'node:http';
 import crypto from 'node:crypto';
 import path from 'node:path';
@@ -10,6 +11,7 @@ import { createStore } from './store.js';
 import { createAi } from './ai.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+export const VERSION = JSON.parse(fs.readFileSync(path.join(here, 'version.json'), 'utf8')).version;
 
 // Collections the game is allowed to touch, and who may write them.
 const COLLS = new Set(['world', 'colonies', 'feed']);
@@ -55,9 +57,9 @@ export async function startServer(opts = {}) {
     return false;
   }
 
-  app.get('/healthz', (req, res) => res.json({ ok: true, store: store.kind, ai: ai.enabled }));
+  app.get('/healthz', (req, res) => res.json({ ok: true, version: VERSION, store: store.kind, ai: ai.enabled }));
 
-  app.get('/api/config', (req, res) => res.json({ inviteRequired: !!env.GAME_CODE, ai: ai.enabled }));
+  app.get('/api/config', (req, res) => res.json({ inviteRequired: !!env.GAME_CODE, ai: ai.enabled, version: VERSION }));
 
   // Join (or re-join on a new device) by colony-founder name + invite code.
   app.post('/api/join', async (req, res) => {

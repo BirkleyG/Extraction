@@ -8,7 +8,8 @@
   "scripts": {
     "start": "node game/server.js",
     "dev": "node --watch game/server.js",
-    "test": "node --test game/test/*.test.js"
+    "test": "node --test game/test/*.test.js",
+    "bump": "node game/scripts/bump.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.8.0",
