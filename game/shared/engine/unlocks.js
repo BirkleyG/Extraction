@@ -29,10 +29,12 @@ export const PANELS = [
   { id: 'safety', label: 'Safety', at: Infinity, hint: 'opens when you dig shaft 4 or hit your first hazard', early: (c) => c.shafts.some((s) => s.idx >= 3) || num(c.stats?.hazards) > 0 },
   // Prestige shows up well before the nuke is allowed, so players see it coming.
   { id: 'prestige', label: 'Prestige', at: Infinity, hint: 'opens at 5M earned since your last nuke', early: (c) => num(c.runEarned) >= T.prestigePanelAt || num(c.nukes) > 0 || num(c.sp) > 0 },
+  // Refinery opens with its license (day 4 and 20M earned).
+  { id: 'refinery', label: 'Refinery', at: Infinity, hint: 'opens with the Refinery license (day 4, 20M earned)', early: (c, I, r, lic) => !!lic && lic.includes('refinery') },
 ];
 const ageH = (c) => (num(c.t) - num(c.born, c.t)) / 3_600_000;
 const waited = (c, p) => !p.hours || num(c.grant) > 0 || ageH(c) >= p.hours;
-for (const p of PANELS) p.when = (c, I, r) => (got(c) >= p.at && waited(c, p)) || !!(p.early && p.early(c, I, r));
+for (const p of PANELS) p.when = (c, I, r, lic) => (got(c) >= p.at && waited(c, p)) || !!(p.early && p.early(c, I, r, lic));
 
 
 // Which panel a command needs.
@@ -51,6 +53,7 @@ export function panelFor(cmd) {
     case 'upgradeShip': return 'ships';
     case 'setRoute': return 'routes';
     case 'upgradeDrill': return 'drill';
+    case 'buildRefinery': case 'upgradeRefinery': case 'setRefine': return 'refinery';
     default: return null;
   }
 }
@@ -86,8 +89,8 @@ export function unlocks(colony, world, now) {
   const had = new Set(colony.unlocked?.panels || []);
   let R = null;
   const r = () => (R ||= rates(colony, world));
-  const panels = PANELS.filter((p) => had.has(p.id) || p.when(colony, I, r)).map((p) => p.id);
   const licenses = [...new Set([...(colony.unlocked?.licenses || []), ...licensesOpen(colony, world, now)])];
+  const panels = PANELS.filter((p) => had.has(p.id) || p.when(colony, I, r, licenses)).map((p) => p.id);
   const step = Math.min(5, tutorialStep(colony));
   const nextPanel = PANELS.find((p) => !panels.includes(p.id));
   const nextLicense = Object.keys(T.licenses).filter((k) => !licenses.includes(k))

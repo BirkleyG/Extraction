@@ -26,6 +26,10 @@ describe('v2 server', () => {
     assert.equal(s0.status, 200);
     assert.equal(s0.body.colony, null);
     assert.equal(s0.body.world.planet.ores.length, 7);
+    assert.equal(s0.body.world.parties.length, 24, 'buyer parties for refined goods');
+    const h = await call('GET', '/api/v2/history', null, a.token);
+    assert.equal(h.status, 200);
+    assert.ok(Array.isArray(h.body.me) && Array.isArray(h.body.board) && typeof h.body.prices === 'object');
     const region = s0.body.world.planet.regions[1].id;
     const st = await call('POST', '/api/v2/start', { species: { name: 'Gloops', color: '#33ccff' }, siteRegion: region }, a.token);
     assert.equal(st.status, 200);

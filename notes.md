@@ -1,6 +1,6 @@
 # Mineshaft Capital notes
 
-Current version: **0.3.00** (shown in the game under the logo, top left)
+Current version: **0.4.00** (shown in the game under the logo, top left)
 
 ## How versions work
 
@@ -11,6 +11,9 @@ Current version: **0.3.00** (shown in the game under the logo, top left)
 The bump command updates `game/version.json` (what the game displays) and adds an entry below. Every change that lands should come with a bump.
 
 ## Changelog
+
+### 0.4.00 (2026-11-13)
+- Phase 3: refineries and a hidden market. Build an on-planet or orbital refinery from day 4, set an asking price per ore with a markup slider and watch how 24 AI-named buyer parties respond (each has a secret top price). New Reports tab with income, rank, leaderboard-race and price charts, plus a ledger of every coin in and out. Colonies from v0.3 carry over.
 
 ### 0.3.00 (2026-11-13)
 - Phase 2.5: long shafts you can see. Each shaft is a tunnel that grows as the crew digs; ore pockets sit visibly in the rock, crews mine common ore until they strike a pocket, and a pocket too hard for your drill stops the face until you upgrade. Re-drilling is gone. Strike alerts (big ones for mythic), rare strikes in the feed, and no more safety tips that save almost nothing.

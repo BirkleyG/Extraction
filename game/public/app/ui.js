@@ -6,6 +6,8 @@ import { $, $$, esc, fmt, dur, secs, ago, clamp, oreIcon, TIER_COL, DAY, store, 
 import { prefs, setPref, sfx, bump, popAt, Ticker, banner } from './juice.js';
 import { createPrestige } from './prestige.js';
 import { createGalaxy } from './galaxy.js';
+import { createRefinery } from './refinery.js';
+import { createReports } from './reports.js';
 import { api, net, signOut, fillModels } from './net.js';
 
 const TABS = [
@@ -13,10 +15,12 @@ const TABS = [
   { id: 'surface', label: 'Surface', show: (u) => has(u, 'lift', 'conveyor', 'yard', 'pads') },
   { id: 'fleet', label: 'Fleet', show: (u) => has(u, 'ships', 'fleet', 'routes') },
   { id: 'market', label: 'Market', show: (u) => has(u, 'routes', 'market') },
+  { id: 'refinery', label: 'Refinery', show: (u) => has(u, 'refinery') },
   { id: 'safety', label: 'Safety', show: (u) => has(u, 'safety') },
   { id: 'galaxy', label: 'Galaxy', show: (u, c, S) => has(u, 'prestige') || (S.bulletin && S.bulletin.changes.length > 0) },
   { id: 'prestige', label: 'Prestige', show: (u) => has(u, 'prestige') },
   { id: 'ranks', label: 'Ranks', show: (u, c) => c.stats.sales > 0 },
+  { id: 'reports', label: 'Reports', show: (u, c) => c.stats.sales > 0 },
 ];
 const BELL_MS = 48 * 3600_000;
 const hms = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)); return `${String(Math.floor(s / 3600)).padStart(2, '0')}:${String(Math.floor(s / 60) % 60).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; };
@@ -25,10 +29,10 @@ const HZ_LABEL = { gas: 'Toxic gas', flood: 'Floods', fire: 'Yard fires', quake:
 const SAFETY_ROWS = [['ventilation', 'Ventilation', 'gas', 'Clears toxic gas before it reaches the crews'], ['pumps', 'Pumps', 'flood', 'Keeps flooded tunnels from drowning shifts'], ['firebreaks', 'Firebreaks', 'fire', 'Stops yard fires from burning stockpiled ore']];
 const has = (u, ...p) => p.some((x) => u.panels.includes(x));
 const BULKS = [[1, '1x'], [10, '10x'], [100, '100x'], ['max', 'Max']];
-const BULKY = new Set(['hire', 'upgradeShaft', 'upgradeLift', 'upgradeConveyor', 'upgradeYard', 'buyPad', 'upgradeShip', 'evolve', 'upgradeSafety']);
+const BULKY = new Set(['upgradeRefinery', 'hire', 'upgradeShaft', 'upgradeLift', 'upgradeConveyor', 'upgradeYard', 'buyPad', 'upgradeShip', 'evolve', 'upgradeSafety']);
 const SHIP_DESC = { hauler: 'All-rounder', cruiser: 'Small and fast', freighter: 'Slow and huge' };
 const stateText = (s, now, I) => {
-  const dest = I.buyer(s.dest)?.name || 'a buyer';
+  const dest = s.dest === '@refinery' ? 'your orbital refinery' : I.buyer(s.dest)?.name || 'a buyer';
   if (s.state === 'loading') return 'Loading at the pad';
   if (s.state === 'out') return `Flying to ${dest} · ${secs(Math.max(0, (s.arriveAt - now) / 1000))}`;
   if (s.state === 'back') return `Returning · ${secs(Math.max(0, (s.homeAt - now) / 1000))}`;
@@ -39,7 +43,7 @@ export function createUI(S, A) {
   const coinT = new Ticker();
   let lastKey = '', lastTabsKey = '', seenTabs = new Set(store('msc2_seenTabs') || ['mine']);
   let card = null; // { kind, id }
-  let PR = null, GX = null; // prestige + galaxy, wired at the end
+  let PR = null, GX = null, RF = null, RP = null; // prestige, galaxy, refinery, reports: wired at the end
 
   // ------------------------------------------------------------ top bar
   $('#gear').onclick = () => { sfx.tap(); openSettings(); };
@@ -93,6 +97,7 @@ export function createUI(S, A) {
     if (id === 'ranks') A.loadBoard();
     if (id === 'galaxy') { GX.markSeen(); GX.refresh().then(() => render(true)); }
     if (id === 'prestige') PR.loadMaker();
+    if (id === 'reports') RP.load().then(() => { if (S.ui.tab === 'reports') render(true); });
   }
   function renderTabs() {
     const vis = tabsVisible();
@@ -242,7 +247,7 @@ export function createUI(S, A) {
         <div class="sh-s"><span>${fmt(r ? r.cap : 0)} cargo</span><span data-shipstate="${s.id}">${esc(stateText(s, now, S.I))}</span></div>`;
       if (has(u, 'routes')) {
         const val = s.policy === 'fixed' ? 'fixed:' + s.destId : s.policy;
-        h += `<label class="route">Route <select data-route="${s.id}"><option value="best" ${val === 'best' ? 'selected' : ''}>Best coin/min</option><option value="nearest" ${val === 'nearest' ? 'selected' : ''}>Nearest buyer</option>${buyers.map((b) => `<option value="fixed:${esc(b.id)}" ${val === 'fixed:' + b.id ? 'selected' : ''}>Always ${esc(b.name)}</option>`).join('')}</select></label>`;
+        h += `<label class="route">Route <select data-route="${s.id}"><option value="best" ${val === 'best' ? 'selected' : ''}>Best coin/min</option><option value="nearest" ${val === 'nearest' ? 'selected' : ''}>Nearest buyer</option>${c.refinery?.orbital ? `<option value="refinery" ${val === 'refinery' ? 'selected' : ''}>Orbital refinery</option>` : ''}${buyers.map((b) => `<option value="fixed:${esc(b.id)}" ${val === 'fixed:' + b.id ? 'selected' : ''}>Always ${esc(b.name)}</option>`).join('')}</select></label>`;
       }
       if (has(u, 'ships')) h += row({ type: 'upgradeShip', shipId: s.id }, 'Bigger hold', '', { btn: 'Upgrade' });
       h += '</div>';
@@ -340,26 +345,32 @@ export function createUI(S, A) {
     const base = [S.ui.tab, u.panels.join(','), u.licenses.join(','), S.ui.bulk];
     if (S.ui.tab === 'mine') base.push(c.miners, c.idle, c.drill, c.shafts.map((s, i) => [s.id, s.name, s.ore, s.up.cart, s.up.bunk, s.miners, Math.floor((s.face || 0) * 2), S.rates.shafts[i]?.blocked ? 'b' : ''].join(':')).join(';'), S.bneck ? S.bneck.message + (S.bneck.suggestion?.canAfford ? 1 : 0) : '', Math.floor(S.rates.minePerMin * 10), S.unl.next.panel ? Math.floor(20 * S.unl.next.panel.have / (S.unl.next.panel.at || 1)) + ':' + Math.ceil((S.unl.next.panel.waitH || 0) * 6) : '');
     if (S.ui.tab === 'surface') base.push(c.lift, c.conveyor, c.yardLvl, c.pads, Math.round(S.rates.minePerMin), Math.round(S.rates.yardLoss * 100));
-    if (S.ui.tab === 'fleet') base.push(c.ships.map((s) => [s.id, s.name, s.lvl, s.policy, s.destId, s.state].join(':')).join(';'), S.unl.day, Math.floor(Math.log10(1 + c.earned) * 4));
+    if (S.ui.tab === 'fleet') base.push(c.refinery?.orbital ? 'orb' : '', c.ships.map((s) => [s.id, s.name, s.lvl, s.policy, s.destId, s.state].join(':')).join(';'), S.unl.day, Math.floor(Math.log10(1 + c.earned) * 4));
     if (S.ui.tab === 'market') base.push(Math.floor(S.now() / 15000), S.ui.mktCls, c.shafts.length);
     if (S.ui.tab === 'safety') base.push(c.shafts.map((s) => [s.id, s.name, s.up.lights || 0, s.up.supports || 0].join(':')).join(';'), JSON.stringify(c.safety || {}), Math.round(S.rates.hazards.perHour * 20), Math.floor(S.now() / 10000));
     if (S.ui.tab === 'galaxy') base.push(GX.key());
     if (S.ui.tab === 'prestige') base.push(PR.key());
+    if (S.ui.tab === 'refinery') base.push(RF.key());
+    if (S.ui.tab === 'reports') base.push(RP.key());
     if (S.ui.tab === 'ranks') base.push([...S.board.values()].map((b) => b.id + Math.round(b.coin)).join(','), Math.floor(S.now() / 5000), S.boardFull ? 1 : 0);
     return base.join('|');
   }
   function render(force) {
     renderTabs();
     if (S.ui.editing) return refreshRows();
+    if (S.ui.tab === 'refinery' && RF.busy()) { refreshRows(); RF.live(); return; }
     const key = structKey();
     if (force || key !== lastKey) {
       lastKey = key;
       const body = $('#tabbody');
       const st = body.scrollTop;
-      body.innerHTML = { mine: panelMine, surface: panelSurface, fleet: panelFleet, market: panelMarket, ranks: panelRanks, safety: panelSafety, galaxy: () => GX.panel(), prestige: () => PR.panel() }[S.ui.tab]();
+      body.innerHTML = { mine: panelMine, surface: panelSurface, fleet: panelFleet, market: panelMarket, ranks: panelRanks, safety: panelSafety, galaxy: () => GX.panel(), prestige: () => PR.panel(), refinery: () => RF.panel(), reports: () => RP.panel() }[S.ui.tab]();
       body.scrollTop = st;
+      if (S.ui.tab === 'reports') RP.mount();
     }
     refreshRows();
+    if (S.ui.tab === 'refinery') RF.live();
+    if (S.ui.tab === 'reports') RP.live();
     if (S.ui.tab === 'fleet') for (const el of $$('[data-shipstate]')) { const s = S.colony.ships.find((x) => x.id === el.dataset.shipstate); if (s) el.textContent = stateText(s, S.now(), S.I); }
     if (card) renderCard();
   }
@@ -451,6 +462,7 @@ export function createUI(S, A) {
       if (r && r.blocked) out.push({ lvl: 'warn', text: `${s.name}: ${r.reason}.`, shaft: s.id });
       else if (r && !r.ok) out.push({ lvl: 'warn', text: `${s.name}: ${r.reason}.`, shaft: s.id });
     });
+    for (const [site, x] of Object.entries(S.rates.refinery || {})) if (x.full) out.push({ lvl: 'bad', text: `Your ${site === 'planet' ? 'on-planet' : 'orbital'} refinery's storage is full. Lower an ask or add storage.` });
     return out;
   }
 
@@ -577,6 +589,8 @@ export function createUI(S, A) {
 
   PR = createPrestige(S, A, { row, bulkBar, sheet, render: (f) => render(f) });
   GX = createGalaxy(S);
+  RF = createRefinery(S, A, { row, bulkBar });
+  RP = createReports(S);
   A.galaxy = GX;
   return {
     topbar, render, refreshRows, coach, slow, ticker, openCard, closeCard, awaySheet, setTab, sheet, row, bulkBar, galaxy: GX, prestige: PR,

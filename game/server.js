@@ -182,6 +182,7 @@ export async function startServer(opts = {}) {
   }));
   app.get('/api/v2/board', need(async (req, res) => res.json(await v2.board())));
   app.get('/api/v2/bulletin', need(async (req, res) => res.json(await v2.bulletin())));
+  app.get('/api/v2/history', need(async (req, res, me) => res.json(await v2.history(me))));
   app.post('/api/v2/maker', need(async (req, res, me) => res.json(await v2.maker(me, req.body))));
   app.post('/api/v2/species', need(async (req, res, me) => res.json(await v2.species(me, req.body))));
   app.post('/api/v2/admin/end-month', need(async (req, res, me) => {

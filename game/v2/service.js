@@ -6,6 +6,7 @@ import * as E from '../shared/engine/index.js';
 import { improvisePlanet, planetPrompt, planetFromAI, planetSummary } from '../shared/planet/index.js';
 import { createMaker } from './maker.js';
 import { createEvents } from './events.js';
+import { generateParties, partiesPrompt, applyPartyNames } from '../shared/market/parties.js';
 
 // Species library (shared/species) is optional until the client ships it.
 let speciesLib = null;
@@ -46,6 +47,7 @@ export function createV2({ store, ai, currentModel, broadcast, now: clock = () =
     const month = monthKey(t);
     const planet = await buildPlanet(month + ':' + crypto.randomBytes(4).toString('hex'), request);
     const world = { v: 2, month, planet, market: {}, startedAt, endsAt, events: [], changes: [], created: t };
+    world.parties = await buildParties(world);
     await saveWorld(world);
     await addFeed(`The Maker Guild opened ${planet.name} for extraction. ${planet.tagline || ''}`.trim(), 'world', null, t);
     return world;
@@ -57,12 +59,50 @@ export function createV2({ store, ai, currentModel, broadcast, now: clock = () =
     broadcast('world2', 'current', world);
   }
 
+  // About 24 buyer parties for refined goods. Numbers are seeded; the AI only names them.
+  async function buildParties(world) {
+    let parties = generateParties(world.month + ':' + world.planet.id, world.planet);
+    const model = ai && await currentModel();
+    if (model) {
+      try { parties = applyPartyNames(parties, await ai.json(model, partiesPrompt(world.planet, parties), 'quick')); }
+      catch (e) { console.error('Party naming AI failed:', e.message); }
+    }
+    return parties;
+  }
+
   async function getWorld() {
     if (worldCache) return worldCache;
     let w = await store.getDoc('world2', 'current');
     if (!w || !w.planet) w = await newWorld(clock());
+    else if (!Array.isArray(w.parties) || !w.parties.length) { w.parties = await buildParties(w); await saveWorld(w); }
     worldCache = w;
     return w;
+  }
+
+  // Hourly snapshots for charts: each colony's coin, coin/min and rank; each ore's price index.
+  async function snapshotHistory(world, t) {
+    const last = await store.getDoc('hist2meta', world.month);
+    if (last && t - last.t < 3600_000) return;
+    const board = (await store.listColl('board2')).map(d => d.data).filter(b => b.month === world.month).sort((a, b) => b.coin - a.coin);
+    for (let i = 0; i < board.length; i++) {
+      const b = board[i];
+      const h = (await store.getDoc('hist2', b.id)) || { month: world.month, points: [] };
+      if (h.month !== world.month) { h.month = world.month; h.points = []; }
+      h.points.push([t, Math.round(b.coin), Math.round(b.coinPerMin), i + 1]);
+      if (h.points.length > 744) h.points = h.points.slice(-744);
+      await store.setDoc('hist2', b.id, h);
+    }
+    const ph = (await store.getDoc('phist2', 'current')) || { month: world.month, prices: {} };
+    if (ph.month !== world.month) { ph.month = world.month; ph.prices = {}; }
+    const ew = engineWorld(world);
+    for (const o of world.planet.ores) {
+      let idx = 1;
+      try { idx = E.marketPrice(ew, o.id, (world.planet.buyers || [])[0]?.id, t) / Math.max(1e-9, E.marketPrice({ ...ew, market: {}, changes: [] }, o.id, (world.planet.buyers || [])[0]?.id, t)); } catch {}
+      (ph.prices[o.id] = ph.prices[o.id] || []).push([t, Math.round(idx * 1000) / 1000]);
+      if (ph.prices[o.id].length > 744) ph.prices[o.id] = ph.prices[o.id].slice(-744);
+    }
+    await store.setDoc('phist2', 'current', ph);
+    await store.setDoc('hist2meta', world.month, { t });
   }
 
   const engineWorld = w => ({ ...w, planet: enginePlanet(w.planet) });
@@ -77,7 +117,7 @@ export function createV2({ store, ai, currentModel, broadcast, now: clock = () =
 
   async function loadColony(uid, world) {
     const c = await store.getDoc('col2', uid);
-    if (!c || c.v !== E.ENGINE_VERSION || c.planetId !== world.planet.id) return null;
+    if (!c || !(c.v >= 3 && c.v <= E.ENGINE_VERSION) || c.planetId !== world.planet.id) return null;
     return c;
   }
 
@@ -224,13 +264,24 @@ export function createV2({ store, ai, currentModel, broadcast, now: clock = () =
       return { month, allTime, hall };
     }),
 
+    history: (me) => queue(async () => {
+      const world = await getWorld();
+      const mine = await store.getDoc('hist2', me.id);
+      const ph = await store.getDoc('phist2', 'current');
+      const board = (await store.listColl('board2')).map(d => d.data).filter(b => b.month === world.month).sort((a, b) => b.coin - a.coin).slice(0, 10);
+      const series = [];
+      for (const b of board) { const h = await store.getDoc('hist2', b.id); if (h && h.month === world.month) series.push({ id: b.id, name: b.player || b.name, color: b.species && b.species.color, points: h.points.map(p => [p[0], p[1]]) }); }
+      return { me: mine && mine.month === world.month ? mine.points : [], prices: ph && ph.month === world.month ? ph.prices : {}, board: series };
+    }),
+
     // Keep the leaderboard and market fresh even when nobody is clicking.
     sweep: () => queue(async () => {
       const t = clock();
       const world = await getWorld();
+      await snapshotHistory(world, t).catch(e => console.error('history', e));
       for (const d of await store.listColl('col2')) {
         const c = d.data;
-        if (c.v !== E.ENGINE_VERSION || c.planetId !== world.planet.id) continue;
+        if (!(c.v >= 3 && c.v <= E.ENGINE_VERSION) || c.planetId !== world.planet.id) continue;
         if (t - (c.t || 0) < 55_000) continue;
         await settle(c, world, t);
       }
