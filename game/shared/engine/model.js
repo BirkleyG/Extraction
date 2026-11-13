@@ -27,7 +27,8 @@ export const spectacleOf = (c, runEarned) => Math.pow(Math.max(0, num(runEarned,
 
 // Hazards ---------------------------------------------------------------
 // Per-hour rates. Each shaft: cave (supports), mad (lights). Colony: gas, flood, fire, quake.
-const cut = (lvl) => Math.pow(T.hz.cut, Math.max(0, num(lvl, 0)));
+const CUT = Array.from({ length: 64 }, (_, i) => Math.pow(T.hz.cut, i));
+const cut = (lvl) => CUT[Math.min(63, Math.max(0, lvl | 0))];
 export const depthOf = (c) => c.shafts.reduce((a, s) => a + s.idx, 0);
 export function hazardRates(c, t) {
   const calm = num(t, c.t) < num(c.born, 0) + T.hz.calmMs;

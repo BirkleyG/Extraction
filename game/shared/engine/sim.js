@@ -72,7 +72,9 @@ export function advance(colony, world, now) {
   const mineK = evoMult(c, 'mine'), sellK = evoMult(c, 'sell');
   let hzCount = 0, hzLost = 0;
 
+  let hr = null, hrCalm = null;
   const recompute = () => {
+    hr = null;
     assignMiners(c, world);
     base = c.shafts.map((s) => (shaftStatus(c, I, s).ok ? s.miners * perMiner(s.up.cart, s.idx) * mineK / 60000 : 0)); // ore per ms
     oreOf = c.shafts.map((s) => I.idx[s.ore]);
@@ -242,8 +244,8 @@ export function advance(colony, world, now) {
     ratesAt(t);
     let te = Math.min(now, (Math.floor(t / T.gridMs) + 1) * T.gridMs);
     // exact hazard events, halts ending, calm period ending, world changes starting/ending
-    const hr = hazardRates(c, t);
     const calmEnd = num(c.born, 0) + T.hz.calmMs;
+    if (!hr || hrCalm !== (t < calmEnd)) { hr = hazardRates(c, t); hrCalm = t < calmEnd; }
     if (calmEnd > t && calmEnd < te) te = calmEnd;
     c.shafts.forEach((s, k) => {
       const h = num(s.haltUntil, 0);
