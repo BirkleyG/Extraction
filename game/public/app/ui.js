@@ -2,8 +2,10 @@
  * coach bubble, alerts, settings, ticker. Panels are rebuilt only when their structure changes; costs,
  * effects and affordability are refreshed in place every tick so buttons never vanish under a finger. */
 import { quote, destinations, marketTable, TUNING, PANELS } from '/shared/engine/index.js';
-import { $, $$, esc, fmt, dur, secs, ago, clamp, oreIcon, TIER_COL, DAY, store } from './util.js';
-import { prefs, setPref, sfx, bump, popAt, Ticker } from './juice.js';
+import { $, $$, esc, fmt, dur, secs, ago, clamp, oreIcon, TIER_COL, DAY, store, speciesIcon } from './util.js';
+import { prefs, setPref, sfx, bump, popAt, Ticker, banner } from './juice.js';
+import { createPrestige } from './prestige.js';
+import { createGalaxy } from './galaxy.js';
 import { api, net, signOut, fillModels } from './net.js';
 
 const TABS = [
@@ -11,11 +13,18 @@ const TABS = [
   { id: 'surface', label: 'Surface', show: (u) => has(u, 'lift', 'conveyor', 'yard', 'pads') },
   { id: 'fleet', label: 'Fleet', show: (u) => has(u, 'ships', 'fleet', 'routes') },
   { id: 'market', label: 'Market', show: (u) => has(u, 'routes', 'market') },
+  { id: 'safety', label: 'Safety', show: (u) => has(u, 'safety') },
+  { id: 'galaxy', label: 'Galaxy', show: (u, c, S) => has(u, 'prestige') || (S.bulletin && S.bulletin.changes.length > 0) },
+  { id: 'prestige', label: 'Prestige', show: (u) => has(u, 'prestige') },
   { id: 'ranks', label: 'Ranks', show: (u, c) => c.stats.sales > 0 },
 ];
+const BELL_MS = 48 * 3600_000;
+const hms = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)); return `${String(Math.floor(s / 3600)).padStart(2, '0')}:${String(Math.floor(s / 60) % 60).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; };
+const HZ_LABEL = { gas: 'Toxic gas', flood: 'Floods', fire: 'Yard fires', quake: 'Earthquakes' };
+const SAFETY_ROWS = [['ventilation', 'Ventilation', 'gas', 'Clears toxic gas before it reaches the crews'], ['pumps', 'Pumps', 'flood', 'Keeps flooded tunnels from drowning shifts'], ['firebreaks', 'Firebreaks', 'fire', 'Stops yard fires from burning stockpiled ore']];
 const has = (u, ...p) => p.some((x) => u.panels.includes(x));
 const BULKS = [[1, '1x'], [10, '10x'], [100, '100x'], ['max', 'Max']];
-const BULKY = new Set(['hire', 'upgradeShaft', 'upgradeLift', 'upgradeConveyor', 'upgradeYard', 'buyPad', 'upgradeShip']);
+const BULKY = new Set(['hire', 'upgradeShaft', 'upgradeLift', 'upgradeConveyor', 'upgradeYard', 'buyPad', 'upgradeShip', 'evolve', 'upgradeSafety']);
 const SHIP_DESC = { hauler: 'All-rounder', cruiser: 'Small and fast', freighter: 'Slow and huge' };
 const stateText = (s, now, I) => {
   const dest = I.buyer(s.dest)?.name || 'a buyer';
@@ -29,11 +38,14 @@ export function createUI(S, A) {
   const coinT = new Ticker();
   let lastKey = '', lastTabsKey = '', seenTabs = new Set(store('msc2_seenTabs') || ['mine']);
   let card = null; // { kind, id }
+  let PR = null, GX = null; // prestige + galaxy, wired at the end
 
   // ------------------------------------------------------------ top bar
   $('#gear').onclick = () => { sfx.tap(); openSettings(); };
   $('#alertsBtn').onclick = () => { sfx.tap(); openCard({ kind: 'alerts' }); };
   $('#rankBtn').onclick = () => { if (tabsVisible().some((t) => t.id === 'ranks')) setTab('ranks'); };
+  $('#galaxyBtn').onclick = () => { sfx.tap(); setTab('galaxy'); };
+  $('#spStat').onclick = () => { if (tabsVisible().some((t) => t.id === 'prestige')) { sfx.tap(); setTab('prestige'); } };
   $('#zoomIn').onclick = () => A.mine.zoom(1);
   $('#zoomOut').onclick = () => A.mine.zoom(-1);
   $('#zoomHome').onclick = () => A.mine.home();
@@ -51,6 +63,16 @@ export function createUI(S, A) {
     const i = board.findIndex((b) => b.id === S.me.id);
     $('#rank').textContent = i >= 0 ? `#${i + 1}` : '–';
     $('#rankOf').textContent = `of ${board.length || 1}`;
+    const sp = $('#spStat');
+    if ((c.sp || 0) > 0 || (c.nukes || 0) > 0) { sp.hidden = false; $('#sp').textContent = fmt(c.sp || 0); } else sp.hidden = true;
+    // closing bell: the final 48 hours
+    const left = w.endsAt - now, bell = $('#bell');
+    if (left > 0 && left <= BELL_MS) {
+      bell.hidden = false;
+      bell.innerHTML = `<small>Closing bell</small><b>${hms(left)}</b>`;
+      const k = `msc2_bell_${w.month}`;
+      if (!store(k)) { store(k, 1); banner('The closing bell', 'Final 48 hours. The richest colony at the bell enters the Hall of Fame.', 'bell'); sfx.bell && sfx.bell(); }
+    } else bell.hidden = true;
   }
   function rankList() {
     const rows = [...S.board.values()].filter((b) => b.month === S.world.month).map((b) => (b.id === S.me.id ? { ...b, coin: S.colony.coin, coinPerMin: S.rates.coinPerMin } : b));
@@ -59,12 +81,14 @@ export function createUI(S, A) {
   }
 
   // ------------------------------------------------------------ tabs
-  function tabsVisible() { return TABS.filter((t) => t.show(S.unl, S.colony)); }
+  function tabsVisible() { return TABS.filter((t) => t.show(S.unl, S.colony, S)); }
   function setTab(id) {
     S.ui.tab = id; seenTabs.add(id); store('msc2_seenTabs', [...seenTabs]);
     lastKey = ''; render(true);
     $('#tabbody').scrollTop = 0;
     if (id === 'ranks') A.loadBoard();
+    if (id === 'galaxy') { GX.markSeen(); GX.refresh().then(() => render(true)); }
+    if (id === 'prestige') PR.loadMaker();
   }
   function renderTabs() {
     const vis = tabsVisible();
@@ -109,11 +133,13 @@ export function createUI(S, A) {
         continue;
       }
       const afford = q.canAfford;
+      const isSp = q.currency === 'sp', have = isSp ? (c.sp || 0) : c.coin;
       btn.disabled = !afford;
-      cEl.textContent = (el.dataset.bulk && q.n > 1 ? `×${q.n} ` : '') + fmt(q.cost);
+      btn.classList.toggle('spc', isSp);
+      cEl.textContent = (el.dataset.bulk && q.n > 1 ? `×${q.n} ` : '') + fmt(q.cost) + (isSp ? ' SP' : '');
       eEl.className = 'e';
-      eEl.textContent = afford ? q.effect : `${q.effect} · need ${fmt(q.cost - c.coin)} more`;
-      btn.style.setProperty('--p', afford ? 1 : clamp(c.coin / Math.max(1e-9, q.cost), 0, 1).toFixed(3));
+      eEl.textContent = afford ? q.effect : `${q.effect} · need ${fmt(q.cost - have)} more${isSp ? ' SP' : ''}`;
+      btn.style.setProperty('--p', afford ? 1 : clamp(have / Math.max(1e-9, q.cost), 0, 1).toFixed(3));
       const meh = afford && cmd.type === 'hire' && /no free bunk|bunks? free/.test(q.effect);
       btn.classList.toggle('ready', afford && !meh);
       btn.classList.toggle('meh', meh);
@@ -250,7 +276,7 @@ export function createUI(S, A) {
     const board = rankList();
     let h = '<h3>This month</h3><div class="tablewrap"><table><tr><th>#</th><th>Colony</th><th class="n">Coin</th><th class="n">/min</th></tr>';
     board.forEach((b, i) => {
-      h += `<tr class="${b.id === S.me.id ? 'me' : ''}"><td>${i + 1}</td><td><i class="sw" style="background:${esc(b.species?.color || '#888')}"></i><b>${esc(b.name)}</b><br><small>${esc(b.player || '')}${b.species?.name ? ' · ' + esc(b.species.name) : ''}</small></td><td class="n gold">${fmt(b.coin)}${b.grant ? `<br><small class="muted" title="Late joiners get a catch-up grant">started with a ${fmt(b.grant)} grant</small>` : ''}</td><td class="n">${fmt(b.coinPerMin)}</td></tr>`;
+      h += `<tr class="${b.id === S.me.id ? 'me' : ''}"><td>${i + 1}</td><td class="who">${speciesIcon(b.species, 28)}<b>${esc(b.name)}</b><br><small>${esc(b.player || '')}${b.species?.name ? ' · ' + esc(b.species.name) : ''}</small></td><td class="n gold">${fmt(b.coin)}${b.grant ? `<br><small class="muted" title="Late joiners get a catch-up grant">started with a ${fmt(b.grant)} grant</small>` : ''}</td><td class="n">${fmt(b.coinPerMin)}</td></tr>`;
     });
     h += '</table></div>';
     const B = S.boardFull;
@@ -260,6 +286,32 @@ export function createUI(S, A) {
       h += '<h3>Hall of Fame</h3>';
       h += B.hall.length ? B.hall.map((m) => `<div class="hall"><b>${esc(m.month)}</b> · ${esc(m.planet)}<br>${m.winnerName ? `Won by <b>${esc(m.winnerName)}</b> (${esc(m.colony || '')}) with <span class="gold">${fmt(m.coin)}</span> coin` : 'No winner'} · ${m.players} players</div>`).join('') : '<p class="lede">Empty, for now.</p>';
     }
+    return h;
+  }
+  function panelSafety() {
+    const c = S.colony, R = S.rates, Hz = R.hazards;
+    let h = `<div class="hzsum ${Hz.perHour > 0.5 ? 'hot' : ''}"><span class="skull" aria-hidden="true"></span><div><b>${Hz.perHour.toFixed(Hz.perHour < 10 ? 1 : 0)} mishaps/hour</b><br><small>${Hz.loss > 0.001 ? `costing about <span class="bad">${(Hz.loss * 100).toFixed(1)}%</span> of output (${fmt(Hz.lossPerMin)} coin/min)` : 'Your crews are safe for now.'}</small></div></div>`;
+    h += '<p class="lede">Deeper shafts are more dangerous. Lights keep miners sane in the dark; supports stop cave-ins. Halted shafts dig nothing until they are cleared.</p>';
+    h += bulkBar();
+    h += '<h3>Shafts</h3>';
+    let any = false;
+    c.shafts.forEach((s, i) => {
+      if (s.idx === 0) return;
+      any = true;
+      const r = R.shafts[i] || {};
+      const risk = r.risk || 0, halted = s.haltUntil && s.haltUntil > S.now();
+      h += `<div class="shaft safety"><div class="sh-h"><b>${esc(s.name)}</b> <small>depth ${s.idx + 1}</small> <span class="pill ${risk > 0.3 ? 'bad' : risk > 0.08 ? 'warn' : 'ok'}">${risk.toFixed(2)} mishaps/h</span>${halted ? ` <span class="pill bad">halted ${dur(s.haltUntil - S.now())}</span>` : ''}</div>`;
+      h += row({ type: 'upgradeShaft', shaftId: s.id, kind: 'lights' }, `Lights <span class="lvl">Lv ${s.up.lights || 0}</span>`, 'Prevents miner insanity', { btn: 'Install' });
+      h += row({ type: 'upgradeShaft', shaftId: s.id, kind: 'supports' }, `Supports <span class="lvl">Lv ${s.up.supports || 0}</span>`, 'Prevents cave-ins', { btn: 'Brace' });
+      h += '</div>';
+    });
+    if (!any) h += '<p class="lede">Your home shaft is safe. Danger starts below it.</p>';
+    h += '<h3>Colony defenses</h3>';
+    for (const [kind, label, hz, desc] of SAFETY_ROWS) {
+      const rate = Hz.colony?.[hz] || 0;
+      h += row({ type: 'upgradeSafety', kind }, `${label} <span class="lvl">Lv ${c.safety?.[kind] || 0}</span>`, `${desc} · ${HZ_LABEL[hz]}: ${rate.toFixed(2)}/h`, { btn: 'Build' });
+    }
+    if (Hz.colony?.quake) h += `<p class="lede small">Earthquakes: ${Hz.colony.quake.toFixed(2)}/h. Supports in every shaft soften them.</p>`;
     return h;
   }
   function nextUnlock() {
@@ -278,6 +330,9 @@ export function createUI(S, A) {
     if (S.ui.tab === 'surface') base.push(c.lift, c.conveyor, c.yardLvl, c.pads, Math.round(S.rates.minePerMin), Math.round(S.rates.yardLoss * 100));
     if (S.ui.tab === 'fleet') base.push(c.ships.map((s) => [s.id, s.name, s.lvl, s.policy, s.destId, s.state].join(':')).join(';'), S.unl.day, Math.floor(Math.log10(1 + c.earned) * 4));
     if (S.ui.tab === 'market') base.push(Math.floor(S.now() / 15000), S.ui.mktCls, c.shafts.length);
+    if (S.ui.tab === 'safety') base.push(c.shafts.map((s) => [s.id, s.name, s.up.lights || 0, s.up.supports || 0].join(':')).join(';'), JSON.stringify(c.safety || {}), Math.round(S.rates.hazards.perHour * 20), Math.floor(S.now() / 10000));
+    if (S.ui.tab === 'galaxy') base.push(GX.key());
+    if (S.ui.tab === 'prestige') base.push(PR.key());
     if (S.ui.tab === 'ranks') base.push([...S.board.values()].map((b) => b.id + Math.round(b.coin)).join(','), Math.floor(S.now() / 5000), S.boardFull ? 1 : 0);
     return base.join('|');
   }
@@ -289,7 +344,7 @@ export function createUI(S, A) {
       lastKey = key;
       const body = $('#tabbody');
       const st = body.scrollTop;
-      body.innerHTML = { mine: panelMine, surface: panelSurface, fleet: panelFleet, market: panelMarket, ranks: panelRanks }[S.ui.tab]();
+      body.innerHTML = { mine: panelMine, surface: panelSurface, fleet: panelFleet, market: panelMarket, ranks: panelRanks, safety: panelSafety, galaxy: () => GX.panel(), prestige: () => PR.panel() }[S.ui.tab]();
       body.scrollTop = st;
     }
     refreshRows();
@@ -510,8 +565,11 @@ export function createUI(S, A) {
     ticker();
   }
 
+  PR = createPrestige(S, A, { row, bulkBar, sheet, render: (f) => render(f) });
+  GX = createGalaxy(S);
+  A.galaxy = GX;
   return {
-    topbar, render, refreshRows, coach, slow, ticker, openCard, closeCard, awaySheet, setTab, sheet,
+    topbar, render, refreshRows, coach, slow, ticker, openCard, closeCard, awaySheet, setTab, sheet, row, bulkBar, galaxy: GX, prestige: PR,
     coinEl: () => $('#coin'),
     cardOpen: () => card,
   };

@@ -2,7 +2,7 @@
 import * as E from '/shared/engine/index.js';
 import { $, esc, fmt, engineWorld, speciesLook, store, DAY } from './util.js';
 import { net, api, ensureSignedIn, live } from './net.js';
-import { prefs, applyPrefs, sfx, toast, banner, popAt, bump } from './juice.js';
+import { prefs, applyPrefs, sfx, toast, banner, popAt, bump, shake } from './juice.js';
 import { createMine, padX } from './mine.js';
 import { createUI } from './ui.js';
 import { onboard } from './onboard.js';
@@ -49,12 +49,13 @@ async function loadState() {
 
 // ------------------------------------------------------------------ events
 const seen = new Map();
-const WIN = { sale: 2500, launch: 8000, vein20: 6e5, vein5: 6e5, veinOut: 6e5, unlock: Infinity, license: Infinity, salesSummary: 5000 };
+const WIN = { sale: 2500, launch: 8000, vein20: 6e5, vein5: 6e5, veinOut: 6e5, unlock: Infinity, license: Infinity, salesSummary: 5000, hazard: 1, hazardSummary: 60_000 };
+const HZ_TITLE = { cavein: 'Cave-in', insanity: 'Madness in the dark', gas: 'Toxic gas', flood: 'Flood', fire: 'Fire', quake: 'Earthquake' };
 function handleEvents(evs) {
   for (const e of evs || []) {
     const win = WIN[e.type];
     if (win == null) continue;
-    const id = e.data?.shipId || e.data?.shaftId || e.data?.panel || e.data?.license || '';
+    const id = e.type === 'hazard' ? `${e.data?.kind}${e.data?.shaftId || ''}@${e.at}` : e.data?.shipId || e.data?.shaftId || e.data?.panel || e.data?.license || '';
     const k = e.type + '|' + id;
     const last = seen.get(k);
     if (last != null && Math.abs(e.at - last) < win) continue;
@@ -82,6 +83,17 @@ function react(e) {
     case 'veinOut': toast(esc(e.text), 'bad', 5000); sfx.warn(); break;
     case 'autoSpend': toast(esc(e.text), 'sale'); sfx.big && sfx.big(); break;
     case 'unlock': banner(E.PANELS.find((p) => p.id === e.data?.panel)?.label || e.text, PANEL_SUB[e.data?.panel] || ''); break;
+    case 'hazard': {
+      const k = e.data?.kind;
+      toast(`<span class="skull" aria-hidden="true"></span><b>${esc(HZ_TITLE[k] || 'Mishap')}</b> ${esc(e.text)}`, 'hazard', 6500);
+      sfx.hazard();
+      if (k === 'cavein' || k === 'quake') shake(document.querySelector('.stage'));
+      // hazards are private: they go to this player's ticker only
+      S.feed.set('hz' + e.at + k, { t: e.at, text: e.text, kind: 'hazard' });
+      ui.ticker(true);
+      break;
+    }
+    case 'hazardSummary': toast(`<span class="skull" aria-hidden="true"></span>${esc(e.text)}`, 'hazard', 6000); break;
     case 'license': banner(e.text.replace(/^The Guild grants you the /, ''), 'The Maker Guild grants you a new license', 'license'); break;
   }
 }
@@ -227,7 +239,7 @@ async function boot() {
       else ui.closeCard();
     },
   });
-  const A = { send, mine, reload: () => location.reload(), loadBoard };
+  const A = { send, mine, reload: () => location.reload(), loadBoard, flush: () => chain };
   A_send = send;
   ui = createUI(S, A);
   A.mine = mine;
@@ -244,12 +256,15 @@ async function boot() {
       if (!w) return;
       if (w.month !== S.world.month || w.planet.id !== S.world.planet.id) { toast('A new month begins. Reloading…', 'info'); setTimeout(() => location.reload(), 1500); return; }
       setWorld(w);
+      ui.galaxy.onWorld();
     },
     feed2: (m) => {
       if (m.op === 'init') { S.feed.clear(); for (const d of m.docs) S.feed.set(d.id, d.data); ui.ticker(true); } else { S.feed.set(m.id, m.data); ui.ticker(true); }
     },
   });
 
+  ui.galaxy.onWorld();
+  setInterval(() => ui.galaxy.refresh(), 60_000);
   setInterval(tick, 250);
   setInterval(slowTick, 2500);
   setInterval(resync, 30_000);

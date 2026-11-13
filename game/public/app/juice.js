@@ -52,7 +52,34 @@ export const sfx = {
   error: () => tone([196, 147], 0.09, 'sawtooth', 0.03),
   launch: () => noise(0.7, 200, 2400, 0.05),
   warn: () => tone([880, 660, 880], 0.07, 'triangle', 0.04),
+  hazard: () => { tone([220, 165, 110], 0.09, 'sawtooth', 0.035); noise(0.35, 900, 200, 0.04); },
+  boom: () => rumble(4.2),
+  maker: () => tone([55, 82, 110, 73], 0.32, 'triangle', 0.05),
+  bell: () => tone([1047, 784, 1047, 784], 0.18, 'triangle', 0.05),
 };
+
+// Bass rumble for the nuke: a falling sub-bass sine under low-passed noise.
+function rumble(dur = 4) {
+  const a = audio(); if (!a || a.state !== 'running') return;
+  const t0 = a.currentTime + 0.01;
+  const o = a.createOscillator(), og = a.createGain();
+  o.type = 'sine'; o.frequency.setValueAtTime(70, t0); o.frequency.exponentialRampToValueAtTime(28, t0 + dur);
+  og.gain.setValueAtTime(0, t0); og.gain.linearRampToValueAtTime(0.35, t0 + 0.05); og.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+  o.connect(og).connect(a.destination); o.start(t0); o.stop(t0 + dur + 0.1);
+  const n = Math.floor(a.sampleRate * dur), buf = a.createBuffer(1, n, a.sampleRate), d = buf.getChannelData(0);
+  for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 1.5);
+  const src = a.createBufferSource(), f = a.createBiquadFilter(), g = a.createGain();
+  src.buffer = buf; f.type = 'lowpass'; f.frequency.setValueAtTime(900, t0); f.frequency.exponentialRampToValueAtTime(80, t0 + dur);
+  g.gain.value = 0.22;
+  src.connect(f).connect(g).connect(a.destination); src.start(t0);
+}
+
+// Screen shake on an element (skipped in reduced motion).
+export function shake(el, cls = 'quake') {
+  if (!el || prefs.reduced) return;
+  el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls);
+  setTimeout(() => el.classList.remove(cls), 1200);
+}
 
 // ---------------------------------------------------------------- toasts
 export function toast(text, kind = 'info', ms = 3600) {
@@ -78,7 +105,8 @@ function nextBanner() {
   if (!b || !el) { bannerOn = false; return; }
   bannerOn = true;
   el.className = 'banner show ' + b.kind;
-  el.innerHTML = `<div class="bn-in"><small>${b.kind === 'license' ? 'Maker Guild' : 'Unlocked'}</small><b>${esc(b.title)}</b>${b.sub ? `<span>${esc(b.sub)}</span>` : ''}</div>`;
+  const kicker = { license: 'Maker Guild', galaxy: 'The Maker', bell: 'Maker Guild', nuke: 'Spectacle' }[b.kind] || 'Unlocked';
+  el.innerHTML = `<div class="bn-in"><small>${kicker}</small><b>${esc(b.title)}</b>${b.sub ? `<span>${esc(b.sub)}</span>` : ''}</div>`;
   if (!prefs.reduced) confetti(el);
   sfx.unlock();
   setTimeout(() => { el.className = 'banner'; setTimeout(nextBanner, 350); }, 2600);

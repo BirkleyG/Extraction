@@ -191,15 +191,17 @@ export function createV2({ store, ai, currentModel, broadcast, now: clock = () =
       const existing = await loadColony(me.id, world);
       if (existing) return { colony: existing, serverNow: t };
       const region = world.planet.regions.find(r => r.id === body.siteRegion) || world.planet.regions[0];
-      const sp = body.species || {};
-      const species = { name: String(sp.name || me.name + "'s kin").slice(0, 28), color: /^#[0-9a-f]{6}$/i.test(sp.color || '') ? sp.color : '#ff8a3d' };
+      const sp = (body.species && typeof body.species === 'object') ? body.species : {};
+      const lib = await species();
+      const look = lib ? lib.cleanSpecies({ ...sp, name: sp.name || me.name + "'s kin" })
+        : { name: String(sp.name || me.name + "'s kin").slice(0, 28), color: /^#[0-9a-f]{6}$/i.test(sp.color || '') ? sp.color : '#ff8a3d' };
       const colony = E.newColony({
-        id: me.id, uid: me.id, name: String(body.name || species.name + ' Mining Co.').slice(0, 28),
-        species, planet: engineWorld(world).planet, siteRegion: region.id, now: t, grant: E.catchUpGrant(engineWorld(world), t),
+        id: me.id, uid: me.id, name: String(body.name || look.name + ' Mining Co.').slice(0, 28),
+        species: look, planet: engineWorld(world).planet, siteRegion: region.id, now: t, grant: E.catchUpGrant(engineWorld(world), t),
       });
       await store.setDoc('col2', me.id, colony);
       const r = await settle(colony, world, t);
-      await addFeed(`${me.name} landed in ${region.name} as the ${species.name}.`, 'land', me.id, t);
+      await addFeed(`${me.name} landed in ${region.name} as the ${look.name}.`, 'land', me.id, t);
       return { colony: r.colony, serverNow: t };
     }),
 
