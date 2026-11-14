@@ -15,6 +15,10 @@ async function species() { if (speciesLib === null) speciesLib = await import('.
 // Server-only collections (never client-writable).
 export const SUB_COLLS = new Set(['board2', 'world2', 'feed2']);
 
+// Bump to restart the game for everyone on the next deploy: new planet, every colony starts fresh.
+// (No Hall of Fame entry is written for a restarted month.)
+export const WORLD_VERSION = 2;
+
 export function monthKey(t) { const d = new Date(t); return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0'); }
 function monthBounds(t) {
   const d = new Date(t);
@@ -46,7 +50,7 @@ export function createV2({ store, ai, currentModel, broadcast, now: clock = () =
     const { startedAt, endsAt } = monthBounds(t);
     const month = monthKey(t);
     const planet = await buildPlanet(month + ':' + crypto.randomBytes(4).toString('hex'), request);
-    const world = { v: 2, month, planet, market: {}, startedAt, endsAt, events: [], changes: [], created: t };
+    const world = { v: 2, wv: WORLD_VERSION, month, planet, market: {}, startedAt, endsAt, events: [], changes: [], created: t };
     world.parties = await buildParties(world);
     await saveWorld(world);
     await addFeed(`The Maker Guild opened ${planet.name} for extraction. ${planet.tagline || ''}`.trim(), 'world', null, t);
@@ -73,7 +77,7 @@ export function createV2({ store, ai, currentModel, broadcast, now: clock = () =
   async function getWorld() {
     if (worldCache) return worldCache;
     let w = await store.getDoc('world2', 'current');
-    if (!w || !w.planet) w = await newWorld(clock());
+    if (!w || !w.planet || (w.wv || 1) < WORLD_VERSION) w = await newWorld(clock());
     else if (!Array.isArray(w.parties) || !w.parties.length) { w.parties = await buildParties(w); await saveWorld(w); }
     worldCache = w;
     return w;

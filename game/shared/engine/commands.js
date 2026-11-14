@@ -3,9 +3,10 @@ import { T, geoSum, geoMax } from './tuning.js';
 import { info, clone, num, fmt, cleanName, hashSeed, rngNext, DAY_MS } from './util.js';
 import {
   liftRate, liftLvl, liftTrips, liftCapacity, liftBuckets, convRate, yardCap, perMiner, cartRate, gearMult, gearMilestone, shipCap, shipCap2, tripSecs, ensureFleet, emptyFleet, fleetLvl, FLEET_KINDS, holdAt, hold2At, loadMultAt, speedMultAt, fleetMilestone, nextFleetMilestone,
-  assignMiners, shaftStatus, grade, evoMult, evoLvl, spectacleOf, priceAt, shaftCost, bandOf, soilOf,
+  assignMiners, shaftStatus, grade, shaftRate, tunnelCap, evoMult, evoLvl, spectacleOf, priceAt, shaftCost, bandOf, soilOf,
 } from './model.js';
 import { advance, toArr, toMap } from './sim.js';
+import { rates as ratesOf } from './rates.js';
 import { licensesOpen, panelFor, syncUnlocks } from './unlocks.js';
 import { ensureHz, ensureShaftHz } from './hazards.js';
 import { syncTunnel, cuts, commonOre, defaultSite, prospectsOf } from './pockets.js';
@@ -412,6 +413,58 @@ function plan(c, world, cmd, now, quoting = false) {
         apply: (x) => { if (!list) x.name = name; else (cmd.target === 'shaft' ? x.shafts : x.ships).find((q) => q.id === cmd.id).name = name; },
       };
     }
+    // ---- hands-on play ----
+    case 'dig': { // tap the rock face: dig a couple of seconds of this shaft's output by hand
+      const s = c.shafts.find((x) => x.id === cmd.shaftId) || c.shafts[0];
+      if (!s) return { error: 'No such shaft' };
+      const w = c.digWin && now - c.digWin.start < 60_000 ? c.digWin : { start: now, n: 0 };
+      if (w.n >= T.dig.perMin) return { error: 'Your arms need a breather' };
+      const tot = Object.values(c.tunnel || {}).reduce((a, b) => a + b, 0);
+      const room = Math.max(0, tunnelCap(c) - tot);
+      if (room < 1) return { error: 'The tunnel is full: the lift needs to catch up' };
+      const amt = Math.min(room, Math.max(T.dig.min, shaftRate(c, s, 1) / 60 * T.dig.secs));
+      const ore = s.ore || commonOre(c, I).id;
+      return {
+        cost: 0, n: 1, k: 1, free: true, effect: `+${fmt(amt)} ${I.ores[I.idx[ore]]?.name || 'ore'}`, amount: amt, oreId: ore,
+        apply: (x) => {
+          x.digWin = { start: w.start, n: w.n + 1 };
+          x.tunnel = x.tunnel || {}; x.tunnelG = x.tunnelG || {};
+          x.tunnel[ore] = (x.tunnel[ore] || 0) + amt; x.tunnelG[ore] = (x.tunnelG[ore] || 0) + amt * grade(s.idx);
+          x.stats.digs = num(x.stats.digs) + 1;
+        },
+      };
+    }
+    case 'rush': { // the whole crew (and cart) of one shaft goes double speed for a minute
+      const s = c.shafts.find((x) => x.id === cmd.shaftId);
+      if (!s) return { error: 'No such shaft' };
+      if (num(s.rushReady) > now) return { error: `Rush ready in ${Math.ceil((s.rushReady - now) / 1000)}s` };
+      return {
+        cost: 0, n: 1, k: 1, free: true, effect: `${s.name}: RUSH! x${T.rush.mult} for ${T.rush.secs}s`,
+        apply: (x, ctx) => {
+          const y = x.shafts.find((q) => q.id === s.id);
+          y.rushUntil = now + T.rush.secs * 1000; y.rushReady = now + T.rush.cooldownMs;
+          ctx.events && ctx.events.push({ type: 'rush', text: `${s.name}: RUSH!`, at: now, data: { shaftId: s.id, until: y.rushUntil } });
+        },
+      };
+    }
+    case 'claimCrate': { // a Guild supply crate floats by: grab it while it's there
+      const cr = crateSync(c, now);
+      if (!(now >= cr.at && now <= cr.at + T.crate.windowMs)) return { error: 'No crate to grab right now' };
+      const r = rngNext(hashSeed(String(c.seed) + ':crate:' + cr.n) >>> 0)[0];
+      const cpm = Math.max(5, (ratesOf(c, world).coinPerMin || 0));
+      const kind = r < T.crate.jackpot ? 'jackpot' : r < T.crate.jackpot + T.crate.rushAll ? 'rush' : 'coin';
+      const coin = kind === 'jackpot' ? cpm * T.crate.jackpotMins : kind === 'coin' ? cpm * T.crate.coinMins : 0;
+      return {
+        cost: 0, n: 1, k: 1, free: true, effect: kind === 'rush' ? 'Supply crate: every shaft RUSHES!' : `Supply crate: +${fmt(coin)}`,
+        apply: (x, ctx) => {
+          if (coin > 0) { x.coin += coin; x.earned += coin; x.runEarned = num(x.runEarned) + coin; x.monthEarned = num(x.monthEarned) + coin; ensureLedger(x); ledgerIn(x, 'grant', coin); }
+          if (kind === 'rush') for (const y of x.shafts) y.rushUntil = now + T.rush.secs * 1000;
+          x.crate = rollCrate(x, cr.n + 1, now);
+          x.stats.crates = num(x.stats.crates) + 1;
+          ctx.events && ctx.events.push({ type: 'crate', text: kind === 'jackpot' ? `JACKPOT crate! +${fmt(coin)}` : kind === 'rush' ? 'Crate: every shaft RUSHES for a minute!' : `Supply crate: +${fmt(coin)}`, at: now, data: { kind, coin } });
+        },
+      };
+    }
     case 'tutorial': {
       const step = Math.max(0, Math.min(5, Math.floor(num(Number(cmd.step), 0))));
       return { cost: 0, n: 1, k: 1, free: true, effect: '', apply: (x) => { x.tutorial = Math.max(num(x.tutorial), step); } };
@@ -527,3 +580,15 @@ function nukeColony(c, world, spect, ctx = {}) {
 }
 
 export { clone };
+
+// ---- Guild supply crates: a deterministic schedule per colony; a missed crate just rolls the next one ----
+export function rollCrate(c, n, from) {
+  const r = rngNext(hashSeed(String(c.seed) + ':crateAt:' + n) >>> 0)[0];
+  return { n, at: from + T.crate.minMs + r * (T.crate.maxMs - T.crate.minMs) };
+}
+export function crateSync(c, now) {
+  let cr = c.crate && Number.isFinite(c.crate.at) ? c.crate : rollCrate(c, 0, num(c.born, now));
+  let guard = 0;
+  while (now > cr.at + T.crate.windowMs && guard++ < 10000) cr = rollCrate(c, cr.n + 1, cr.at + T.crate.windowMs);
+  return cr;
+}

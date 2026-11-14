@@ -1555,3 +1555,33 @@ test('migration: a v5 colony (per-ship levels, no fleet) loads, drops ship level
   assert.ok(r2.earned > r.earned && Number.isFinite(r2.coin));
   assertSane(r2, 'migrated');
 });
+
+test('hands-on: tapping digs ore, rush doubles a shaft for a minute, crates pay out on schedule', () => {
+  const w = newWorld();
+  let c = rich(fresh(0), w, 1e6);
+  const s0 = c.shafts[0];
+  const before = Object.values(c.tunnel || {}).reduce((a, b) => a + b, 0);
+  let r = E.applyCommand(c, w, { type: 'dig', shaftId: s0.id }, c.t);
+  assert.equal(r.error, undefined);
+  assert.ok(Object.values(r.colony.tunnel).reduce((a, b) => a + b, 0) > before, 'a tap adds ore to the tunnel');
+  // rush: x2 output for 60 s, then a cooldown
+  const base = E.advance(c, w, c.t + 60_000).colony.earned;
+  r = E.applyCommand(c, w, { type: 'rush', shaftId: s0.id }, c.t);
+  assert.equal(r.error, undefined);
+  assert.ok(r.events.some((e) => e.type === 'rush'));
+  assert.match(E.applyCommand(r.colony, w, { type: 'rush', shaftId: s0.id }, c.t + 1000).error, /Rush ready/);
+  // step-invariance across the rush ending
+  const one = E.advance(r.colony, w, c.t + 3 * 60_000).colony;
+  let many = r.colony; for (let t = c.t + 7_000; t <= c.t + 3 * 60_000; t += 7_000) many = E.advance(many, w, t).colony;
+  many = E.advance(many, w, c.t + 3 * 60_000).colony;
+  assert.ok(Math.abs(one.earned - many.earned) <= 0.005 * Math.max(1, one.earned) + 1e-6, `rush step invariance ${one.earned} vs ${many.earned}`);
+  // crates: none up before the scheduled time, claimable inside the window, then the next is scheduled
+  const cr = E.crateSync(c, c.t);
+  assert.ok(cr.at > c.t);
+  assert.match(E.applyCommand(c, w, { type: 'claimCrate' }, c.t).error, /No crate/);
+  const got = E.applyCommand(c, w, { type: 'claimCrate' }, cr.at + 1000);
+  assert.equal(got.error, undefined);
+  assert.ok(got.events.some((e) => e.type === 'crate'));
+  assert.ok(E.crateSync(got.colony, cr.at + 2000).at > cr.at + 2000, 'next crate scheduled');
+  assert.equal(E.tierOf('gear', 23).name, 'Jackhammer');
+});

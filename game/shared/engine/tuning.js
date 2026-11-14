@@ -43,6 +43,10 @@ export const T = {
     tiltRange: [0.25, 1.9],  // wide enough that the two dig directions really differ // a direction option multiplies each ore's richness by something in this range
   },
   danger: 5,                          // hazard danger doubles every 5 shafts
+  // Hands-on play: tap the rock face, rush a shaft, grab Guild supply crates.
+  dig: { secs: 2, min: 4, perMin: 90 },          // a tap digs 2 s of the shaft's output (at least 4 ore); 90 taps a minute max
+  rush: { mult: 2, secs: 60, cooldownMs: 8 * 60_000 }, // a shaft's crew and cart work twice as fast for a minute, every 8 minutes
+  crate: { minMs: 6 * 60_000, maxMs: 14 * 60_000, windowMs: 90_000, coinMins: 5, jackpotMins: 20, jackpot: 0.1, rushAll: 0.2 },
 
   // Lift, conveyor, yard, pads
   milestoneEvery: 40,                         // conveyors, ship cargo and lift speed/capacity double every 40 levels

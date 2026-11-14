@@ -51,6 +51,8 @@
  *     second hold) · hold2 (freighter, needs multi: second hold capacity). Milestones at T.fleetUp.milestones (x2 cargo/loading, x1.5 speed).
  *   setRoute {shipId, policy:'best'|'nearest'|'fixed'|'refinery', destId?}
  *   rename {target:'colony'|'shaft'|'ship', id, name} · tutorial {step} · autoSpend {keep?: 0..0.9}
+ *   Hands-on (free): dig {shaftId} (tap the face: 2 s of output, 90 taps/min max) · rush {shaftId} (x2 for 60 s, 8 min cooldown)
+ *   · claimCrate (grab the Guild supply crate while crateSync(colony, now) says it is up: coin, a jackpot, or every shaft rushes)
  *   Safety: upgradeShaft {shaftId, kind:'lights'|'supports', n} (not the first shaft) · upgradeSafety {kind:'ventilation'|'pumps'|'firebreaks', n}
  *   Prestige: nuke {confirm:'NUKE'} (runEarned >= TUNING.nukeMin) · evolve {kind:'mine'|'ship'|'sell'|'spectacle', n} (costs SP)
  *   Refinery (license + panel 'refinery'): buildRefinery {site:'planet'|'orbital'} · upgradeRefinery {site, kind:'throughput'|'yield'|'storage'|'docks', n}
@@ -129,6 +131,8 @@
 import { applyCommand as baseApply } from './commands.js';
 import { autoSpend } from './autospend.js';
 export { ENGINE_VERSION, newColony, quote, catchUpGrant, shaftOptions } from './commands.js';
+export { crateSync, rollCrate } from './commands.js';
+export { TIERS, tierOf, liftLevel, TIER_LEVELS } from './tiers.js';
 
 // autoSpend {keep?} buys the best-value moves in order (keep = fraction of coin to hold back).
 export function applyCommand(colony, world, cmd, now) {

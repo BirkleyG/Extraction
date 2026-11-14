@@ -105,12 +105,13 @@ export function advance(colony, world, now) {
     ledgerIn(c, key, coin);
   };
 
-  let hr = null, hrCalm = null;
+  let hr = null, hrCalm = null, nowT = c.t, rushSig = '';
+  const rushK = (s) => (Number(s.rushUntil) > nowT ? T.rush.mult : 1); // a rushed shaft works twice as fast
   const recompute = () => {
     hr = null;
     assignMiners(c, world);
     const tn = c.shafts.map((s) => tunnelAt(c, I, s));
-    base = c.shafts.map((s, k) => (shaftStatus(c, I, s).ok ? shaftRate(c, s, mineK) / 60000 * (tn[k].blocked ? T.pk.wall : tn[k].taper) : 0)); // ore per ms (the cart caps the crew; veins taper at the end)
+    base = c.shafts.map((s, k) => (shaftStatus(c, I, s).ok ? shaftRate(c, s, mineK * rushK(s)) / 60000 * (tn[k].blocked ? T.pk.wall : tn[k].taper) : 0)); // ore per ms (the cart caps the crew; veins taper at the end)
     oreOf = c.shafts.map((s) => I.idx[s.ore]);
     digs = tn.map((x) => !x.blocked);      // blocked faces don't move
     tgt = tn.map((x) => x.target);         // metres where the mined ore changes next
@@ -412,6 +413,9 @@ export function advance(colony, world, now) {
   let t = c.t;
   let guard = 0;
   while (t < now && guard++ < 5e6) {
+    nowT = t;
+    const rs = c.shafts.map((s) => (Number(s.rushUntil) > t ? 1 : 0)).join('');
+    if (rs !== rushSig) { rushSig = rs; recompute(); }
     process(t);
     ratesAt(t);
     let te = Math.min(now, (Math.floor(t / T.gridMs) + 1) * T.gridMs);
@@ -422,6 +426,8 @@ export function advance(colony, world, now) {
     c.shafts.forEach((s, k) => {
       const h = num(s.haltUntil, 0);
       if (h > t && h < te) te = h;
+      const ru = num(s.rushUntil, 0);
+      if (ru > t && ru < te) te = ru; // a rush ending changes the shaft's rate
       for (const kind of ['cave', 'mad']) {
         const l = hr.shafts[k][kind];
         if (l > 0) { const due = t + Math.max(1, s.hz[kind] / l * HOUR); if (due < te) te = due; }
