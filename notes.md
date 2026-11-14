@@ -1,6 +1,6 @@
 # Mineshaft Capital notes
 
-Current version: **0.5.00** (shown in the game under the logo, top left)
+Current version: **0.5.01** (shown in the game under the logo, top left)
 
 ## How versions work
 
@@ -11,6 +11,9 @@ Current version: **0.5.00** (shown in the game under the logo, top left)
 The bump command updates `game/version.json` (what the game displays) and adds an entry below. Every change that lands should come with a bump.
 
 ## Changelog
+
+### 0.5.01 (2026-11-14)
+- Retro pass: the classic pixel fonts are now bundled with the game so they always load (no more plain system-font fallback), small text is a touch bigger like the classic, and the planet map has a retro filter: chunky pixels, a small dithered palette, scanlines and pixel-font labels.
 
 ### 0.5.00 (2026-11-14)
 - Monumental shafts and a painted planet. Each shaft is its own business with its own miners, gear and cart; opening one is a big purchase where you pick between two dig directions. The lift has speed, capacity and bucket upgrades. Ships upgrade per class, carry one ore each (freighters can unlock a second hold) and pick cargo fleet-wide. The planet is a shaded-relief climate map with hidden ore patches; new players land at a fair random spot, and a Map tab shows colonies and ships in flight. Separate ore piles, belts to a distant shipyard, natural tunnels, and no more recommended buys. Colonies restart.
