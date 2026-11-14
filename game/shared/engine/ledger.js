@@ -33,7 +33,7 @@ export function spendCategory(cmd) {
     case 'upgradeGear': return 'drill';
     case 'upgradeLift': return 'lift';
     case 'upgradeConveyor': case 'upgradeYard': case 'buyPad': return 'surface';
-    case 'buyShip': case 'upgradeShip': return 'ships';
+    case 'buyShip': case 'upgradeClass': return 'ships';
     case 'buildRefinery': case 'upgradeRefinery': return 'refinery';
     default: return 'surface';
   }

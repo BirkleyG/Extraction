@@ -63,12 +63,24 @@ export const T = {
     // upk: upgrade price per unit of cargo (fast ships cost more per crate)
     hauler:    { cap: 40,  speed: 1,    cost: 400,    upk: 1,   label: 'Hauler' },
     cruiser:   { cap: 16,  speed: 2.2,  cost: 3_000,  upk: 1.8, label: 'Cruiser' },
-    freighter: { cap: 180, speed: 0.55, cost: 60_000, upk: 0.6, label: 'Freighter' },
+    freighter: { cap: 180, speed: 0.6,  cost: 25_000, upk: 0.6, label: 'Freighter' },
   },
-  shipFleetGrowth: 2.6,                 // each extra ship costs 2.6x
-  shipCapMult: 1.25, shipUpCost: 0.8, shipUpGrowth: 1.43, // upgrade base = 0.8 coin per crate x upk
-  shipJoinLevel: 0.8,                   // new ships arrive at 80% of your best ship's level
-  maxLoadSecs: 40,                      // a ship leaves this long after its first ore even if not full
+  shipFleetGrowth: 2.6,                 // each extra ship of a class costs 2.6x
+  // Class upgrades (Phase 3.5 rework): levels live in colony.fleet[cls] and every ship of the class uses them.
+  //   hold (all): cargo x mult per level · loading (hauler): load rate x mult per level · speed (cruiser): flight speed x mult per level
+  //   multi (freighter): one-time unlock of a second hold (40% of the main hold) · hold2 (freighter, needs multi): second hold x mult per level
+  // Costs: hold/hold2 base = cost x the class's cargo x upk (growth per level); loading/speed have their own base.
+  // Milestones (like gear and carts) multiply a stat at these levels: x2 for cargo and loading, x1.5 for speed.
+  fleetUp: {
+    hold:    { mult: 1.17, growth: 1.3, cost: 3, max: 300 },
+    loading: { mult: 1.12, growth: 1.45, cost: 160, max: 200 },
+    speed:   { mult: 1.03, growth: 1.5,  cost: 1_500, max: 120 },
+    hold2:   { mult: 1.17, growth: 1.3, cost: 3, max: 300, share: 0.4 },  // second hold = share x the main hold x mult^level
+    multi:   { cost: 40e12 },
+    milestones: [10, 25, 50, 100, 200, 300],
+    bonus: { hold: 2, hold2: 2, loading: 2, speed: 1.5 },
+  },
+  maxLoadSecs: 40,                      // a ship leaves this long after its first ore even if not full (a docked ship still empty re-picks its ore then)
   tripSecs: { near: 15, mid: 35, far: 70 },  // one way, speed 1
 
   // Ore values when the planet gives none

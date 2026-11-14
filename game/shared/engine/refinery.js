@@ -35,7 +35,7 @@ export function refCfg(R, oreId) {
   return { on: !(o && o.on === false), markup: clampMarkup(o?.markup ?? 1) };
 }
 export const refUnit = (I, o) => I.ores[o].value * T.ref.valueMult; // base value of one refined unit
-export const refTrip = (cls, c) => T.ref.tripSecs / (shipSpeed(cls) * (c ? evoMult(c, 'ship') : 1)); // one way, seconds
+export const refTrip = (cls, c) => T.ref.tripSecs / (shipSpeed(cls, c) * (c ? evoMult(c, 'ship') : 1)); // one way, seconds
 
 // ------------------------------------------------------------------ parties and demand
 const pcache = new WeakMap();
@@ -201,13 +201,11 @@ export function nearestBuyer(I) {
   return best;
 }
 
-// Should this ship fly to the orbital refinery? (policy 'refinery', or 'best' when it pays better).
+// Value of flying this cargo to the orbital refinery (vR) vs the market buyer bi (vM), or null with no orbital.
 // cargoG: grade units per ore (or the expected mix). room: free raw hold after ships already on the way.
-export function prefersRefinery(c, world, I, ship, cargo, cargoG, bi, now, room) {
+export function refValues(c, world, I, ship, cargo, cargoG, bi, now, room) {
   const R = c.refinery?.orbital;
-  if (!R) return false;
-  if (ship.policy === 'refinery') return true;
-  if (ship.policy !== 'best') return false;
+  if (!R) return null;
   const y = refYield('orbital', R), near = nearestBuyer(I);
   let tot = 0;
   for (let o = 0; o < I.n; o++) tot += cargo[o] > 0 ? cargo[o] : 0;
@@ -221,5 +219,14 @@ export function prefersRefinery(c, world, I, ship, cargo, cargoG, bi, now, room)
     vR += cf.on ? fit * G * y * refUnit(I, o) * effAsk(world, I, cf.markup) + (1 - fit) * nearV : nearV;
     vM += G * priceAt(world, I, o, bi, now);
   }
-  return vR / refTrip(ship.cls) > vM / tripSecs(I.buyers[bi], ship.cls);
+  return { vR, vM };
+}
+// Should this ship fly to the orbital refinery? (policy 'refinery', or 'best' when it pays better).
+export function prefersRefinery(c, world, I, ship, cargo, cargoG, bi, now, room) {
+  const R = c.refinery?.orbital;
+  if (!R) return false;
+  if (ship.policy === 'refinery') return true;
+  if (ship.policy !== 'best') return false;
+  const x = refValues(c, world, I, ship, cargo, cargoG, bi, now, room);
+  return x.vR / refTrip(ship.cls, c) > x.vM / tripSecs(I.buyers[bi], ship.cls, c);
 }

@@ -2,6 +2,7 @@
 //   node game/test/pacing.mjs            (a) 30-minute active session, (b) 30-day month, 4 check-ins a day,
 //                                        (c) prestige strategies (no nuke / first chance / day 15 / day 28), run in parallel
 //   node game/test/pacing.mjs --quiet    tables only
+//   node game/test/pacing.mjs --month    (a) and (b) only (prints class mix and class levels)
 import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
 import * as E from '../shared/engine/index.js';
 
@@ -51,8 +52,21 @@ const HOARD_FROM = 27; // the bot stops spending on this day so month-end coin c
 // Greedy: buy the move with the best coin/min per coin; if it is not affordable yet,
 // buy an affordable one that is at least half as good, else wait.
 const isRef = (m) => m.type === 'buildRefinery' || m.type === 'upgradeRefinery';
-export function spend(c, world, now, maxBuys = 400, { noRefine = false } = {}) {
+// strongFleet: what a strong player does by hand (the greedy ranking never values a class on its own): buy a freighter once it is
+// cheap next to the coin on hand, and the one-time `multi` unlock once it costs under 40% of the coin on hand.
+export function spend(c, world, now, maxBuys = 400, { noRefine = false, strongFleet = false } = {}) {
   let buys = 0;
+  if (strongFleet) {
+    const lic = c.unlocked?.licenses || [];
+    if (lic.includes('freighter') && !c.ships.some((s) => s.cls === 'freighter')) {
+      const q = E.quote(c, world, { type: 'buyShip', cls: 'freighter' });
+      if (!q.error && c.coin >= 30 * q.cost) { const r = E.applyCommand(c, world, { type: 'buyShip', cls: 'freighter' }, now); if (!r.error) { c = r.colony; buys++; } }
+    }
+    if (c.ships.some((s) => s.cls === 'freighter') && !c.fleet?.freighter?.multi) {
+      const q = E.quote(c, world, { type: 'upgradeClass', cls: 'freighter', kind: 'multi' });
+      if (!q.error && c.coin >= q.cost / 0.4) { const r = E.applyCommand(c, world, { type: 'upgradeClass', cls: 'freighter', kind: 'multi' }, now); if (!r.error) { c = r.colony; buys++; } }
+    }
+  }
   const exec = (steps) => {
     for (const st of steps) {
       const r = E.applyCommand(c, world, st, now);
@@ -120,7 +134,8 @@ export function tunePrices(c, world, now, refine = 'tune') {
 
 // strategy: 'none' | 'first' (nuke at the first eligible check-in) | a day number (first check-in of that day)
 // refine: 'tune' (builds refineries when they pay, searches prices) | 'none' (never refines) | 'bad' (markup 3.0)
-function run({ quiet = false, strategy = 'none', refine = 'tune' } = {}) {
+function run({ quiet = false, strategy = 'none', refine = 'tune', fleet = 'strong' } = {}) {
+  const strongFleet = fleet === 'strong';
   const t0 = performance.now();
   let world = { month: 'pace', planet: PLANET, market: {}, startedAt: 0, endsAt: 30 * DAY, parties: makeParties(PLANET) };
   const noRefine = refine === 'none';
@@ -146,7 +161,7 @@ function run({ quiet = false, strategy = 'none', refine = 'tune' } = {}) {
   const active = (from, mins, onTick) => {
     for (let t = from; t <= from + mins * MIN; t += 3000) {
       const ev = step(t);
-      const r = spend(c, world, t, 20, { noRefine });
+      const r = spend(c, world, t, 20, { noRefine, strongFleet });
       c = r.c; track(t);
       if (onTick) onTick(t, ev, r.buys);
     }
@@ -203,7 +218,7 @@ function run({ quiet = false, strategy = 'none', refine = 'tune' } = {}) {
       if (!noRefine && !c.refinery?.planet && E.quote(c, world, { type: 'buildRefinery', site: 'planet' }).canAfford) {
         c = E.applyCommand(c, world, { type: 'buildRefinery', site: 'planet' }, t).colony; // a player builds as soon as the license lands
       }
-      if (day < HOARD_FROM - 1) { c = spend(c, world, t, 400, { noRefine }).c; track(t); } // closing bell: the bot hoards the last days
+      if (day < HOARD_FROM - 1) { c = spend(c, world, t, 400, { noRefine, strongFleet }).c; track(t); } // closing bell: the bot hoards the last days
       if (!noRefine) c = tunePrices(c, world, t, refine);
       if (refBuilt == null && (c.refinery?.planet || c.refinery?.orbital)) refBuilt = t;
     }
@@ -211,7 +226,7 @@ function run({ quiet = false, strategy = 'none', refine = 'tune' } = {}) {
     while (t < end) { t = Math.min(end, t + 30 * MIN); step(t); if (first20M == null && c.earned >= 2e7) first20M = t; }
     const r = E.rates(c, world);
     const refCpm = Object.values(r.refinery || {}).reduce((a, x) => a + x.coinPerMin, 0);
-    rows.push({ ref: refCpm, sites: ['planet', 'orbital'].filter((k) => c.refinery?.[k]).map((k) => k[0]).join(''), asks: c.refinery?.planet ? Object.values(c.refinery.planet.ores).map((x) => x.markup).join('/') : '', day: day + 1, coin: c.coin, earned: c.earned, cpm: r.coinPerMin, shafts: c.shafts.length, ships: c.ships.length, mix: ['hauler','cruiser','freighter'].map(k => c.ships.filter(s => s.cls === k).length).join('/'), miners: c.miners, gear: Math.max(...c.shafts.map((s) => s.gear)),
+    rows.push({ ref: refCpm, sites: ['planet', 'orbital'].filter((k) => c.refinery?.[k]).map((k) => k[0]).join(''), asks: c.refinery?.planet ? Object.values(c.refinery.planet.ores).map((x) => x.markup).join('/') : '', day: day + 1, coin: c.coin, earned: c.earned, cpm: r.coinPerMin, shafts: c.shafts.length, ships: c.ships.length, mix: ['hauler','cruiser','freighter'].map(k => c.ships.filter(s => s.cls === k).length).join('/'), fl: ['hauler','cruiser','freighter'].map((k) => Object.values(c.fleet?.[k] || {}).join('.')).join(' / '), multi: c.fleet?.freighter?.multi || 0, miners: c.miners, gear: Math.max(...c.shafts.map((s) => s.gear)),
       bn: E.bottleneck(c, world).stage, exh: r.shafts.filter((x) => x.blocked).length, dug: c.shafts.reduce((a, s) => a + (s.dug || 0), 0), face: Math.max(0, ...c.shafts.map((s) => s.face || 0)), month: c.monthEarned });
   }
   const result = {
@@ -233,6 +248,9 @@ function run({ quiet = false, strategy = 'none', refine = 'tune' } = {}) {
   out.push(`hazards: ${hazards.length} (${Object.entries(result.byKind).map(([k, v]) => k + ' ' + v).join(', ')}), miners lost ${c.stats.lost}, safety ${JSON.stringify(c.safety)}, lights/supports avg ${(c.shafts.reduce((a, s) => a + (s.up.lights || 0), 0) / c.shafts.length).toFixed(1)}/${(c.shafts.reduce((a, s) => a + (s.up.supports || 0), 0) / c.shafts.length).toFixed(1)}`);
   for (const e of hazards.slice(0, 4)) out.push(`  day ${(e.at / DAY + 1).toFixed(2)}: ${e.text}`);
   if (!quiet) console.log('ship mix hauler/cruiser/freighter by day:', rows.filter((r) => [1, 3, 5, 10, 20, 30].includes(r.day)).map((r) => r.day + ':' + r.mix).join('  '));
+  console.log('class levels (hauler hold.loading / cruiser hold.speed / freighter hold.multi.hold2) by day:', rows.filter((r) => [1, 3, 5, 10, 15, 20, 30].includes(r.day)).map((r) => r.day + ': ' + r.fl).join('  |  '));
+  const mday = rows.find((r) => r.multi > 0);
+  out.push(`freighter multi unlock: ${mday ? 'day ' + mday.day : 'never'} · class mix by day (h/c/f): ${rows.filter((r) => [3, 5, 10, 15, 20, 30].includes(r.day)).map((r) => r.day + ':' + r.mix).join(' ')}`);
   const lg = c.ledger.month;
   out.push(`ledger (month): in ${Object.entries(lg.in).map(([k, v]) => k + ' ' + E.fmt(v)).join(', ')} · out ${Object.entries(lg.out).map(([k, v]) => k + ' ' + E.fmt(v)).join(', ')}`);
   out.push(`colony JSON size: ${(JSON.stringify(c).length / 1024).toFixed(1)} KB · market: ${E.marketTable(world, t).map((m) => m.id + ' ' + m.index.toFixed(2)).join(', ')}`);
@@ -244,9 +262,10 @@ function run({ quiet = false, strategy = 'none', refine = 'tune' } = {}) {
 // (c) prestige strategies, one worker each (they all play the same month from the start).
 async function strategies() {
   const t0 = performance.now();
+  const monthOnly = process.argv.includes('--month'); // (a) and (b) only
   const only = process.argv.includes('--refine') ? 'refine' : process.argv.includes('--nuke') ? 'nuke' : null;
-  const strats = only === 'refine' ? [] : ['first', 15, 28];
-  const refs = only === 'nuke' ? [] : ['none', 'bad'];
+  const strats = monthOnly || only === 'refine' ? [] : ['first', 15, 28];
+  const refs = monthOnly || only === 'nuke' ? [] : ['none', 'bad'];
   const job = (data) => new Promise((res, rej) => {
     const w = new Worker(new URL(import.meta.url), { workerData: data });
     w.once('message', res); w.once('error', rej);
@@ -254,7 +273,18 @@ async function strategies() {
   const jobs = strats.map((strategy) => job({ strategy }));
   const rjobs = refs.map((refine) => job({ strategy: 'none', refine }));
   const base = run({ quiet: process.argv.includes('--quiet'), strategy: 'none' });
+  const fjob = monthOnly ? null : job({ strategy: 'none', fleet: 'greedy' });
   const rres = await Promise.all(rjobs);
+  if (fjob) {
+    const g = await fjob;
+    console.log(`\n== (e) Fleet classes: scripted strong player (freighter + multi unlock) vs greedy ranking alone ==`);
+    for (const [nm, r] of [['strong fleet', base], ['greedy only', g]]) {
+      const mday = r.rows.find((x) => x.multi > 0);
+      console.log(`${nm.padEnd(13)} coin@30 ${E.fmt(r.coin).padEnd(8)} earned@10 ${E.fmt(r.rows[9].month).padEnd(8)} @20 ${E.fmt(r.rows[19].month).padEnd(8)} @30 ${E.fmt(r.rows[29].month).padEnd(8)} multi ${mday ? 'day ' + mday.day : 'never'} · mix d10 ${r.rows[9].mix} d30 ${r.rows[29].mix} · levels d30 ${r.rows[29].fl}`);
+    }
+    console.log(`strong vs greedy: ${(base.monthEarned / g.monthEarned).toFixed(2)}x earned`);
+  }
+  if (monthOnly) return;
   console.log(`\n== (d) Refining: month-end coin (bot hoards from day ${HOARD_FROM}) ==`);
   console.log('bot               built   coin@30   earned@10 earned@20 earned@30  refined in   vs no refine');
   const noRef = rres.find((r) => r.refine === 'none') || base;
@@ -275,6 +305,6 @@ async function strategies() {
   console.log(`strategies ran in ${((performance.now() - t0) / 1000).toFixed(1)}s (parallel)`);
 }
 
-if (!isMainThread && workerData) parentPort.postMessage(run({ quiet: true, strategy: workerData.strategy, refine: workerData.refine || 'tune' }));
+if (!isMainThread && workerData) parentPort.postMessage(run({ quiet: true, strategy: workerData.strategy, refine: workerData.refine || 'tune', fleet: workerData.fleet || 'strong' }));
 else if (import.meta.url === `file://${process.argv[1]}`) strategies();
 export { run };

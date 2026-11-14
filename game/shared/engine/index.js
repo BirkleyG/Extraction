@@ -14,7 +14,9 @@
  *                                        face (m), metresPerMin, dug (pockets dug out), pocket: null | { ore, left, len } (m),
  *                                        next: null | { ore, at (m ahead), blocked }, blocked, need (drill level), wallRate,
  *                                        risk (mishaps/hour, 0..1), haltMins, lights, supports }],
- *                             ships: [{ id, name, cls, cap, dest, tripSecs, perMin, cycleSecs }],
+ *                             ships: [{ id, name, cls, cap, cap2? (freighter with multi), dest, tripSecs, perMin, cycleSecs,
+ *                                       oreId (what it loads: live, else the planned pick), oreId2? (freighter with multi),
+ *                                       fill (0..1: cargo of oreId / cap, while loading or flying), fill2?, state }],
  *                             hazards: { perHour, loss (share of output), lossPerMin, colony: { gas, flood, fire, quake } },
  *                             evo: { mine, ship, sell } (multipliers),
  *                             refinery: { [site: 'planet'|'orbital']: { inPerMin (raw), outPerMin, soldPerMin, coinPerMin, stock, cap, full,
@@ -43,7 +45,11 @@
  *   Shafts (Phase 3.5): hireMiners {shaftId, n} · upgradeGear {shaftId, n} (gear above 8 needs the mythicDrill license) ·
  *     upgradeCart {shaftId, n} · buyShaft {dir:'left'|'right'} (see shaftOptions) · upgradeLift {kind:'speed'|'capacity'|'buckets', n}
  *   upgradeConveyor {n} · upgradeYard {n} · buyPad {n}
- *   buyShip {cls:'hauler'|'cruiser'|'freighter'} · upgradeShip {shipId, n} · setRoute {shipId, policy:'best'|'nearest'|'fixed', destId?}
+ *   buyShip {cls:'hauler'|'cruiser'|'freighter'} (each class has its own price ladder; new ships arrive with the class upgrades) ·
+ *   upgradeClass {cls, kind, n} (Ships rework: levels live in colony.fleet[cls], every ship of the class uses them; needs a ship of the class):
+ *     hold (all: cargo) · loading (hauler: load rate) · speed (cruiser: flight speed) · multi (freighter: ONE-TIME, T.fleetUp.multi.cost, adds a
+ *     second hold) · hold2 (freighter, needs multi: second hold capacity). Milestones at T.fleetUp.milestones (x2 cargo/loading, x1.5 speed).
+ *   setRoute {shipId, policy:'best'|'nearest'|'fixed'|'refinery', destId?}
  *   rename {target:'colony'|'shaft'|'ship', id, name} · tutorial {step} · autoSpend {keep?: 0..0.9}
  *   Safety: upgradeShaft {shaftId, kind:'lights'|'supports', n} (not the first shaft) · upgradeSafety {kind:'ventilation'|'pumps'|'firebreaks', n}
  *   Prestige: nuke {confirm:'NUKE'} (runEarned >= TUNING.nukeMin) · evolve {kind:'mine'|'ship'|'sell'|'spectacle', n} (costs SP)
@@ -64,8 +70,10 @@
  *     tunnel: { oreId: amt }, tunnelG, yard: { oreId: amt }, yardG,   (…G = grade units: amount x depth grade; value = G x price)
  *     shafts: [{ id, idx, name, dir ('main'|'left'|'right'), band, seed, tilt, ore (mined now), face (m), pk: [{ ore, start, len, hit?, low?, blk? }] (veins rolled ahead), pkN, pkEnd, dug,
  *                gear, cart, up: { lights, supports }, miners (owned by the shaft, no transfers), haltUntil (ms or null), hz: { cave, mad } }],
- *     ships: [{ id, name, cls, lvl, policy, destId, state: 'home'|'loading'|'out'|'back', cargo: { oreId: amt }, cargoG,
- *               dest, readyAt, dockedAt, firstLoadAt, departAt, arriveAt, homeAt }],
+ *     fleet: { hauler: { hold, loading }, cruiser: { hold, speed }, freighter: { hold, multi, hold2 } } (class upgrade levels; old colonies get zeros
+ *       and lose their per-ship `lvl` on the next advance/command),
+ *     ships: [{ id, name, cls, policy, destId, state: 'home'|'loading'|'out'|'back', oreId, oreId2 (freighter with multi; else null),
+ *               pickAt, cargo: { oreId: amt }, cargoG, dest, readyAt, dockedAt, firstLoadAt, departAt, arriveAt, homeAt }],
  *     stats: { mined, lifted, loaded, sold, sales, launches, upgrades, spent, firstSaleAt, hazards, lost },
  *     unlocked: { panels, licenses }, tutorial, nextId,
  *     refinery: { planet: null | R, orbital: null | R }, refineMemo: { [site]: ores } (buy settings kept through a nuke),
@@ -87,6 +95,15 @@
  *   to what sells. On-planet draws from the yard (before the conveyor) as the lift fills it; the orbital is fed by ships
  *   (policy 'refinery', or 'best' when it pays better and docks/hold have room). advance() integrates it exactly (step-invariant).
  *   A nuke removes refineries (their buy settings are remembered).
+ *
+ * Ships (loading.js): one ore per hold. When a ship docks it picks the ore (and, for a freighter with `multi`, a second ore for hold 2) that
+ *   maximizes its coin/min: for each candidate ore, how much of it the hold would get within T.maxLoadSecs given the yard + tunnel stock, the
+ *   mine's inflow of that ore, and what ships already docked have claimed of it (their unfilled room, queued ahead because docked ships load in
+ *   dock order), valued at the best destination for that ore (or the orbital refinery) over load time + round trip. A scarce high-value ore
+ *   therefore goes to the first ship and the next takes the next-best ore; when stock or flow exceeds what the claimant can take, both load it.
+ *   Deterministic (no RNG) and made only at docking (plus one re-pick if a docked ship is still empty after T.maxLoadSecs), so advance() is
+ *   step-invariant. A ship leaves when every hold is full or T.maxLoadSecs after its first ore. Route policies apply to the chosen cargo.
+ *   Hold upgrades multiply cargo, `loading` multiplies a hauler's load rate over the conveyor's per-pad rate, `speed` a cruiser's flight speed.
  *
  * Shafts (Phase 3.5): AdVenture-Capitalist categories. Shaft 1 is free (T.startMiners miners, gear 1, cart 1); buyShaft costs
  *   T.shaftBase x T.shaftGrowth^(idx-1) (x10 each) and starts with 0 miners. Miners, gear and cart belong to their shaft (no transfers);
@@ -120,7 +137,7 @@ export function applyCommand(colony, world, cmd, now) {
 }
 export { advance } from './sim.js';
 export { rates, bottleneck, destinations, marketPrice, recordSales, bestMoves, candidateMoves, bestDir, marketTable, activeChanges, priceMult } from './analysis.js';
-export { spectacleOf, evoMult } from './model.js';
+export { spectacleOf, evoMult, FLEET_KINDS, fleetLvl } from './model.js';
 export { unlocks, PANELS, TUTORIAL } from './unlocks.js';
 export { fmt } from './util.js';
 export { demandAt, growth as demandGrowth, REF_DEST } from './refinery.js';

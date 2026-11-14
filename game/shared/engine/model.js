@@ -43,18 +43,44 @@ export const gradeScale = (c) => {
 };
 export const grade = (idx) => Math.pow(T.grade, idx);
 export const tunnelCap = (c) => T.shaftBuffer * Math.max(1, c.shafts.length);
-const capMemo = new Map();
-export const shipCap = (ship) => {
-  const key = (ship.cls || '') + (ship.lvl || 0);
-  let v = capMemo.get(key);
-  if (v === undefined) {
-    v = (T.ship[ship.cls] || T.ship.hauler).cap * Math.pow(T.shipCapMult, ship.lvl || 0) * milestone(ship.lvl || 0);
-    if (capMemo.size < 5000) capMemo.set(key, v);
+// Fleet (class upgrades): colony.fleet[cls][kind] = level; every ship of the class uses it.
+export const FLEET_KINDS = { hauler: ['hold', 'loading'], cruiser: ['hold', 'speed'], freighter: ['hold', 'multi', 'hold2'] };
+export const emptyFleet = () => ({ hauler: { hold: 0, loading: 0 }, cruiser: { hold: 0, speed: 0 }, freighter: { hold: 0, multi: 0, hold2: 0 } });
+// Fills `fleet` lazily and drops per-ship levels (colonies from engine v <= 5 had `ship.lvl`). Mutates c.
+export function ensureFleet(c) {
+  const f = emptyFleet();
+  const cur = c.fleet && typeof c.fleet === 'object' ? c.fleet : {};
+  for (const cls in f) f[cls] = { ...f[cls], ...(cur[cls] || {}) };
+  c.fleet = f;
+  for (const s of c.ships || []) {
+    delete s.lvl;
+    if (s.oreId === undefined) {
+      let id = null, best = 0;
+      for (const k in s.cargo || {}) if (s.cargo[k] > best) { best = s.cargo[k]; id = k; }
+      s.oreId = id; s.oreId2 = null; s.pickAt = null;
+    }
   }
-  return v;
+  return c;
+}
+export const fleetLvl = (c, cls, kind) => Math.max(0, Math.floor(num(c?.fleet?.[cls]?.[kind], 0)));
+export const fleetMilestone = (kind, lvl) => {
+  const U = T.fleetUp;
+  let n = 0;
+  for (const m of U.milestones) if (lvl >= m) n++;
+  return Math.pow(U.bonus[kind] || 2, n);
 };
-export const shipSpeed = (cls) => (T.ship[cls] || T.ship.hauler).speed;
-export const tripSecs = (buyer, cls, c) => T.tripSecs[buyer.distance] / (shipSpeed(cls) * (c ? evoMult(c, 'ship') : 1));
+export const nextFleetMilestone = (lvl) => T.fleetUp.milestones.find((x) => x > lvl) ?? null;
+const lvlMult = (kind, lvl) => Math.pow(T.fleetUp[kind].mult, lvl) * fleetMilestone(kind, lvl);
+export const holdAt = (cls, lvl) => (T.ship[cls] || T.ship.hauler).cap * lvlMult('hold', lvl);
+export const hold2At = (holdLvl, lvl) => T.fleetUp.hold2.share * holdAt('freighter', holdLvl) * lvlMult('hold2', lvl);
+export const loadMultAt = (lvl) => lvlMult('loading', lvl);
+export const speedMultAt = (lvl) => lvlMult('speed', lvl);
+export const shipCap = (ship, c) => holdAt(ship.cls, fleetLvl(c, ship.cls, 'hold'));
+export const shipCap2 = (ship, c) => (ship.cls === 'freighter' && fleetLvl(c, 'freighter', 'multi') > 0 ? hold2At(fleetLvl(c, 'freighter', 'hold'), fleetLvl(c, 'freighter', 'hold2')) : 0);
+// load rate multiplier (hauler 'loading'); a ship loads at conveyorRate x this
+export const loadMult = (c, cls) => (cls === 'hauler' ? loadMultAt(fleetLvl(c, 'hauler', 'loading')) : 1);
+export const shipSpeed = (cls, c) => (T.ship[cls] || T.ship.hauler).speed * (cls === 'cruiser' && c ? speedMultAt(fleetLvl(c, 'cruiser', 'speed')) : 1);
+export const tripSecs = (buyer, cls, c) => T.tripSecs[buyer.distance] / (shipSpeed(cls, c) * (c ? evoMult(c, 'ship') : 1));
 
 // Evolutions: each level adds `per` to a multiplier (mine: ore/min, ship: speed, sell: price, spectacle: next nuke).
 export const evoLvl = (c, kind) => Math.max(0, Math.floor(num(c?.evo?.[kind], 0)));
@@ -155,7 +181,7 @@ export function priceAt(world, I, oi, bi, now) {
 }
 
 // Best destination for a cargo vector (per ore index) under a ship's policy.
-export function pickDest(world, I, ship, cargo, now) {
+export function pickDest(world, I, ship, cargo, now, c) {
   if (ship.policy === 'fixed' && I.buyerIdx[ship.destId] !== undefined) return I.buyerIdx[ship.destId];
   if (ship.policy === 'nearest') {
     let best = 0;
@@ -167,7 +193,7 @@ export function pickDest(world, I, ship, cargo, now) {
   for (let b = 0; b < I.buyers.length; b++) {
     let v = 0;
     for (let o = 0; o < I.n; o++) v += (total > 0 ? cargo[o] : 1) * priceAt(world, I, o, b, now);
-    v /= 2 * tripSecs(I.buyers[b], ship.cls);
+    v /= 2 * tripSecs(I.buyers[b], ship.cls, c);
     if (v > bestV) { bestV = v; best = b; }
   }
   return best;

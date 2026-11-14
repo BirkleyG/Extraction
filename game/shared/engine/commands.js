@@ -2,7 +2,7 @@
 import { T, geoSum, geoMax } from './tuning.js';
 import { info, clone, num, fmt, cleanName, hashSeed, rngNext, DAY_MS } from './util.js';
 import {
-  liftRate, liftLvl, liftTrips, liftCapacity, liftBuckets, convRate, yardCap, perMiner, cartRate, gearMult, gearMilestone, shipCap, tripSecs,
+  liftRate, liftLvl, liftTrips, liftCapacity, liftBuckets, convRate, yardCap, perMiner, cartRate, gearMult, gearMilestone, shipCap, shipCap2, tripSecs, ensureFleet, emptyFleet, fleetLvl, FLEET_KINDS, holdAt, hold2At, loadMultAt, speedMultAt, fleetMilestone, nextFleetMilestone,
   assignMiners, shaftStatus, grade, evoMult, evoLvl, spectacleOf, priceAt, shaftCost, bandOf, soilOf,
 } from './model.js';
 import { advance, toArr, toMap } from './sim.js';
@@ -14,7 +14,7 @@ import {
 } from './refinery.js';
 import { ensureLedger, ledgerIn, ledgerOut, spendCategory, freshBook } from './ledger.js';
 
-export const ENGINE_VERSION = 5;
+export const ENGINE_VERSION = 6;
 const SITE_NAME = { planet: 'on-planet refinery', orbital: 'orbital refinery' };
 const SAFETY = { ventilation: 'Ventilation (gas)', pumps: 'Pumps (floods)', firebreaks: 'Firebreaks (yard fires)' };
 const MAX_LVL = 400;
@@ -29,7 +29,7 @@ function makeShip(c, cls) {
   const n = c.ships.length;
   return {
     id: 'p' + (c.nextId++), name: SHIP_NAMES[n % SHIP_NAMES.length] + (n >= SHIP_NAMES.length ? ' ' + (Math.floor(n / SHIP_NAMES.length) + 1) : ''),
-    cls, lvl: 0, policy: 'best', destId: null, state: 'home', readyAt: c.t, cargo: {}, cargoG: {},
+    cls, oreId: null, oreId2: null, pickAt: null, policy: 'best', destId: null, state: 'home', readyAt: c.t, cargo: {}, cargoG: {},
     dest: null, dockedAt: null, firstLoadAt: null, departAt: null, arriveAt: null, homeAt: null,
   };
 }
@@ -95,7 +95,7 @@ export function newColony({ id, uid, name, species, planet, siteRegion, site, no
     miners: 0, idle: 0, site: null,
     lift: { speed: 0, capacity: 0, buckets: 0 }, conveyor: 0, yardLvl: 0, pads: 1,
     tunnel: {}, tunnelG: {}, yard: {}, yardG: {},
-    shafts: [], ships: [],
+    shafts: [], ships: [], fleet: emptyFleet(),
     stats: freshStats(),
     unlocked: { panels: [], licenses: [] }, tutorial: 0, nextId: 1,
     refinery: emptyRefinery(), refineMemo: {},
@@ -134,7 +134,10 @@ export function catchUpGrant(world, now) {
   return Math.round(25_000 * day * day);
 }
 
-const shipUpBase = (cls) => T.shipUpCost * T.ship[cls].cap * T.ship[cls].upk;
+// Class upgrade price base (hold / hold2 scale with the class's cargo and upk; loading and speed have their own base).
+const fleetBase = (cls, kind) => (kind === 'hold' ? T.fleetUp.hold.cost * T.ship[cls].cap * T.ship[cls].upk
+  : kind === 'hold2' ? T.fleetUp.hold2.cost * T.fleetUp.hold2.share * T.ship.freighter.cap * T.ship.freighter.upk : T.fleetUp[kind].cost);
+const fms = (kind, from, k) => { const m = fleetMilestone(kind, from + k) / fleetMilestone(kind, from); return m > 1 ? ` · milestone x${m}!` : ''; };
 const capPct = (m) => `+${Math.round((m - 1) * 100)}%`;
 const gms = (from, k) => (gearMilestone(from + k) > gearMilestone(from) ? ' · milestone x2!' : '');
 const ms = (from, k) => (Math.floor((from + k) / T.milestoneEvery) > Math.floor(from / T.milestoneEvery) ? ' · milestone x2!' : '');
@@ -299,24 +302,38 @@ function plan(c, world, cmd, now, quoting = false) {
       if (!T.ship[cls]) return { error: 'Unknown ship class' };
       if (cls !== 'hauler' && !lic.has(cls)) return { error: `Needs the ${T.licenses[cls].label}` };
       if (c.ships.length >= T.maxShips) return { error: 'Fleet is full' };
-      // New ships join near your fleet's best level, and that refit is in the price.
-      const lvl = Math.floor(T.shipJoinLevel * c.ships.reduce((a, s) => Math.max(a, s.lvl), 0));
+      // New ships arrive with every class upgrade already in place (class levels are shared), so the price is just the ladder.
       const owned = c.ships.filter((q) => q.cls === cls).length - (cls === 'hauler' ? 1 : 0);
-      const cost = T.ship[cls].cost * Math.pow(T.shipFleetGrowth, Math.max(0, owned)) + (lvl ? geoSum(shipUpBase(cls), T.shipUpGrowth, 0, lvl) : 0);
+      const cost = T.ship[cls].cost * Math.pow(T.shipFleetGrowth, Math.max(0, owned));
       const near = I.buyers.reduce((a, b) => (T.tripSecs[b.distance] < T.tripSecs[a.distance] ? b : a));
       return {
         cost, n: 1, k: 1,
-        effect: `New ${T.ship[cls].label}: ${fmt(shipCap({ cls, lvl }))} cargo, ${Math.round(tripSecs(near, cls, c))}s to ${near.name}`,
-        apply: (x) => { const s = makeShip(x, cls); s.lvl = lvl; x.ships.push(s); },
+        effect: `New ${T.ship[cls].label}: ${fmt(shipCap({ cls }, c))} cargo, ${Math.round(tripSecs(near, cls, c))}s to ${near.name}`,
+        apply: (x) => { ensureFleet(x); x.ships.push(makeShip(x, cls)); },
       };
     }
-    case 'upgradeShip': {
-      const s = c.ships.find((x) => x.id === cmd.shipId);
-      if (!s) return { error: 'No such ship' };
-      const base = shipUpBase(s.cls);
-      const p = levelPlan(c, s.lvl, MAX_LVL, base, T.shipUpGrowth, n);
-      const a = shipCap(s), b = shipCap({ ...s, lvl: s.lvl + p.k });
-      return { ...p, n: p.k, effect: `${capPct(b / a)} cargo (${fmt(a)} → ${fmt(b)})${ms(s.lvl, p.k)}`, apply: (x) => { x.ships.find((q) => q.id === s.id).lvl += p.k; } };
+    case 'upgradeClass': {
+      const cls = cmd.cls, kind = cmd.kind;
+      if (!T.ship[cls]) return { error: 'Unknown ship class' };
+      if (!FLEET_KINDS[cls].includes(kind)) return { error: `${T.ship[cls].label}s cannot upgrade ${kind}` };
+      if (!c.ships.some((q) => q.cls === cls)) return { error: `Buy a ${T.ship[cls].label.toLowerCase()} first` };
+      const label = T.ship[cls].label;
+      const lv = fleetLvl(c, cls, kind);
+      const fleet = c.ships.filter((q) => q.cls === cls).length;
+      const apply = (x, k) => { ensureFleet(x); x.fleet[cls][kind] += k; };
+      if (kind === 'multi') {
+        if (lv > 0) return { error: 'Already unlocked' };
+        return { cost: T.fleetUp.multi.cost, n: 1, k: 1, effect: `Unlock a second hold on every Freighter: each carries two ore types at once (then upgrade the second hold)`, apply: (x) => apply(x, 1) };
+      }
+      if (kind === 'hold2' && !fleetLvl(c, 'freighter', 'multi')) return { error: 'Unlock the second hold (multi-ore) first' };
+      const U = T.fleetUp[kind];
+      const p = levelPlan(c, lv, U.max, fleetBase(cls, kind), U.growth, n);
+      const val = (l) => (kind === 'hold' ? holdAt(cls, l) : kind === 'hold2' ? hold2At(fleetLvl(c, 'freighter', 'hold'), l) : kind === 'loading' ? loadMultAt(l) : speedMultAt(l));
+      const a = val(lv), b = val(lv + p.k);
+      const what = { hold: 'cargo per ship', hold2: 'second-hold cargo per ship', loading: 'load speed', speed: 'flight speed' }[kind];
+      const nums = kind === 'loading' || kind === 'speed' ? `x${a.toFixed(2)} → x${b.toFixed(2)}` : `${fmt(a)} → ${fmt(b)}`;
+      const nx = nextFleetMilestone(lv + p.k);
+      return { ...p, n: p.k, effect: `${label} ${kind} ${lv} → ${lv + p.k}: ${capPct(b / a)} ${what} (${nums}) on all ${fleet} ${label.toLowerCase()}${fleet === 1 ? '' : 's'}${fms(kind, lv, p.k)}${nx ? ` · next milestone at ${nx}` : ''}`, apply: (x) => apply(x, p.k) };
     }
     case 'setRoute': {
       const s = c.ships.find((x) => x.id === cmd.shipId);
@@ -418,6 +435,7 @@ export function quote(colony, world, cmd) {
 // `sales` (optional array) collects ore sold by the command itself (a nuke settles ships in flight).
 export function applyNow(c, world, cmd, events, sales) {
   ensureHz(c);
+  ensureFleet(c);
   ensureRef(c);
   const p = plan(c, world, cmd, c.t);
   if (p.error) return p.error;
@@ -489,7 +507,7 @@ function nukeColony(c, world, spect, ctx = {}) {
   Object.assign(c, {
     coin: T.startCoin, earned: 0, runEarned: 0, miners: 0, idle: 0, // the first shaft comes with a relief crew so the rebuild starts moving
     lift: { speed: 0, capacity: 0, buckets: 0 }, conveyor: 0, yardLvl: 0, pads: 1, tunnel: {}, tunnelG: {}, yard: {}, yardG: {},
-    shafts: [], ships: [], born: c.t, stats: freshStats(), tutorial: 5,
+    shafts: [], ships: [], fleet: emptyFleet(), born: c.t, stats: freshStats(), tutorial: 5,
     safety: { ventilation: 0, pumps: 0, firebreaks: 0 },
     sp: keep.sp, nukes: keep.nukes, lastNuke: keep.lastNuke,
   });

@@ -2,7 +2,7 @@
 import { T } from './tuning.js';
 import { info, clone, num, pos, fmt } from './util.js';
 import {
-  liftRate, convRate, yardCap, perMiner, cartRate, soilOf, tunnelCap, shipCap, tripSecs,
+  liftRate, convRate, yardCap, perMiner, cartRate, soilOf, tunnelCap, shipCap, tripSecs, FLEET_KINDS,
   shaftStatus, pickDest, priceAt, marketIndex, evoMult, activeChanges, priceMult,
 } from './model.js';
 export { activeChanges, priceMult };
@@ -25,7 +25,10 @@ export function candidateMoves(c, world) {
   const dir = bestDir(c, world);
   if (dir) list.push({ type: 'buyShaft', dir });
   for (const cls of Object.keys(T.ship)) list.push({ type: 'buyShip', cls });
-  for (const s of c.ships) list.push({ type: 'upgradeShip', shipId: s.id });
+  for (const cls of Object.keys(T.ship)) {
+    if (!c.ships.some((q) => q.cls === cls)) continue;
+    for (const kind of FLEET_KINDS[cls]) list.push({ type: 'upgradeClass', cls, kind });
+  }
   for (const s of c.shafts) {
     if (!shaftStatus(c, I, s).ok) continue;
     list.push({ type: 'hireMiners', shaftId: s.id }, { type: 'upgradeGear', shaftId: s.id }, { type: 'upgradeCart', shaftId: s.id });
@@ -60,7 +63,7 @@ export function moveLabel(c, cmd) {
     case 'upgradeYard': return 'Expand the yard';
     case 'buyPad': return 'Build a launch pad';
     case 'buyShip': return `Buy a ${T.ship[cmd.cls]?.label.toLowerCase() || 'ship'}`;
-    case 'upgradeShip': return `Upgrade ${c.ships.find((s) => s.id === cmd.shipId)?.name || 'a ship'}`;
+    case 'upgradeClass': return cmd.kind === 'multi' ? 'Unlock the freighter second hold' : `Upgrade ${T.ship[cmd.cls]?.label.toLowerCase() || 'ship'} ${cmd.kind}`;
     case 'buildRefinery': return cmd.site === 'orbital' ? 'Build an orbital refinery' : 'Build an on-planet refinery';
     case 'upgradeRefinery': return `Refinery ${cmd.kind} (${cmd.site === 'orbital' ? 'orbital' : 'on-planet'})`;
     default: return cmd.type;
@@ -75,6 +78,7 @@ export function planClone(c) {
     ...c,
     shafts: c.shafts.map((s) => ({ ...s, up: { ...s.up } })),
     ships: c.ships.map((s) => ({ ...s })),
+    fleet: Object.fromEntries(Object.entries(c.fleet || {}).map(([k, v]) => [k, { ...v }])),
     stats: { ...c.stats },
     unlocked: { panels: [...(c.unlocked?.panels || [])], licenses: [...(c.unlocked?.licenses || [])] },
     safety: { ...c.safety }, evo: { ...c.evo },
@@ -224,7 +228,7 @@ export function destinations(colony, world, shipClass = 'hauler') {
   const r = rates(colony, world);
   const now = colony.t;
   const mixTotal = r._mix.reduce((a, b) => a + b, 0);
-  const cap = (T.ship[shipClass] || T.ship.hauler).cap;
+  const cap = shipCap({ cls: T.ship[shipClass] ? shipClass : 'hauler' }, colony);
   const rows = I.buyers.map((b, bi) => {
     const price = {};
     let v = 0;

@@ -51,7 +51,7 @@ export function panelFor(cmd) {
     case 'upgradeYard': return 'yard';
     case 'buyPad': return 'pads';
     case 'buyShip': return 'fleet';
-    case 'upgradeShip': return 'ships';
+    case 'upgradeClass': return 'ships';
     case 'setRoute': return 'routes';
     case 'buildRefinery': case 'upgradeRefinery': case 'setRefine': return 'refinery';
     default: return null;

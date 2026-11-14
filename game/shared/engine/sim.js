@@ -8,7 +8,7 @@
 import { T } from './tuning.js';
 import { info, clone, num, pos, fmt } from './util.js';
 import {
-  liftRate, convRate, yardCap, shaftRate, tunnelCap, shipCap, tripSecs,
+  liftRate, convRate, yardCap, shaftRate, tunnelCap, shipCap, shipCap2, loadMult, ensureFleet, tripSecs,
   shaftStatus, gradeScale, assignMiners, pickDest, priceAt, grade, evoMult, hazardRates, changeTimes, dangerOf,
 } from './model.js';
 import { syncUnlocks } from './unlocks.js';
@@ -19,6 +19,7 @@ import {
   hasParties, nearestBuyer, prefersRefinery,
 } from './refinery.js';
 import { ensureLedger, ledgerIn } from './ledger.js';
+import { pickLoad, holdFill, shipLoadRate, loadWindow } from './loading.js';
 
 const MAX_EVENT_SALES = 12;
 const MAX_EVENT_HAZARDS = 12;
@@ -61,6 +62,7 @@ export function advance(colony, world, now) {
   const c = clone(colony);
   ensureHz(c);
   ensureLedger(c);
+  ensureFleet(c);
   const events = [];
   const I = info(world);
   now = num(now, c.t);
@@ -121,6 +123,55 @@ export function advance(colony, world, now) {
 
   const emit = (type, text, at, data) => events.push({ type, text, at, data });
 
+  // Holds of ship k: [{ o (ore index), cap }]. One ore per hold (hold 2 only for a freighter with `multi`).
+  const holdsOf = (k) => {
+    const s = c.ships[k], out = [];
+    const o1 = s.oreId ? I.idx[s.oreId] : undefined;
+    if (o1 !== undefined) out.push({ o: o1, cap: shipCap(s, c) });
+    const o2 = s.oreId2 ? I.idx[s.oreId2] : undefined;
+    if (o2 !== undefined && o2 !== o1) { const c2 = shipCap2(s, c); if (c2 > 0) out.push({ o: o2, cap: c2 }); }
+    return out;
+  };
+  const freeOf = (k) => { let f = 0; for (const h of holdsOf(k)) f += Math.max(0, h.cap - cargo[k][h.o]); return f; };
+  const shipFull = (k) => holdsOf(k).every((h) => h.cap - cargo[k][h.o] <= h.cap * 1e-9 + 1e-9);
+
+  // Docking: pick the ore(s) this ship loads (loading.js). Reads the yard and tunnels, what is mined now, and what docked ships claimed.
+  function choose(k, s, t) {
+    const stock = new Array(I.n), grd = new Array(I.n), claim = new Array(I.n).fill(0), flow = new Array(I.n).fill(0);
+    for (let o = 0; o < I.n; o++) { stock[o] = yd[o] + tun[o]; grd[o] = stock[o] > 0 ? (ydG[o] + tunG[o]) / stock[o] : 0; }
+    let tot = 0;
+    c.shafts.forEach((sh, i) => {
+      const r = num(sh.haltUntil, 0) > t ? 0 : base[i] * 60000;
+      if (!(r > 0)) return;
+      flow[oreOf[i]] += r; tot += r;
+      if (!(stock[oreOf[i]] > 0)) grd[oreOf[i]] = Math.max(grd[oreOf[i]], gradeOf[i]);
+    });
+    const lift = liftRate(c) * mineK;
+    if (tot > lift) for (let o = 0; o < I.n; o++) flow[o] *= lift / tot;
+    for (let o = 0; o < I.n; o++) if (!(grd[o] > 0)) grd[o] = 1;
+    c.ships.forEach((q, j) => {
+      if (j === k || q.state !== 'loading') return;
+      for (const h of holdsOf(j)) claim[h.o] += Math.max(0, h.cap - cargo[j][h.o]);
+    });
+    const lr = shipLoadRate(c, s), W = loadWindow();
+    const fill = (o1, C1, o2, C2) => {
+      const a = holdFill(C1, stock[o1], claim[o1], flow[o1], lr, W);
+      const b = o2 >= 0 ? holdFill(C2, stock[o2], claim[o2], flow[o2], lr, W) : { q: 0, t: 0 };
+      let q1 = a.q, q2 = b.q, T = Math.max(a.t, b.t, (q1 + q2) / lr);
+      if (T > W) { const k = W * lr / (q1 + q2); q1 *= k; q2 *= k; T = W; } // a ship leaves T.maxLoadSecs after its first ore
+      return { q1, q2, T };
+    };
+    const pick = pickLoad(c, world, I, s, { now: t, grade: grd, fill });
+    let o1 = pick ? pick.o1 : -1, o2 = pick ? pick.o2 : -1;
+    if (o1 < 0) { // nothing to load anywhere right now: wait on the ore that is flowing most, else the richest
+      o1 = I.byValue[0];
+      for (const o of I.byValue) if (flow[o] > flow[o1] * (1 + 1e-12)) o1 = o;
+    }
+    s.oreId = I.ores[o1].id;
+    s.oreId2 = o2 >= 0 ? I.ores[o2].id : null;
+    s.pickAt = t + T.maxLoadSecs * 1000;
+  }
+
   // Discrete events due at time t, in time order.
   const process = (t) => {
     for (;;) {
@@ -164,10 +215,10 @@ export function advance(colony, world, now) {
     c.ships.forEach((s, k) => {
       if (s.state !== 'loading') return;
       const load = sum(cargo[k]);
-      const full = load >= shipCap(s) * (1 - 1e-9) - 1e-9;
+      const full = shipFull(k);
       const timeout = s.firstLoadAt != null && t >= s.firstLoadAt + T.maxLoadSecs * 1000 - 1e-6;
       if (load > 0 && (full || timeout)) {
-        const bi = pickDest(world, I, s, cargoG[k], t);
+        const bi = pickDest(world, I, s, cargoG[k], t, c);
         if (rs.orbital && toRefinery(k, s, bi, t)) {
           s.state = 'out'; s.dest = REF_DEST; s.departAt = t;
           s.arriveAt = t + refTrip(s.cls, c) * 1000;
@@ -196,8 +247,13 @@ export function advance(colony, world, now) {
       for (const { s } of waiting) {
         if (docked >= c.pads) break;
         s.state = 'loading'; s.dockedAt = t; s.firstLoadAt = null; docked++;
+        choose(c.ships.indexOf(s), s, t);
       }
     }
+    // a docked ship still empty after the load window picks again (its ore may have run out)
+    c.ships.forEach((s, k) => {
+      if (s.state === 'loading' && s.firstLoadAt == null && sum(cargo[k]) <= 0 && (s.oreId == null || (s.pickAt != null && t >= s.pickAt - 1e-6))) choose(k, s, t);
+    });
     // tunnels: pockets dug out, faces breaking into pockets or stuck at hard ones
     let changed = false;
     const pe = (type, text, data) => { if (++pkCount <= MAX_EVENT_POCKETS) emit(type, text, t, data); };
@@ -373,7 +429,8 @@ export function advance(colony, world, now) {
     // exact ship events
     c.ships.forEach((s) => {
       const due = s.state === 'out' ? s.arriveAt : s.state === 'back' ? s.homeAt
-        : s.state === 'loading' && s.firstLoadAt != null ? s.firstLoadAt + T.maxLoadSecs * 1000 : Infinity;
+        : s.state === 'loading' && s.firstLoadAt != null ? s.firstLoadAt + T.maxLoadSecs * 1000
+        : s.state === 'loading' && s.pickAt != null ? s.pickAt : Infinity;
       if (due > t && due < te) te = due;
     });
     // estimated events (never shorter than 1s)
@@ -381,7 +438,7 @@ export function advance(colony, world, now) {
     const cr = convRate(c.conveyor) / 60000;
     c.ships.forEach((s, k) => {
       if (s.state !== 'loading') return;
-      const free = shipCap(s) - sum(cargo[k]);
+      const free = freeOf(k);
       const r = flowRate[k] < 0 ? cr : flowRate[k];
       if (r > 0) est = Math.min(est, free / r);
     });
@@ -414,9 +471,24 @@ export function advance(colony, world, now) {
     const loading = [];
     c.ships.forEach((s, k) => { if (s.state === 'loading') loading.push(k); });
     loading.sort((a, b) => num(c.ships[a].dockedAt) - num(c.ships[b].dockedAt) || a - b);
-    const caps = loading.map((k) => Math.max(0, Math.min(Ccap, shipCap(c.ships[k]) - sum(cargo[k]))));
     const flPot = Math.min(Lcap, B1 + Ppot);
-    const fc = Math.min(sum(caps), B2 + flPot);
+    // What each docked ship's holds can take this step: its own ore only, from the yard plus what the lift can deliver.
+    const availO = yd.slice();
+    if (flPot > 0 && loading.length) {
+      const tc = tun.slice(), tcG = tunG.slice();
+      for (let k = 0; k < pot.length; k++) if (pot[k] > 0) { tc[oreOf[k]] += pot[k]; tcG[oreOf[k]] += pot[k] * gradeOf[k]; }
+      const [upPot] = takeByValue(I, tc, tcG, flPot);
+      for (let o = 0; o < I.n; o++) availO[o] += upPot[o];
+    }
+    const plan = loading.map((k) => {
+      let rate = Ccap * loadMult(c, c.ships[k].cls);
+      return holdsOf(k).map((h) => {
+        const x = Math.max(0, Math.min(rate, h.cap - cargo[k][h.o], availO[h.o]));
+        rate -= x; availO[h.o] -= x;
+        return x;
+      });
+    });
+    const fc = Math.min(plan.reduce((a, p) => a + sum(p), 0), B2 + flPot);
     const fl = Math.max(0, Math.min(flPot, K2 - B2 + fc));
     const fm = Math.max(0, Math.min(Ppot, K1 - B1 + fl));
     const scale = Ppot > 0 ? fm / Ppot : 0;
@@ -440,19 +512,22 @@ export function advance(colony, world, now) {
     if (rs.planet) refine('planet', yd, ydG, dt, t0, up && up.map((x) => x / dt), upG && upG.map((x) => x / dt));
     else if (up) for (let o = 0; o < I.n; o++) { yd[o] += up[o]; ydG[o] += upG[o]; }
     if (rs.orbital) refine('orbital', rs.orbital.raw, rs.orbital.rawG, dt, t0);
-    const fcReal = Math.min(fc, sum(yd));
-    let left = fcReal;
+    let loaded = 0;
     loading.forEach((k, j) => {
-      const x = Math.min(caps[j], left);
-      left -= x;
-      if (x > 0) {
-        const [got, gotG] = takeByValue(I, yd, ydG, x);
-        for (let o = 0; o < I.n; o++) { cargo[k][o] += got[o]; cargoG[k][o] += gotG[o]; }
-        if (c.ships[k].firstLoadAt == null) c.ships[k].firstLoadAt = t0;
-      }
-      flowRate[k] = x / dt;
+      let got = 0;
+      holdsOf(k).forEach((h, i) => {
+        const x = Math.min(plan[j][i], yd[h.o]);
+        if (!(x > 0)) return;
+        const g = x >= yd[h.o] ? ydG[h.o] : ydG[h.o] * (x / yd[h.o]);
+        yd[h.o] -= x; ydG[h.o] -= g;
+        if (yd[h.o] < 1e-12) { yd[h.o] = 0; ydG[h.o] = 0; }
+        cargo[k][h.o] += x; cargoG[k][h.o] += g; got += x;
+      });
+      if (got > 0 && c.ships[k].firstLoadAt == null) c.ships[k].firstLoadAt = t0;
+      flowRate[k] = got / dt;
+      loaded += got;
     });
-    c.stats.loaded += fcReal - Math.max(0, left);
+    c.stats.loaded += loaded;
     return scale;
   }
 

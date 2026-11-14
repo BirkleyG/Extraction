@@ -61,7 +61,8 @@ function midgame(w) {
   c = run(c, w, { type: 'buyPad', n: 'max' });
   for (let i = 0; i < 5; i++) c = run(c, w, { type: 'buyShip', cls: 'hauler' });
   c = run(c, w, { type: 'buyShip', cls: 'cruiser' });
-  for (const s of c.ships) c = run(c, w, { type: 'upgradeShip', shipId: s.id, n: 40 });
+  c = run(c, w, { type: 'upgradeClass', cls: 'hauler', kind: 'hold', n: 40 });
+  c = run(c, w, { type: 'upgradeClass', cls: 'cruiser', kind: 'hold', n: 40 });
   c.coin = 0;
   return c;
 }
@@ -82,7 +83,7 @@ function deepFreeze(o) { if (o && typeof o === 'object') { Object.freeze(o); for
 test('newColony: plain JSON starter colony', () => {
   const c = fresh(1000);
   assert.equal(c.v, E.ENGINE_VERSION);
-  assert.equal(E.ENGINE_VERSION, 5);
+  assert.equal(E.ENGINE_VERSION, 6);
   assert.equal(c.shafts.length, 1);
   assert.equal(c.shafts[0].ore, 'gravel');
   assert.equal(c.shafts[0].face, 0);
@@ -424,10 +425,11 @@ test('commands: ships, routes, rename, tutorial, errors', () => {
   assert.deepEqual(c.ships.map((s) => s.cls), ['hauler', 'hauler', 'cruiser']);
   assert.ok(E.quote(c, w, { type: 'buyShip', cls: 'hauler' }).cost > q.cost, 'each ship costs more');
   const sh = c.ships[1];
-  const qs = E.quote(c, w, { type: 'upgradeShip', shipId: sh.id, n: 10 });
-  assert.match(qs.effect, /cargo \(.* → .*\)/);
-  c = run(c, w, { type: 'upgradeShip', shipId: sh.id, n: 10 });
-  assert.equal(c.ships[1].lvl, 10);
+  const qs = E.quote(c, w, { type: 'upgradeClass', cls: 'hauler', kind: 'hold', n: 10 });
+  assert.match(qs.effect, /cargo per ship \(.* → .*\)/);
+  c = run(c, w, { type: 'upgradeClass', cls: 'hauler', kind: 'hold', n: 10 });
+  assert.equal(c.fleet.hauler.hold, 10);
+  assert.equal(E.applyCommand(c, w, { type: 'upgradeShip', shipId: sh.id }, c.t).error, 'Unknown command');
   c = run(c, w, { type: 'setRoute', shipId: sh.id, policy: 'fixed', destId: 'court' });
   assert.equal(c.ships[1].policy, 'fixed'); assert.equal(c.ships[1].destId, 'court');
   assert.match(E.applyCommand(c, w, { type: 'setRoute', shipId: sh.id, policy: 'fixed', destId: 'mars' }, c.t).error, /destination/);
@@ -465,14 +467,14 @@ test('fuzz: never negative, never NaN', () => {
   let c = rich(fresh(0), w, 5e9);
   let s = 12345;
   const rnd = (n) => { s = (s * 16807) % 2147483647; return s % n; };
-  const kinds = ['hireMiners', 'buyShaft', 'upgradeShaft', 'upgradeGear', 'upgradeCart', 'upgradeLift', 'upgradeConveyor', 'upgradeYard', 'buyPad', 'buyShip', 'upgradeShip', 'setRoute', 'rename'];
+  const kinds = ['hireMiners', 'buyShaft', 'upgradeShaft', 'upgradeGear', 'upgradeCart', 'upgradeLift', 'upgradeConveyor', 'upgradeYard', 'buyPad', 'buyShip', 'upgradeClass', 'setRoute', 'rename'];
   let t = 0;
   for (let i = 0; i < 400; i++) {
     t += rnd(4) === 0 ? rnd(6 * HOUR) : rnd(20_000);
     const type = kinds[rnd(kinds.length)];
     const shaft = c.shafts[rnd(c.shafts.length)], ship = c.ships[rnd(c.ships.length)];
     const ns = [1, 10, 100, 'max'];
-    const cmd = { type, n: ns[rnd(4)], shaftId: shaft.id, shipId: ship.id, kind: ['speed', 'capacity', 'buckets', 'lights', 'supports'][rnd(5)], dir: rnd(2) ? 'left' : 'right', cls: ['hauler', 'cruiser', 'freighter'][rnd(3)],
+    const cmd = { type, n: ns[rnd(4)], shaftId: shaft.id, shipId: ship.id, kind: ['speed', 'capacity', 'buckets', 'lights', 'supports', 'hold', 'loading', 'multi', 'hold2'][rnd(9)], dir: rnd(2) ? 'left' : 'right', cls: ['hauler', 'cruiser', 'freighter'][rnd(3)],
       policy: ['best', 'nearest', 'fixed'][rnd(3)], destId: PLANET.buyers[rnd(4)].id, target: 'ship', id: ship.id, name: 'S' + i };
     const r = E.applyCommand(c, w, cmd, t);
     c = r.colony;
@@ -1159,7 +1161,7 @@ function smallMid(w) {
   c = run(c, w, { type: 'upgradeYard', n: 8 });
   c = run(c, w, { type: 'buyPad', n: 2 });
   for (let i = 0; i < 3; i++) c = run(c, w, { type: 'buyShip', cls: 'hauler' });
-  for (const sh of c.ships) c = run(c, w, { type: 'upgradeShip', shipId: sh.id, n: 6 });
+  c = run(c, w, { type: 'upgradeClass', cls: 'hauler', kind: 'hold', n: 6 });
   c.coin = 0;
   return c;
 }
@@ -1282,7 +1284,7 @@ test('ledger: every coin is tagged and the sums match coin changes', () => {
   const in0 = sumIn(c), out0 = sumOut(c), coin0 = c.coin;
   c = E.advance(c, w, c.t + HOUR).colony;
   for (const cmd of [{ type: 'hireMiners', shaftId: c.shafts[0].id, n: 3 }, { type: 'upgradeLift', kind: 'speed' }, { type: 'upgradeRefinery', site: 'planet', kind: 'throughput' },
-    { type: 'upgradeRefinery', site: 'orbital', kind: 'docks' }, { type: 'upgradeSafety', kind: 'pumps' }, { type: 'upgradeShip', shipId: c.ships[0].id }]) {
+    { type: 'upgradeRefinery', site: 'orbital', kind: 'docks' }, { type: 'upgradeSafety', kind: 'pumps' }, { type: 'upgradeClass', cls: 'hauler', kind: 'hold' }]) {
     const r = E.applyCommand(c, w, cmd, c.t + 5 * MIN);
     if (!r.error) c = r.colony;
   }
@@ -1382,4 +1384,174 @@ test('hazards: danger doubles every 5 shafts', () => {
     assert.ok(Math.abs(r[10].risk / r[5].risk - k(10) / k(5)) < 1e-6 || r[10].risk >= 0.99, `${r[10].risk} / ${r[5].risk}`);
     assert.ok(Math.abs(r[10].risk / r[5].risk - 4) < 1e-6 || r[10].risk >= 0.99, 'x4 = 2 (depth) x 2 (doubling per 5 shafts)');
   } finally { Object.assign(hz, saved); }
+});
+
+// ---------------------------------------------------------------- ships rework: class upgrades, one ore per ship, fleet-wide loading
+const withLicense = (c, ...ls) => { c = JSON.parse(JSON.stringify(c)); for (const l of ls) if (!c.unlocked.licenses.includes(l)) c.unlocked.licenses.push(l); return c; };
+// A colony with no miners and a hand-stocked yard, so loading decisions can be read off exactly.
+function yardLab(w, { yard, pads = 2, ships = ['hauler'], extra = [] }) {
+  let c = withLicense(rich(fresh(0), w, 1e22), 'cruiser', 'freighter');
+  c = run(c, w, { type: 'buyPad', n: pads - 1 });
+  for (const cls of ships) c = run(c, w, { type: 'buyShip', cls });
+  for (const cmd of extra) c = run(c, w, cmd);
+  c = JSON.parse(JSON.stringify(c));
+  c.shafts[0].miners = 0; c.miners = 0;
+  c.yard = { ...yard }; c.yardG = { ...yard };
+  return c;
+}
+
+test('class upgrades: one price for the class, every ship of it (new ones too) uses the levels', () => {
+  const w = newWorld();
+  let c = withLicense(rich(fresh(0), w), 'cruiser');
+  c = run(c, w, { type: 'buyShip', cls: 'hauler' });
+  c = run(c, w, { type: 'buyShip', cls: 'cruiser' });
+  const rows = () => Object.fromEntries(E.rates(c, w).ships.map((s) => [s.id, s]));
+  const base = rows();
+  const cap0 = base[c.ships[0].id].cap;
+  assert.equal(base[c.ships[1].id].cap, cap0);
+  const q = E.quote(c, w, { type: 'upgradeClass', cls: 'hauler', kind: 'hold', n: 12 });
+  assert.match(q.effect, /milestone x2/, 'level 10 is a milestone');
+  c = run(c, w, { type: 'upgradeClass', cls: 'hauler', kind: 'hold', n: 12 });
+  assert.equal(c.fleet.hauler.hold, 12);
+  assert.equal(c.fleet.cruiser.hold, 0, 'other classes unchanged');
+  c = run(c, w, { type: 'buyShip', cls: 'hauler' }); // arrives fully upgraded
+  const after = rows();
+  const hs = c.ships.filter((s) => s.cls === 'hauler');
+  assert.equal(hs.length, 3);
+  for (const s of hs) assert.ok(Math.abs(after[s.id].cap / cap0 - Math.pow(E.TUNING.fleetUp.hold.mult, 12) * 2) < 1e-9, 'all haulers share the class hold');
+  assert.equal(after[hs[2].id].cap, after[hs[0].id].cap, 'the new hauler is already upgraded');
+  assert.equal(c.ships.every((s) => s.lvl === undefined), true, 'no per-ship levels');
+  // speed belongs to the cruiser only, loading to the hauler only
+  assert.match(E.applyCommand(c, w, { type: 'upgradeClass', cls: 'hauler', kind: 'speed' }, c.t).error, /cannot upgrade/);
+  assert.match(E.applyCommand(c, w, { type: 'upgradeClass', cls: 'cruiser', kind: 'loading' }, c.t).error, /cannot upgrade/);
+  const t0 = E.rates(c, w).ships.find((s) => s.cls === 'cruiser').tripSecs;
+  c = run(c, w, { type: 'upgradeClass', cls: 'cruiser', kind: 'speed', n: 10 });
+  assert.ok(E.rates(c, w).ships.find((s) => s.cls === 'cruiser').tripSecs < t0, 'cruiser speed shortens trips');
+  c = run(c, w, { type: 'upgradeClass', cls: 'hauler', kind: 'loading', n: 5 });
+  assert.equal(c.fleet.hauler.loading, 5);
+  assert.match(E.applyCommand(c, w, { type: 'upgradeClass', cls: 'freighter', kind: 'hold' }, c.t).error, /Buy a freighter first/);
+  assert.equal(E.applyCommand(c, w, { type: 'upgradeShip', shipId: c.ships[0].id }, c.t).error, 'Unknown command');
+});
+
+test('freighter: multi is a one-time, very expensive unlock; hold2 needs it', () => {
+  const w = newWorld();
+  let c = withLicense(rich(fresh(0), w, 1e22), 'freighter');
+  c = run(c, w, { type: 'buyShip', cls: 'freighter' });
+  assert.match(E.applyCommand(c, w, { type: 'upgradeClass', cls: 'freighter', kind: 'hold2' }, c.t).error, /second hold/);
+  assert.equal(E.quote(c, w, { type: 'upgradeClass', cls: 'freighter', kind: 'hold2' }).canAfford, false);
+  const qm = E.quote(c, w, { type: 'upgradeClass', cls: 'freighter', kind: 'multi' });
+  assert.ok(qm.cost >= 1e12 && qm.cost >= 100 * E.quote(c, w, { type: 'upgradeClass', cls: 'freighter', kind: 'hold', n: 20 }).cost / 100, 'a ton');
+  assert.ok(qm.cost > 1000 * E.quote(c, w, { type: 'buyShip', cls: 'freighter' }).cost);
+  const fOf = () => E.rates(c, w).ships.find((x) => x.cls === 'freighter');
+  assert.equal(fOf().oreId2, undefined, 'no second hold yet');
+  c = run(c, w, { type: 'upgradeClass', cls: 'freighter', kind: 'multi' });
+  assert.equal(c.fleet.freighter.multi, 1);
+  assert.match(E.applyCommand(c, w, { type: 'upgradeClass', cls: 'freighter', kind: 'multi' }, c.t).error, /Already/);
+  const r1 = fOf();
+  assert.ok(r1.cap2 > 0 && 'fill2' in r1, 'second hold exists');
+  c = run(c, w, { type: 'upgradeClass', cls: 'freighter', kind: 'hold2', n: 5 });
+  assert.ok(fOf().cap2 > r1.cap2, 'hold2 grows the second hold');
+  assert.equal(fOf().cap, r1.cap, 'and not the first');
+  // only freighters carry the unlock
+  assert.match(E.applyCommand(c, w, { type: 'upgradeClass', cls: 'hauler', kind: 'multi' }, c.t).error, /cannot upgrade/);
+});
+
+test('loading: each ship carries one ore type', () => {
+  const w = newWorld();
+  const c = yardLab(w, { yard: { gravel: 3000, amber: 3000, jade: 3000 }, pads: 3, ships: ['hauler', 'hauler'] });
+  const r = E.advance(c, w, c.t + 30_000).colony;
+  for (const s of r.ships) {
+    assert.equal(s.state, 'loading');
+    assert.ok(s.oreId, 'ore chosen at docking');
+    assert.equal(s.oreId2, null, 'a hauler has one hold');
+    const held = Object.keys(s.cargo).filter((k) => s.cargo[k] > 1e-9);
+    assert.ok(held.length <= 1 && (held.length === 0 || held[0] === s.oreId), JSON.stringify(s.cargo));
+  }
+  // a month of play never mixes ores in one hold either
+  let m = midgame(w);
+  for (let i = 0; i < 40; i++) {
+    m = E.advance(m, w, m.t + 7 * MIN).colony;
+    for (const s of m.ships) assert.ok(Object.keys(s.cargo).filter((k) => s.cargo[k] > 1e-6).length <= 1, JSON.stringify(s.cargo));
+  }
+  for (const s of E.rates(m, w).ships) assert.ok(s.oreId && s.fill >= 0 && s.fill <= 1, JSON.stringify(s));
+});
+
+test('loading: a scarce high-value ore goes to one ship, the next takes the other ore; an abundant one goes to both', () => {
+  const w = newWorld();
+  const scarce = E.advance(yardLab(w, { yard: { gravel: 5000, amber: 20 } }), w, 1000).colony;
+  assert.deepEqual(scarce.ships.map((s) => s.state), ['loading', 'loading']);
+  assert.deepEqual(scarce.ships.map((s) => s.oreId), ['amber', 'gravel'], 'amber is claimed, so the second ship fills with gravel');
+  const plenty = E.advance(yardLab(w, { yard: { gravel: 5000, amber: 5000 } }), w, 1000).colony;
+  assert.deepEqual(plenty.ships.map((s) => s.oreId), ['amber', 'amber'], 'enough amber for both');
+  // the ships actually load what they chose
+  const later = E.advance(scarce, w, 1000 + 10_000).colony;
+  assert.ok((later.ships[1].cargo.gravel || 0) > 0 || later.ships[1].state === 'out');
+  // deterministic: same state, same choice
+  const again = E.advance(yardLab(w, { yard: { gravel: 5000, amber: 20 } }), w, 1000).colony;
+  assert.deepEqual(again.ships.map((s) => [s.oreId, s.oreId2]), scarce.ships.map((s) => [s.oreId, s.oreId2]));
+});
+
+test('loading: a freighter with multi fills two holds with two different ores', () => {
+  const w = newWorld();
+  const c = yardLab(w, { yard: { gravel: 20000, amber: 20000, jade: 20000 }, pads: 1, ships: ['freighter'],
+    extra: [{ type: 'upgradeConveyor', n: 30 }, { type: 'upgradeClass', cls: 'freighter', kind: 'multi' }, { type: 'upgradeClass', cls: 'freighter', kind: 'hold2', n: 3 }] });
+  const fr = c.ships.find((s) => s.cls === 'freighter');
+  c.ships = [fr]; fr.state = 'home'; fr.readyAt = c.t;
+  const r = E.advance(c, w, c.t + 50).colony;
+  const s = r.ships[0];
+  assert.equal(s.state, 'loading');
+  assert.ok(s.oreId && s.oreId2 && s.oreId !== s.oreId2, `${s.oreId} / ${s.oreId2}`);
+  const v = E.rates(r, w).ships[0];
+  assert.equal(v.oreId, s.oreId); assert.equal(v.oreId2, s.oreId2);
+  const done = E.advance(r, w, c.t + 5 * MIN);
+  const sale = done.events.find((e) => e.type === 'sale');
+  assert.ok(sale, 'the freighter flew and sold');
+  const sold = Object.keys(sale.data.ore).filter((k) => sale.data.ore[k] > 1e-6);
+  assert.deepEqual(sold.sort(), [s.oreId, s.oreId2].sort(), 'it sold both holds');
+  assert.ok(sale.data.ore[s.oreId2] > 0 && v.cap2 > 0);
+});
+
+test('fleet: step invariance and offline catch-up with class upgrades and a dual-hold freighter', () => {
+  const w = newWorld();
+  let c = withLicense(midgame(w), 'freighter');
+  c.coin = 1e22;
+  c = run(c, w, { type: 'buyShip', cls: 'freighter' });
+  c = run(c, w, { type: 'upgradeClass', cls: 'freighter', kind: 'multi' });
+  c = run(c, w, { type: 'upgradeClass', cls: 'freighter', kind: 'hold2', n: 10 });
+  c = run(c, w, { type: 'upgradeClass', cls: 'hauler', kind: 'loading', n: 10 });
+  const end = c.t + 2 * DAY;
+  const one = E.advance(c, w, end).colony;
+  let many = c, odd = c, t = c.t, s = 7;
+  for (let x = c.t + MIN; x <= end; x += MIN) many = E.advance(many, w, x).colony;
+  while (t < end) { s = (s * 16807) % 2147483647; t = Math.min(end, t + 500 + (s % (2 * HOUR))); odd = E.advance(odd, w, t).colony; }
+  for (const x of [many, odd]) {
+    assert.ok(rel(one.earned, x.earned) < 0.01, `earned ${one.earned} vs ${x.earned}`);
+    assert.ok(rel(one.stats.sold, x.stats.sold) < 0.01, `sold ${one.stats.sold} vs ${x.stats.sold}`);
+  }
+  assert.ok(one.earned > c.earned && one.stats.launches > c.stats.launches);
+  // offline catch-up pays at about the live rate
+  const live = E.rates(c, w).coinPerMin;
+  const paid = (one.earned - c.earned) / (2 * DAY / MIN);
+  assert.ok(paid > 0.3 * live && paid < 4 * live, `paid ${paid} vs rate ${live}`);
+});
+
+test('migration: a v5 colony (per-ship levels, no fleet) loads, drops ship levels and keeps running', () => {
+  const w = newWorld();
+  let c = JSON.parse(JSON.stringify(midgame(w)));
+  c.v = 5; c.coin = 1e9;
+  delete c.fleet;
+  c.ships.forEach((s, i) => { s.lvl = 7 + i; delete s.oreId; delete s.oreId2; delete s.pickAt; });
+  // an old ship mid-load with mixed cargo
+  const ld = c.ships.find((s) => s.state === 'loading') || c.ships[0];
+  ld.state = 'loading'; ld.cargo = { gravel: 3, amber: 9 }; ld.cargoG = { gravel: 3, amber: 9 }; ld.dockedAt = c.t; ld.firstLoadAt = c.t;
+  assert.ok(Number.isFinite(E.rates(c, w).coinPerMin), 'rates work before any migration');
+  const r = E.advance(c, w, c.t + HOUR).colony;
+  assert.deepEqual(r.fleet, { hauler: { hold: 0, loading: 0 }, cruiser: { hold: 0, speed: 0 }, freighter: { hold: 0, multi: 0, hold2: 0 } });
+  assert.ok(r.ships.every((s) => s.lvl === undefined && s.oreId !== undefined));
+  const o = E.applyCommand(c, w, { type: 'upgradeClass', cls: 'hauler', kind: 'hold' }, c.t);
+  assert.equal(o.error, undefined);
+  assert.equal(o.colony.fleet.hauler.hold, 1);
+  const r2 = E.advance(r, w, r.t + DAY).colony;
+  assert.ok(r2.earned > r.earned && Number.isFinite(r2.coin));
+  assertSane(r2, 'migrated');
 });
