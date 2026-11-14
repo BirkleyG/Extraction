@@ -1,9 +1,10 @@
 /* DOM UI: top bar, tabs and panels, buy rows (cost + next effect from quote), cards over the mine,
  * coach bubble, alerts, settings, ticker. Panels are rebuilt only when their structure changes; costs,
  * effects and affordability are refreshed in place every tick so buttons never vanish under a finger. */
-import { quote, destinations, marketTable, TUNING, PANELS } from '/shared/engine/index.js';
+import { quote, destinations, marketTable, shaftOptions, TUNING, PANELS } from '/shared/engine/index.js';
 import { $, $$, esc, fmt, dur, secs, ago, clamp, oreIcon, TIER_COL, DAY, store, speciesIcon } from './util.js';
-import { prefs, setPref, sfx, bump, popAt, Ticker, banner } from './juice.js';
+import { prefs, setPref, sfx, bump, popAt, Ticker, banner, shake } from './juice.js';
+import { createMap } from './map.js';
 import { createPrestige } from './prestige.js';
 import { createGalaxy } from './galaxy.js';
 import { createRefinery } from './refinery.js';
@@ -13,6 +14,7 @@ import { api, net, signOut, fillModels } from './net.js';
 const TABS = [
   { id: 'mine', label: 'Mine', show: () => true },
   { id: 'surface', label: 'Surface', show: (u) => has(u, 'lift', 'conveyor', 'yard', 'pads') },
+  { id: 'map', label: 'Map', show: () => true },
   { id: 'fleet', label: 'Fleet', show: (u) => has(u, 'ships', 'fleet', 'routes') },
   { id: 'market', label: 'Market', show: (u) => has(u, 'routes', 'market') },
   { id: 'refinery', label: 'Refinery', show: (u) => has(u, 'refinery') },
@@ -29,7 +31,7 @@ const HZ_LABEL = { gas: 'Toxic gas', flood: 'Floods', fire: 'Yard fires', quake:
 const SAFETY_ROWS = [['ventilation', 'Ventilation', 'gas', 'Clears toxic gas before it reaches the crews'], ['pumps', 'Pumps', 'flood', 'Keeps flooded tunnels from drowning shifts'], ['firebreaks', 'Firebreaks', 'fire', 'Stops yard fires from burning stockpiled ore']];
 const has = (u, ...p) => p.some((x) => u.panels.includes(x));
 const BULKS = [[1, '1x'], [10, '10x'], [100, '100x'], ['max', 'Max']];
-const BULKY = new Set(['upgradeRefinery', 'hire', 'upgradeShaft', 'upgradeLift', 'upgradeConveyor', 'upgradeYard', 'buyPad', 'upgradeShip', 'evolve', 'upgradeSafety']);
+const BULKY = new Set(['upgradeRefinery', 'hireMiners', 'upgradeGear', 'upgradeCart', 'upgradeShaft', 'upgradeLift', 'upgradeConveyor', 'upgradeYard', 'buyPad', 'upgradeClass', 'evolve', 'upgradeSafety']);
 const SHIP_DESC = { hauler: 'All-rounder', cruiser: 'Small and fast', freighter: 'Slow and huge' };
 const stateText = (s, now, I) => {
   const dest = s.dest === '@refinery' ? 'your orbital refinery' : I.buyer(s.dest)?.name || 'a buyer';
@@ -43,7 +45,7 @@ export function createUI(S, A) {
   const coinT = new Ticker();
   let lastKey = '', lastTabsKey = '', seenTabs = new Set(store('msc2_seenTabs') || ['mine']);
   let card = null; // { kind, id }
-  let PR = null, GX = null, RF = null, RP = null; // prestige, galaxy, refinery, reports: wired at the end
+  let PR = null, GX = null, RF = null, RP = null, MP = null; // prestige, galaxy, refinery, reports: wired at the end
 
   // ------------------------------------------------------------ top bar
   $('#gear').onclick = () => { sfx.tap(); openSettings(); };
@@ -120,13 +122,17 @@ export function createUI(S, A) {
       <div class="info"><div class="t">${title}</div>${sub ? `<div class="d">${sub}</div>` : ''}<div class="e" data-e></div></div>
       <button class="buy"><span class="bl">${btn}</span><span class="bc" data-c></span><i class="fill"></i></button></div>`;
   }
-  // "Max" hiring fills the free bunks instead of buying hundreds of idle miners.
+  // "Max" hiring stops where the cart is saturated: more miners than the cart can haul are wasted coin.
   function bulkN(cmd) {
     const n = S.ui.bulk;
-    if (cmd.type !== 'hire' || n !== 'max') return n;
-    const free = S.rates.shafts.reduce((a, s) => a + (s.ok ? s.cap : 0), 0) - S.colony.miners;
-    if (free <= 0) return 1;
-    return Math.max(1, Math.min(free, quote(S.colony, S.ew, { type: 'hire', n: 'max' }).n));
+    if (cmd.type !== 'hireMiners' || n !== 'max') return n;
+    const i = S.colony.shafts.findIndex((x) => x.id === cmd.shaftId), r = S.rates.shafts[i], sh = S.colony.shafts[i];
+    if (!r || !sh) return n;
+    const per = sh.miners > 0 ? r.crew / sh.miners : r.perMiner;
+    if (!(per > 0) || !(r.cap > 0)) return n;
+    const need = Math.ceil(r.cap / per) - sh.miners;
+    if (need <= 0) return 1;
+    return Math.max(1, Math.min(need, quote(S.colony, S.ew, { ...cmd, n: 'max' }).n));
   }
   function refreshRows(root = document) {
     const c = S.colony;
@@ -149,13 +155,16 @@ export function createUI(S, A) {
       eEl.className = 'e';
       eEl.textContent = afford ? q.effect : `${q.effect} · need ${fmt(q.cost - have)} more${isSp ? ' SP' : ''}`;
       btn.style.setProperty('--p', afford ? 1 : clamp(have / Math.max(1e-9, q.cost), 0, 1).toFixed(3));
-      const meh = afford && cmd.type === 'hire' && /no free bunk|bunks? free/.test(q.effect);
-      btn.classList.toggle('ready', afford && !meh);
-      btn.classList.toggle('meh', meh);
-      eEl.classList.toggle('warn', meh);
+      btn.classList.toggle('ready', afford);
+      btn.classList.remove('meh');
     }
-    const sg = S.bneck?.suggestion;
-    for (const b of $$('[data-advice]', root)) b.disabled = !sg || c.coin < sg.cost - 1e-9;
+    for (const b of $$('[data-opendig]', root)) {
+      const dq = quote(c, S.ew, { type: 'buyShaft' });
+      b.disabled = !!dq.error;
+      b.classList.toggle('poor', !dq.error && c.coin < dq.cost);
+      b.classList.toggle('ready', !dq.error && c.coin >= dq.cost);
+      const ce = b.querySelector('[data-c]'); if (ce) ce.textContent = dq.error ? 'MAXED' : fmt(dq.cost);
+    }
   }
   document.addEventListener('click', (e) => {
     const btn = e.target.closest('button.buy');
@@ -196,62 +205,130 @@ export function createUI(S, A) {
     }
     return h + '</div>';
   }
-  function shaftRows(s, r, inCard = false) {
+  // Each shaft is its own business: crew, gear and cart, with the limit that binds.
+  const BAND = { shallow: 'Shallow', middle: 'Middle', deep: 'Deep', deepest: 'Deepest' };
+  function shaftRows(s, r, inCard = false, first = false) {
     const u = S.unl, o = ore(s.ore);
-    let h = `<div class="shaft">${inCard ? '' : `<div class="sh-h"><b class="nm" data-rename="shaft" data-id="${s.id}" title="Rename">${esc(s.name)}</b> ${oreTag(o)} <span class="pill ${o?.tier === 'mythic' ? 'warn' : o?.tier === 'rare' ? 'sp' : 'mut'}">${r && r.pocket ? 'pocket' : o?.tier || ''}</span></div>`}
-      <div class="sh-s"><span>${s.miners}/${r ? r.cap : '?'} miners</span><span>${fmt(r ? r.orePerMin : 0)} ore/min</span></div>
+    const limit = !r ? '' : s.miners === 0 ? '<span class="pill warn">no crew yet</span>' : r.limit === 'cart' ? '<span class="pill warn">cart-limited</span>' : '<span class="pill mut">crew-limited</span>';
+    let h = `<div class="shaft biz">${inCard ? '' : `<div class="sh-h"><b class="nm" data-rename="shaft" data-id="${s.id}" title="Rename">${esc(s.name)}</b> <span class="pill sp">${BAND[s.band] || s.band}</span>${s.dir && s.dir !== 'main' ? ` <span class="pill mut">${esc(s.dir)}</span>` : ''} ${oreTag(o)}</div>`}
+      <div class="sh-s"><span><b>${fmt(r ? r.orePerMin : 0)}</b> ore/min</span>${limit}</div>
+      <div class="sh-s mut"><span>Crew digs ${fmt(r ? r.crew : 0)}/min</span><span>Cart hauls ${fmt(r ? r.cap : 0)}/min</span></div>
       ${pocketLine(s, r)}
       ${r && !r.ok ? `<div class="why">${esc(r.reason)}</div>` : ''}`;
-    if (has(u, 'carts')) h += row({ type: 'upgradeShaft', shaftId: s.id, kind: 'cart' }, `Carts <span class="lvl">Lv ${s.up.cart}</span>`, '', { btn: 'Upgrade' });
-    if (has(u, 'bunks')) h += row({ type: 'upgradeShaft', shaftId: s.id, kind: 'bunk' }, `Bunkhouse <span class="lvl">Lv ${s.up.bunk}</span>`, '', { btn: 'Build' });
+    if (has(u, 'hire')) h += row({ type: 'hireMiners', shaftId: s.id }, `Miners <span class="lvl">${s.miners}</span>`, 'Each miner digs for this shaft only', { btn: 'Hire', ...(first ? { id: 'hireRow', cls: 'hero' } : {}) });
+    if (has(u, 'drill')) h += row({ type: 'upgradeGear', shaftId: s.id }, `Gear <span class="lvl">Lv ${s.gear}</span>`, 'Faster digging and harder rock', { btn: 'Upgrade' });
+    if (has(u, 'carts')) h += row({ type: 'upgradeCart', shaftId: s.id }, `Cart <span class="lvl">Lv ${s.cart}</span>`, 'Hauls ore from the face to the lift', { btn: 'Upgrade' });
     return h + '</div>';
   }
   function advisor() {
     const b = S.bneck;
     if (!b || S.unl.panels.length < 4) return '';
-    const sg = b.suggestion;
-    return `<div class="advisor ${b.stage !== 'mine' ? 'hot' : ''}"><b>${b.stage !== 'mine' ? '! Bottleneck' : 'Foreman'}</b><p>${esc(b.message)}</p><div class="btnrow">${sg ? `<button class="buy sm" data-advice="1" ${sg.canAfford ? '' : 'disabled'}>${esc(sg.label)} · ${fmt(sg.cost)}</button>` : ''}</div></div>`;
+    return `<div class="advisor ${b.stage !== 'mine' ? 'hot' : ''}"><b>${b.stage !== 'mine' ? '! Bottleneck' : 'Foreman'}</b><p>${esc(b.message)}</p></div>`;
   }
   function panelMine() {
     const c = S.colony, u = S.unl, R = S.rates;
     let h = '';
     if (u.panels.length > 2) h += bulkBar();
-    h += row({ type: 'hire' }, `Hire miner`, `${c.miners} miner${c.miners === 1 ? '' : 's'}${c.idle ? ` · <span class="warn">${c.idle} idle (no bunks)</span>` : ''}`, { cls: 'hero', btn: 'Hire', id: 'hireRow' });
     h += advisor();
-    if (has(S.unl, 'shafts') && S.unl.next.panel) h += `<p class="lede next">${nextUnlock()}</p>`;
-    if (has(u, 'drill')) h += row({ type: 'upgradeDrill' }, `Drill <span class="lvl">Lv ${c.drill}</span>`, 'Harder ore needs a better drill', { btn: 'Upgrade' });
     h += '<h3>Shafts</h3>';
-    c.shafts.forEach((s, i) => { h += shaftRows(s, R.shafts[i]); });
-    if (has(u, 'shafts')) h += row({ type: 'buyShaft' }, `Dig shaft ${c.shafts.length + 1}`, 'Deeper shafts reach richer ore', { btn: 'Dig', id: 'digRow' });
-    else h += `<p class="lede next">${nextUnlock()}</p>`;
+    c.shafts.forEach((s, i) => { h += shaftRows(s, R.shafts[i], false, i === 0); });
+    if (has(u, 'shafts')) {
+      const left = c.shafts.length >= TUNING.maxShafts;
+      h += `<button class="digbtn" data-opendig="1" ${left ? 'disabled' : ''}><small>Shaft ${c.shafts.length + 1} · ${BAND[shaftOptions(c, S.ew)[0]?.band] || ''} rock</small><b>Open a new shaft</b><span class="bc" data-c></span></button>`;
+    } else h += `<p class="lede next">${nextUnlock()}</p>`;
+    if (has(S.unl, 'shafts') && S.unl.next.panel) h += `<p class="lede next">${nextUnlock()}</p>`;
     return h;
+  }
+  // The big moment: two dig directions side by side with fuzzy prospects.
+  const PROSPECT = { none: 'none', low: 'low', fair: 'fair', good: 'good' };
+  function openDig() {
+    const c = S.colony, opts = shaftOptions(c, S.ew);
+    if (!opts.length) { sfx.error(); return; }
+    const common = ore(c.site?.common);
+    const idx = c.shafts.length;
+    const html = `<h2>Shaft ${idx + 1}: where do you dig?</h2>
+      <p class="lede">A new shaft is a new business: its own crew, gear and cart. Pick a direction; the Guild's surveyors only guess what lies ahead. ${common ? `Every shaft here digs ${oreTag(common)} until it breaks into a vein.` : ''}</p>
+      <div class="digopts">${opts.map((o) => `<div class="digopt" data-dir="${o.dir}">
+        <h3>${o.dir === 'left' ? '← Dig left' : 'Dig right →'}</h3>
+        <div class="pill sp">${BAND[o.band] || o.band} band</div>
+        <div class="prospects">${S.world.planet.ores.filter((x) => x.id !== c.site?.common).map((x) => `<div class="prosp p-${o.prospects[x.id] || 'none'}">${oreIcon(x, 20)}<span class="pn">${esc(x.name)}</span><b>${PROSPECT[o.prospects[x.id]] || 'none'}</b></div>`).join('')}</div>
+        <div class="digcost"><small>Cost</small><b class="gold" data-dcost>${fmt(o.cost)}</b></div>
+        <button class="buy big breakground" data-break="${o.dir}">Break ground</button></div>`).join('')}</div>`;
+    const { el, close } = sheet(html, 'digsheet');
+    const upd = () => {
+      if (!el.isConnected) return clearInterval(iv);
+      for (const b of $$('[data-break]', el)) b.disabled = S.colony.coin < opts[0].cost || S.colony.shafts.length !== idx;
+      if (S.colony.shafts.length !== idx) close();
+    };
+    const iv = setInterval(upd, 500); upd();
+    el.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-break]');
+      if (!b || b.disabled) return;
+      A.send({ type: 'buyShaft', dir: b.dataset.break }, b);
+      if (S.colony.shafts.length > idx) { clearInterval(iv); close(); celebrate(S.colony.shafts[S.colony.shafts.length - 1]); }
+    });
+  }
+  function celebrate(sh) {
+    banner(`${sh.name} opens`, `${BAND[sh.band] || ''} rock, dug ${sh.dir}. Hire a crew and get the carts rolling.`, 'license');
+    shake(document.querySelector('.stage'));
+    sfx.big(); setTimeout(() => sfx.unlock && sfx.unlock(), 220);
+    if (A.mine && A.mine.celebrate) A.mine.celebrate(sh);
   }
   function panelSurface() {
     const c = S.colony, u = S.unl, R = S.rates;
     let h = bulkBar();
     h += `<div class="flow"><span>Mine <b>${fmt(R.minePerMin)}</b></span>→<span>Lift <b>${fmt(R.liftPerMin)}</b></span>→<span>Belts <b>${fmt(R.conveyorPerMin)}</b></span>→<span>Ships <b>${fmt(R.shipPerMin)}</b></span><small>ore/min</small></div>`;
-    if (has(u, 'lift')) h += row({ type: 'upgradeLift' }, `Lift <span class="lvl">Lv ${c.lift}</span>`, `Carries ${fmt(R.liftPerMin)} ore/min up from the tunnels`, { btn: 'Upgrade' });
+    if (has(u, 'lift')) {
+      h += `<h3>Lift <small class="mut">${fmt(R.liftPerMin)} ore/min</small></h3>`;
+      for (const [kind, label, sub] of [['speed', 'Speed', 'More trips per minute'], ['capacity', 'Capacity', 'More ore in every bucket'], ['buckets', 'Buckets', 'More buckets run at once']]) h += row({ type: 'upgradeLift', kind }, `${label} <span class="lvl">Lv ${c.lift?.[kind] || 0}</span>`, sub, { btn: 'Upgrade' });
+      h += '<h3>Surface</h3>';
+    }
     if (has(u, 'conveyor')) h += row({ type: 'upgradeConveyor' }, `Conveyors <span class="lvl">Lv ${c.conveyor}</span>`, `${fmt(R.conveyorPerPad)} ore/min into each loading ship`, { btn: 'Upgrade' });
     if (has(u, 'yard')) h += row({ type: 'upgradeYard' }, `Surface yard <span class="lvl">Lv ${c.yardLvl}</span>`, `Holds ${fmt(R.yardCap)} ore while ships are away${R.yardLoss > 0.005 ? ` · <span class="bad">${Math.round(R.yardLoss * 100)}% spills</span>` : ''}`, { btn: 'Expand' });
     if (has(u, 'pads')) h += row({ type: 'buyPad' }, `Launch pads <span class="lvl">${c.pads}</span>`, 'More ships load at the same time', { btn: 'Build' });
     return h;
   }
+  const CLS_UP = {
+    hauler: [['hold', 'Cargo hold', 'Every hauler carries more'], ['loading', 'Loading speed', 'Haulers fill faster at the pad']],
+    cruiser: [['hold', 'Cargo hold', 'Every cruiser carries more'], ['speed', 'Engines', 'Cruisers fly faster']],
+    freighter: [['hold', 'Cargo hold', 'Every freighter carries more'], ['multi', 'Second hold', 'A big unlock: two ores per trip'], ['hold2', 'Second hold size', 'More cargo in the second hold']],
+  };
+  const fillBar = (o, f) => `<span class="fillbar" title="${Math.round(100 * f)}%"><i style="width:${(clamp(f, 0, 1) * 100).toFixed(0)}%;background:${o?.color || 'var(--ok)'}"></i></span>`;
+  function shipOre(r) {
+    if (!r) return '';
+    const one = (id, f, k) => { const o = ore(id); return o ? `<span class="shipore">${oreIcon(o, 14)}<span data-sf="${k}" style="color:${TIER_COL[o.tier]}">${esc(o.name)}</span> ${fillBar(o, f)}<b data-sp="${k}">${Math.round(100 * f)}%</b></span>` : ''; };
+    return one(r.oreId, r.fill || 0, 'a') + (r.oreId2 ? one(r.oreId2, r.fill2 || 0, 'b') : '');
+  }
   function panelFleet() {
     const c = S.colony, u = S.unl, R = S.rates, now = S.now();
-    let h = has(u, 'ships') ? bulkBar() : '';
+    let h = has(u, 'ships') || has(u, 'fleet') ? bulkBar() : '';
     h += '<h3>Your ships</h3>';
     const buyers = S.ew.planet.buyers;
     c.ships.forEach((s, i) => {
       const r = R.ships[i];
-      h += `<div class="ship"><div class="sh-h"><b class="nm" data-rename="ship" data-id="${s.id}" title="Rename">${esc(s.name)}</b> <span class="pill sp">${TUNING.ship[s.cls].label}</span> <span class="lvl">Lv ${s.lvl}</span></div>
-        <div class="sh-s"><span>${fmt(r ? r.cap : 0)} cargo</span><span data-shipstate="${s.id}">${esc(stateText(s, now, S.I))}</span></div>`;
+      h += `<div class="ship" data-shipid="${s.id}"><div class="sh-h"><b class="nm" data-rename="ship" data-id="${s.id}" title="Rename">${esc(s.name)}</b> <span class="pill sp">${TUNING.ship[s.cls].label}</span></div>
+        <div class="sh-s"><span>${fmt(r ? r.cap : 0)}${r && r.cap2 ? ` + ${fmt(r.cap2)}` : ''} cargo</span><span data-shipstate="${s.id}">${esc(stateText(s, now, S.I))}</span></div>
+        <div class="sh-s" data-shipore="${s.id}">${shipOre(r)}</div>`;
       if (has(u, 'routes')) {
         const val = s.policy === 'fixed' ? 'fixed:' + s.destId : s.policy;
         h += `<label class="route">Route <select data-route="${s.id}"><option value="best" ${val === 'best' ? 'selected' : ''}>Best coin/min</option><option value="nearest" ${val === 'nearest' ? 'selected' : ''}>Nearest buyer</option>${c.refinery?.orbital ? `<option value="refinery" ${val === 'refinery' ? 'selected' : ''}>Orbital refinery</option>` : ''}${buyers.map((b) => `<option value="fixed:${esc(b.id)}" ${val === 'fixed:' + b.id ? 'selected' : ''}>Always ${esc(b.name)}</option>`).join('')}</select></label>`;
       }
-      if (has(u, 'ships')) h += row({ type: 'upgradeShip', shipId: s.id }, 'Bigger hold', '', { btn: 'Upgrade' });
       h += '</div>';
     });
+    if (has(u, 'ships')) {
+      h += '<h3>Fleet upgrades <small class="mut">every ship of a class</small></h3>';
+      for (const cls of ['hauler', 'cruiser', 'freighter']) {
+        const n = c.ships.filter((x) => x.cls === cls).length;
+        if (!n) continue;
+        h += `<div class="clsbox"><div class="sh-h"><b>${TUNING.ship[cls].label}s</b> <span class="pill mut">${n} owned</span></div>`;
+        for (const [kind, label, sub] of CLS_UP[cls]) {
+          if (kind === 'hold2' && !(c.fleet?.freighter?.multi > 0)) continue;
+          const lv = c.fleet?.[cls]?.[kind] || 0;
+          h += row({ type: 'upgradeClass', cls, kind }, `${label}${kind === 'multi' ? (lv ? ' <span class="pill ok">unlocked</span>' : '') : ` <span class="lvl">Lv ${lv}</span>`}`, sub, { btn: kind === 'multi' ? 'Unlock' : 'Upgrade', cls: kind === 'multi' ? 'hero' : '' });
+        }
+        h += '</div>';
+      }
+    }
     if (has(u, 'fleet')) {
       h += '<h3>Shipyard</h3>';
       const lic = S.unl.licenses;
@@ -343,9 +420,10 @@ export function createUI(S, A) {
   function structKey() {
     const c = S.colony, u = S.unl;
     const base = [S.ui.tab, u.panels.join(','), u.licenses.join(','), S.ui.bulk];
-    if (S.ui.tab === 'mine') base.push(c.miners, c.idle, c.drill, c.shafts.map((s, i) => [s.id, s.name, s.ore, s.up.cart, s.up.bunk, s.miners, Math.floor((s.face || 0) * 2), S.rates.shafts[i]?.blocked ? 'b' : ''].join(':')).join(';'), S.bneck ? S.bneck.message + (S.bneck.suggestion?.canAfford ? 1 : 0) : '', Math.floor(S.rates.minePerMin * 10), S.unl.next.panel ? Math.floor(20 * S.unl.next.panel.have / (S.unl.next.panel.at || 1)) + ':' + Math.ceil((S.unl.next.panel.waitH || 0) * 6) : '');
-    if (S.ui.tab === 'surface') base.push(c.lift, c.conveyor, c.yardLvl, c.pads, Math.round(S.rates.minePerMin), Math.round(S.rates.yardLoss * 100));
-    if (S.ui.tab === 'fleet') base.push(c.refinery?.orbital ? 'orb' : '', c.ships.map((s) => [s.id, s.name, s.lvl, s.policy, s.destId, s.state].join(':')).join(';'), S.unl.day, Math.floor(Math.log10(1 + c.earned) * 4));
+    if (S.ui.tab === 'mine') base.push(c.miners, c.shafts.map((s, i) => [s.id, s.name, s.ore, s.gear, s.cart, s.miners, s.band, Math.floor((s.face || 0) * 2), S.rates.shafts[i]?.blocked ? 'b' : '', S.rates.shafts[i]?.limit].join(':')).join(';'), S.bneck ? S.bneck.message : '', Math.floor(S.rates.minePerMin * 10), S.unl.next.panel ? Math.floor(20 * S.unl.next.panel.have / (S.unl.next.panel.at || 1)) + ':' + Math.ceil((S.unl.next.panel.waitH || 0) * 6) : '');
+    if (S.ui.tab === 'surface') base.push(c.lift?.speed, c.lift?.capacity, c.lift?.buckets, c.conveyor, c.yardLvl, c.pads, Math.round(S.rates.minePerMin), Math.round(S.rates.yardLoss * 100));
+    if (S.ui.tab === 'fleet') base.push(c.refinery?.orbital ? 'orb' : '', JSON.stringify(c.fleet || {}), c.ships.map((s) => [s.id, s.name, s.policy, s.destId, s.state, S.rates.ships.find((x) => x.id === s.id)?.oreId, S.rates.ships.find((x) => x.id === s.id)?.oreId2].join(':')).join(';'), S.unl.day, Math.floor(Math.log10(1 + c.earned) * 4));
+    if (S.ui.tab === 'map') base.push(MP.key());
     if (S.ui.tab === 'market') base.push(Math.floor(S.now() / 15000), S.ui.mktCls, c.shafts.length);
     if (S.ui.tab === 'safety') base.push(c.shafts.map((s) => [s.id, s.name, s.up.lights || 0, s.up.supports || 0].join(':')).join(';'), JSON.stringify(c.safety || {}), Math.round(S.rates.hazards.perHour * 20), Math.floor(S.now() / 10000));
     if (S.ui.tab === 'galaxy') base.push(GX.key());
@@ -364,14 +442,24 @@ export function createUI(S, A) {
       lastKey = key;
       const body = $('#tabbody');
       const st = body.scrollTop;
-      body.innerHTML = { mine: panelMine, surface: panelSurface, fleet: panelFleet, market: panelMarket, ranks: panelRanks, safety: panelSafety, galaxy: () => GX.panel(), prestige: () => PR.panel(), refinery: () => RF.panel(), reports: () => RP.panel() }[S.ui.tab]();
+      body.innerHTML = { mine: panelMine, surface: panelSurface, map: () => MP.panel(), fleet: panelFleet, market: panelMarket, ranks: panelRanks, safety: panelSafety, galaxy: () => GX.panel(), prestige: () => PR.panel(), refinery: () => RF.panel(), reports: () => RP.panel() }[S.ui.tab]();
       body.scrollTop = st;
       if (S.ui.tab === 'reports') RP.mount();
+      if (S.ui.tab === 'map') MP.mount();
     }
     refreshRows();
     if (S.ui.tab === 'refinery') RF.live();
     if (S.ui.tab === 'reports') RP.live();
-    if (S.ui.tab === 'fleet') for (const el of $$('[data-shipstate]')) { const s = S.colony.ships.find((x) => x.id === el.dataset.shipstate); if (s) el.textContent = stateText(s, S.now(), S.I); }
+    if (S.ui.tab === 'fleet') {
+      for (const el of $$('[data-shipstate]')) { const s = S.colony.ships.find((x) => x.id === el.dataset.shipstate); if (s) el.textContent = stateText(s, S.now(), S.I); }
+      for (const el of $$('[data-shipore]')) {
+        const r = S.rates.ships.find((x) => x.id === el.dataset.shipore); if (!r) continue;
+        for (const [k, f] of [['a', r.fill], ['b', r.fill2]]) {
+          const pe = el.querySelector(`[data-sp="${k}"]`); if (!pe) continue;
+          pe.textContent = Math.round(100 * (f || 0)) + '%'; const bar = pe.parentElement.querySelector('.fillbar i'); if (bar) bar.style.width = (clamp(f || 0, 0, 1) * 100).toFixed(0) + '%';
+        }
+      }
+    }
     if (card) renderCard();
   }
 
@@ -385,8 +473,7 @@ export function createUI(S, A) {
   document.addEventListener('click', (e) => {
     const m = e.target.closest('[data-mktcls]');
     if (m) { S.ui.mktCls = m.dataset.mktcls; sfx.tap(); render(true); return; }
-    const adv = e.target.closest('[data-advice]');
-    if (adv && S.bneck?.suggestion) { A.send(S.bneck.suggestion.cmd, adv); return; }
+    if (e.target.closest('[data-opendig]')) { sfx.tap(); openDig(); return; }
     const rn = e.target.closest('[data-rename]');
     if (rn && !rn.querySelector('input')) startRename(rn);
   });
@@ -422,19 +509,15 @@ export function createUI(S, A) {
       const i = c.shafts.findIndex((s) => s.id === card.id);
       if (i < 0) return closeCard();
       const s = c.shafts[i], o = ore(s.ore);
-      key += [s.up.cart, s.up.bunk, s.miners, s.name, s.ore, Math.floor((s.face || 0) * 2), S.rates.shafts[i]?.blocked, S.unl.panels.length, S.ui.bulk].join(':');
-      html = `<h4><span class="nm" data-rename="shaft" data-id="${s.id}" title="Rename">${esc(s.name)}</span> <small>depth ${s.idx + 1}</small></h4>
+      key += [s.gear, s.cart, s.miners, s.name, s.ore, Math.floor((s.face || 0) * 2), S.rates.shafts[i]?.blocked, S.rates.shafts[i]?.limit, S.unl.panels.length, S.ui.bulk].join(':');
+      html = `<h4><span class="nm" data-rename="shaft" data-id="${s.id}" title="Rename">${esc(s.name)}</span> <small>depth ${s.idx + 1} · ${BAND[s.band] || ''}</small></h4>
         <div class="orebox">${o ? oreIcon(o, 32) : ''}<div><b style="color:${TIER_COL[o?.tier]}">${esc(o?.name)}</b> <span class="pill mut">${o?.tier}</span><br><small>${esc(o?.description || '')}</small></div></div>
-        ${(has(S.unl, 'carts') || has(S.unl, 'bunks')) ? bulkBar() : ''}` + shaftRows(s, S.rates.shafts[i], true);
-    } else if (card.kind === 'dig') {
-      key += c.shafts.length;
-      html = `<h4>A new shaft</h4><p class="lede">Every level down is richer: more ore per miner, purer grade and rarer pockets in the rock. Crews dig common ore until the tunnel breaks into a pocket.</p>` + row({ type: 'buyShaft' }, `Dig shaft ${c.shafts.length + 1}`, '', { btn: 'Dig' });
+        ${has(S.unl, 'hire') && S.unl.panels.length > 2 ? bulkBar() : ''}` + shaftRows(s, S.rates.shafts[i], true);
     } else if (card.kind === 'bneck') {
       const b = S.bneck;
       if (!b) return closeCard();
-      key += b.message + (b.suggestion?.canAfford ? 1 : 0);
-      html = `<h4 class="hot">! ${esc(b.stage === 'idle' ? 'Idle miners' : b.stage === 'blocked' ? 'Blocked shaft' : 'Bottleneck: ' + b.stage)}</h4><p>${esc(b.message)}</p>${b.wastedPerMin > 0 ? `<p class="lede">Losing about <b class="gold">${fmt(b.wastedPerMin)}</b> coin/min.</p>` : ''}` +
-        (b.suggestion ? `<button class="buy big" data-advice="1" ${b.suggestion.canAfford ? '' : 'disabled'}>${esc(b.suggestion.label)} · ${fmt(b.suggestion.cost)}</button>${b.suggestion.canAfford ? '' : `<p class="lede">Need ${fmt(b.suggestion.cost - c.coin)} more.</p>`}` : '');
+      key += b.message;
+      html = `<h4 class="hot">! ${esc(b.stage === 'idle' ? 'Idle miners' : b.stage === 'blocked' ? 'Blocked shaft' : 'Bottleneck: ' + b.stage)}</h4><p>${esc(b.message)}</p>${b.wastedPerMin > 0 ? `<p class="lede">Losing about <b class="gold">${fmt(b.wastedPerMin)}</b> coin/min.</p>` : ''}`;
     } else if (card.kind === 'alerts') {
       const al = alerts();
       key += al.map((a) => a.text).join('|');
@@ -555,10 +638,7 @@ export function createUI(S, A) {
     const { el, close } = sheet(`<div class="away"><small>While you were away · ${esc(dur(s.ms))}</small><h2>Welcome back, General</h2>
       <p class="lede">Your crews kept digging. Here's what the colony did without you.</p>
       <div class="awaygrid">${rows.map(([k, v, c]) => `<div><small>${k}</small><b class="${c}">${v}</b></div>`).join('')}</div>
-      ${s.next ? `<div class="awaynext"><small>Best next move</small><b>${esc(s.next.label)}</b> <span class="gold">${fmt(s.next.cost)}</span></div>` : ''}
-      <div class="btnrow">${s.next && s.next.canAfford ? `<button class="buy big" data-spend="1">${esc(s.next.label)} · ${fmt(s.next.cost)}</button>` : ''}<button class="buy big ${s.next && s.next.canAfford ? 'ghost' : ''}" data-x="1">Collect &amp; carry on</button></div></div>`, 'awaysheet');
-    const sp = el.querySelector('[data-spend]');
-    if (sp) sp.addEventListener('click', () => { s.next.spend(); close(); });
+      <div class="btnrow"><button class="buy big" data-x="1">Collect &amp; carry on</button></div></div>`, 'awaysheet');
     sfx.big();
     return { el, close };
   }
@@ -591,9 +671,10 @@ export function createUI(S, A) {
   GX = createGalaxy(S);
   RF = createRefinery(S, A, { row, bulkBar });
   RP = createReports(S);
+  MP = createMap(S, A);
   A.galaxy = GX;
   return {
-    topbar, render, refreshRows, coach, slow, ticker, openCard, closeCard, awaySheet, setTab, sheet, row, bulkBar, galaxy: GX, prestige: PR,
+    topbar, render, refreshRows, openDig, map: () => MP, coach, slow, ticker, openCard, closeCard, awaySheet, setTab, sheet, row, bulkBar, galaxy: GX, prestige: PR,
     coinEl: () => $('#coin'),
     cardOpen: () => card,
   };

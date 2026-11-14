@@ -181,7 +181,7 @@ details summary { color: var(--muted); font-size: 14px; cursor: pointer; margin-
 .ores-strip { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 13px; margin: 8px 0; }
 .ores-strip > span { display: inline-flex; align-items: center; }
 .ob-land { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 14px; align-items: start; }
-.ob-map canvas { width: 220px; height: 220px; image-rendering: pixelated; cursor: pointer; display: block; }
+.ob-map canvas { width: 220px; height: 220px; image-rendering: pixelated; display: block; border-radius: 50%; }
 .ob-region canvas { width: 100%; aspect-ratio: 2 / 1; image-rendering: pixelated; display: block; border: 2px solid var(--line); }
 .ob-region b { display: block; margin-top: 8px; font-family: var(--f-display); font-size: 15px; color: var(--accent); }
 .ob-species { display: flex; gap: 16px; align-items: center; }
@@ -544,3 +544,42 @@ canvas.chart { display: block; width: 100%; height: 140px; border: 2px solid var
 .lr i { width: 10px; height: 10px; border: 1px solid #000; }
 .lr b { font-family: var(--f-mono); font-size: 18px; font-weight: 400; }
 .lr small { font-family: var(--f-mono); font-size: 16px; color: var(--muted); text-align: right; }
+
+/* ---------- Phase 3.5: shaft businesses, dig sheet, fleet classes, map ---------- */
+.shaft.biz { background: var(--panel2); border: 2px solid var(--line); border-left: 4px solid var(--accent); padding: 8px 10px 4px; margin: 12px 0; box-shadow: var(--bev); }
+.shaft.biz .sh-h { margin-bottom: 4px; }
+.sh-s.mut { color: var(--muted); font-size: 12px; }
+.digbtn { display: grid; width: 100%; gap: 2px; margin: 14px 0; padding: 14px; text-align: center; background: linear-gradient(180deg, #3a2410, #24150a); border: 3px solid var(--coin); color: var(--text); box-shadow: var(--bev), 4px 4px 0 #05030a; font-family: var(--f-display); }
+.digbtn small { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .1em; }
+.digbtn b { font-size: 18px; color: var(--coin); font-weight: 700; }
+.digbtn .bc { color: var(--coin); font-size: 14px; }
+.digbtn.ready { animation: digpulse 1.6s ease-in-out infinite; }
+.digbtn:disabled { opacity: .55; border-color: var(--line); animation: none; }
+@keyframes digpulse { 50% { box-shadow: var(--bev), 0 0 18px rgba(255,210,63,.55); } }
+.sheet.digsheet { width: min(760px, 100%); }
+.digopts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 10px; }
+.digopt { background: var(--panel2); border: 2px solid var(--line); padding: 12px; display: flex; flex-direction: column; gap: 8px; box-shadow: var(--bev); }
+.digopt h3 { margin: 0; font-size: 14px; color: var(--text); }
+.prospects { display: grid; gap: 4px; }
+.prosp { display: flex; align-items: center; gap: 6px; padding: 4px 8px; background: rgba(0,0,0,.25); border-left: 3px solid var(--line); font-size: 13px; }
+.prosp .pn { flex: 1; }
+.prosp b { font-family: var(--f-display); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
+.prosp.p-none { opacity: .45; } .prosp.p-low { border-color: #8a7a6a; } .prosp.p-fair { border-color: var(--warn); } .prosp.p-fair b { color: var(--warn); }
+.prosp.p-good { border-color: var(--ok); background: rgba(94,230,168,.12); } .prosp.p-good b { color: var(--ok); }
+.digcost { display: flex; justify-content: space-between; align-items: baseline; }
+.digcost b { font-size: 20px; font-family: var(--f-mono); }
+.breakground { background: linear-gradient(180deg, #ff8a3d, #c4561a); color: #1a0d05; letter-spacing: .1em; text-transform: uppercase; }
+.breakground:disabled { filter: grayscale(.8) brightness(.6); }
+.shipore { display: inline-flex; align-items: center; gap: 4px; margin-right: 10px; font-size: 13px; }
+.fillbar { display: inline-block; width: 54px; height: 8px; background: #0d0814; border: 1px solid var(--line); vertical-align: middle; }
+.fillbar i { display: block; height: 100%; }
+.clsbox { border: 2px solid var(--line); background: var(--panel2); padding: 6px 10px 2px; margin: 10px 0; }
+.mapwrap { position: relative; width: fit-content; max-width: 100%; margin: 0 auto; }
+#mapCv { display: block; border: 3px solid var(--line); box-shadow: var(--bev), 4px 4px 0 #05030a; max-width: 100%; touch-action: none; cursor: grab; background: #0b0714; }
+.mapbtns { position: absolute; right: 8px; top: 8px; display: grid; gap: 4px; }
+.mapbtns button { width: 34px; height: 34px; background: rgba(12,7,20,.85); border: 2px solid var(--line); font-size: 18px; }
+.maplegend { display: flex; flex-wrap: wrap; gap: 4px 14px; justify-content: center; margin: 10px 0; font-size: 12px; color: var(--muted); }
+.lg { display: inline-block; width: 9px; height: 9px; margin-right: 5px; border: 1px solid #000; vertical-align: middle; }
+.lg.me { background: var(--coin); } .lg.them { background: #fff; } .lg.ref { background: #ffe680; } .lg.shp { background: var(--accent); }
+@media (max-width: 700px) { .digopts { grid-template-columns: 1fr; } .digopt { padding: 10px; } }
+.digbtn.poor { border-color: var(--line); } .digbtn.poor b, .digbtn.poor .bc { color: var(--muted); }
