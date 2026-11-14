@@ -148,10 +148,16 @@ export function advance(colony, world, now) {
     });
     const lift = liftRate(c) * mineK;
     if (tot > lift) for (let o = 0; o < I.n; o++) flow[o] *= lift / tot;
+    // A full yard stops the lift: nothing new arrives, so only what is already stocked can be loaded (no waiting on a blocked ore).
+    if (sum(yd) >= 0.98 * yardCap(c.yardLvl)) flow.fill(0);
     for (let o = 0; o < I.n; o++) if (!(grd[o] > 0)) grd[o] = 1;
     c.ships.forEach((q, j) => {
       if (j === k || q.state !== 'loading') return;
-      for (const h of holdsOf(j)) claim[h.o] += Math.max(0, h.cap - cargo[j][h.o]);
+      // what it can still take before it must leave: its room, but never more than its load rate over the time left in its window
+      const hs = holdsOf(j), room = hs.map((h) => Math.max(0, h.cap - cargo[j][h.o]));
+      const left = q.firstLoadAt != null ? Math.max(0, q.firstLoadAt + T.maxLoadSecs * 1000 - t) / 60000 : T.maxLoadSecs / 60;
+      const lim = shipLoadRate(c, q) * left, tot = sum(room), kk = tot > lim && tot > 0 ? lim / tot : 1;
+      hs.forEach((h, i) => { claim[h.o] += room[i] * kk; });
     });
     const lr = shipLoadRate(c, s), W = loadWindow();
     const fill = (o1, C1, o2, C2) => {

@@ -58,7 +58,7 @@ export function spend(c, world, now, maxBuys = 400, { noRefine = false, strongFl
   let buys = 0;
   if (strongFleet) {
     const lic = c.unlocked?.licenses || [];
-    if (lic.includes('freighter') && !c.ships.some((s) => s.cls === 'freighter')) {
+    if (lic.includes('freighter') && now >= 8 * DAY && !c.ships.some((s) => s.cls === 'freighter')) {
       const q = E.quote(c, world, { type: 'buyShip', cls: 'freighter' });
       if (!q.error && c.coin >= 30 * q.cost) { const r = E.applyCommand(c, world, { type: 'buyShip', cls: 'freighter' }, now); if (!r.error) { c = r.colony; buys++; } }
     }
@@ -134,7 +134,7 @@ export function tunePrices(c, world, now, refine = 'tune') {
 
 // strategy: 'none' | 'first' (nuke at the first eligible check-in) | a day number (first check-in of that day)
 // refine: 'tune' (builds refineries when they pay, searches prices) | 'none' (never refines) | 'bad' (markup 3.0)
-function run({ quiet = false, strategy = 'none', refine = 'tune', fleet = 'strong' } = {}) {
+function run({ quiet = false, strategy = 'none', refine = 'tune', fleet = 'greedy' } = {}) {
   const strongFleet = fleet === 'strong';
   const t0 = performance.now();
   let world = { month: 'pace', planet: PLANET, market: {}, startedAt: 0, endsAt: 30 * DAY, parties: makeParties(PLANET) };
@@ -273,16 +273,16 @@ async function strategies() {
   const jobs = strats.map((strategy) => job({ strategy }));
   const rjobs = refs.map((refine) => job({ strategy: 'none', refine }));
   const base = run({ quiet: process.argv.includes('--quiet'), strategy: 'none' });
-  const fjob = monthOnly ? null : job({ strategy: 'none', fleet: 'greedy' });
+  const fjob = monthOnly ? null : job({ strategy: 'none', fleet: 'strong' });
   const rres = await Promise.all(rjobs);
   if (fjob) {
     const g = await fjob;
-    console.log(`\n== (e) Fleet classes: scripted strong player (freighter + multi unlock) vs greedy ranking alone ==`);
-    for (const [nm, r] of [['strong fleet', base], ['greedy only', g]]) {
+    console.log(`\n== (e) Fleet classes: greedy ranking alone vs a scripted strong player (freighter from day 8, multi unlock when affordable) ==`);
+    for (const [nm, r] of [['greedy only', base], ['strong fleet', g]]) {
       const mday = r.rows.find((x) => x.multi > 0);
       console.log(`${nm.padEnd(13)} coin@30 ${E.fmt(r.coin).padEnd(8)} earned@10 ${E.fmt(r.rows[9].month).padEnd(8)} @20 ${E.fmt(r.rows[19].month).padEnd(8)} @30 ${E.fmt(r.rows[29].month).padEnd(8)} multi ${mday ? 'day ' + mday.day : 'never'} · mix d10 ${r.rows[9].mix} d30 ${r.rows[29].mix} · levels d30 ${r.rows[29].fl}`);
     }
-    console.log(`strong vs greedy: ${(base.monthEarned / g.monthEarned).toFixed(2)}x earned`);
+    console.log(`strong vs greedy: ${(g.monthEarned / base.monthEarned).toFixed(2)}x earned`);
   }
   if (monthOnly) return;
   console.log(`\n== (d) Refining: month-end coin (bot hoards from day ${HOARD_FROM}) ==`);
@@ -305,6 +305,6 @@ async function strategies() {
   console.log(`strategies ran in ${((performance.now() - t0) / 1000).toFixed(1)}s (parallel)`);
 }
 
-if (!isMainThread && workerData) parentPort.postMessage(run({ quiet: true, strategy: workerData.strategy, refine: workerData.refine || 'tune', fleet: workerData.fleet || 'strong' }));
+if (!isMainThread && workerData) parentPort.postMessage(run({ quiet: true, strategy: workerData.strategy, refine: workerData.refine || 'tune', fleet: workerData.fleet || 'greedy' }));
 else if (import.meta.url === `file://${process.argv[1]}`) strategies();
 export { run };

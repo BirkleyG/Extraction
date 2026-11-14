@@ -68,7 +68,7 @@ export const T = {
   shipFleetGrowth: 2.6,                 // each extra ship of a class costs 2.6x
   // Class upgrades (Phase 3.5 rework): levels live in colony.fleet[cls] and every ship of the class uses them.
   //   hold (all): cargo x mult per level · loading (hauler): load rate x mult per level · speed (cruiser): flight speed x mult per level
-  //   multi (freighter): one-time unlock of a second hold (40% of the main hold) · hold2 (freighter, needs multi): second hold x mult per level
+  //   multi (freighter): one-time unlock of a second hold (40% of the main hold; costs about a big shaft) · hold2 (freighter, needs multi): second hold x mult per level
   // Costs: hold/hold2 base = cost x the class's cargo x upk (growth per level); loading/speed have their own base.
   // Milestones (like gear and carts) multiply a stat at these levels: x2 for cargo and loading, x1.5 for speed.
   fleetUp: {
@@ -76,7 +76,7 @@ export const T = {
     loading: { mult: 1.12, growth: 1.45, cost: 160, max: 200 },
     speed:   { mult: 1.03, growth: 1.5,  cost: 1_500, max: 120 },
     hold2:   { mult: 1.17, growth: 1.3, cost: 3, max: 300, share: 0.4 },  // second hold = share x the main hold x mult^level
-    multi:   { cost: 40e12 },
+    multi:   { cost: 12e12 },  // about one shaft-8 purchase (T.shaftBase x 10^7)
     milestones: [10, 25, 50, 100, 200, 300],
     bonus: { hold: 2, hold2: 2, loading: 2, speed: 1.5 },
   },

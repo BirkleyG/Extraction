@@ -997,7 +997,7 @@ test('hazards: lights, supports and colony safety lower losses', () => withHazar
   const raw = E.advance(c, w, end).colony, prot = E.advance(safe, w, end).colony;
   assert.ok(prot.stats.hazards < raw.stats.hazards / 3, `${prot.stats.hazards} vs ${raw.stats.hazards}`);
   assert.ok(prot.stats.lost < raw.stats.lost, `${prot.stats.lost} vs ${raw.stats.lost}`);
-  assert.ok(prot.stats.mined > raw.stats.mined, 'protected shafts dig more');
+  assert.ok(prot.stats.mined > raw.stats.mined, 'protected shafts dig more ' + prot.stats.mined + ' vs ' + raw.stats.mined);
   // risk numbers for the UI
   const r0 = E.rates(c, w), r1 = E.rates(safe, w);
   assert.equal(r0.shafts[0].risk, 0, 'the home shaft is safe');
