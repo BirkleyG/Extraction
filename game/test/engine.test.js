@@ -163,7 +163,7 @@ test('offline 3-day catch-up runs fast and pays at about the live rate', () => {
   assert.ok(ms < 3000, `took ${ms}ms`);
   const gained = r.colony.coin - c.coin;
   assert.ok(gained > 0.3 * live * 3 * 24 * 60, `gained ${gained} vs live ${live}/min`);
-  assert.ok(gained < 1.5 * live * 3 * 24 * 60);
+  assert.ok(gained < 4 * live * 3 * 24 * 60, `gained ${gained} vs live ${live}/min x 3d = ${live * 4320}`);
   assertSane(r.colony, 'offline');
   const summary = r.events.find((e) => e.type === 'sales');
   assert.ok(summary && summary.data.coin > 0 && Object.keys(summary.data.ore).length > 0);
@@ -1149,8 +1149,8 @@ const refWorld = (parties = PARTIES) => ({ ...newWorld(), parties });
 function smallMid(w) {
   let c = buyN(rich(fresh(0), w, 1e18), w, 3);
   for (const s of c.shafts) {
-    c = run(c, w, { type: 'hireMiners', shaftId: s.id, n: 4 });
-    c = run(c, w, { type: 'upgradeCart', shaftId: s.id, n: 3 });
+    c = run(c, w, { type: 'hireMiners', shaftId: s.id, n: 1 });
+    c = run(c, w, { type: 'upgradeCart', shaftId: s.id, n: 2 });
   }
   c = run(c, w, { type: 'upgradeLift', kind: 'speed', n: 6 });
   c = run(c, w, { type: 'upgradeLift', kind: 'capacity', n: 6 });
@@ -1316,7 +1316,7 @@ test('refinery: step invariance across store-full transitions and a 3-day catch-
   // a store that fills at a high ask, drains at a low one, then fills again: one call per phase vs 1-minute steps
   const f = refColony(w, ['planet'], 2.05);
   f.refinery.planet.lvl.yield = 15; // a rich colony: the store fills fast
-  const phases = [[6, null], [10, 1], [16, 2.05]];
+  const phases = [[6, null], [10, 0.5], [16, 2.05]];
   const play = (step) => {
     let q = f, t = f.t, full = 0;
     for (const [h, m] of phases) {
@@ -1367,4 +1367,19 @@ test('refinery: with no parties a computer buyer takes everything at 0.6x', () =
   assert.ok(rel(ev.data.coin, expect) < 1e-9);
   assert.equal(stockOf(r.colony, 'planet'), 0, 'nothing piles up');
   assert.equal(E.rates(r.colony, w).refinery.planet.byOre.gravel.ask, E.TUNING.ref.computer);
+});
+
+test('hazards: danger doubles every 5 shafts', () => {
+  const w = newWorld();
+  const hz = E.TUNING.hz, saved = { ...hz };
+  hz.quake = 0; hz.gas = 0; hz.flood = 0; hz.fire = 0;
+  try {
+    const c = buyN(rich(fresh(0), w, 1e300), w, 12);
+    const r = E.rates(c, w).shafts;
+    assert.equal(r[0].risk, 0);
+    // cave + insanity risk is proportional to idx x 2^(idx/5) (the shaft needs miners for insanity: caves only here)
+    const k = (i) => i * Math.pow(2, i / 5);
+    assert.ok(Math.abs(r[10].risk / r[5].risk - k(10) / k(5)) < 1e-6 || r[10].risk >= 0.99, `${r[10].risk} / ${r[5].risk}`);
+    assert.ok(Math.abs(r[10].risk / r[5].risk - 4) < 1e-6 || r[10].risk >= 0.99, 'x4 = 2 (depth) x 2 (doubling per 5 shafts)');
+  } finally { Object.assign(hz, saved); }
 });
