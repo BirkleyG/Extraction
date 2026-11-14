@@ -100,7 +100,7 @@ function rollPocket(c, I, s, n, prevEnd) {
   const sizeK = pick.size * (0.6 + 0.4 * Math.min(1.6, pick.r)) * (mythic ? T.pk.mythicLen : 1);
   const hours = Math.min(T.pk.hoursMax * (mythic ? T.pk.mythicLen : 1), Math.max(T.pk.hoursMin * (mythic ? T.pk.mythicLen : 1), T.pk.hours[0] * Math.pow(T.pk.hours[1], u[1]) * sizeK));
   const gapMean = meanLenM() * (1 - sh) / sh;
-  const gap = gapMean * (n === 0 ? 0.15 + 0.85 * u[2] : 0.5 + u[2]);
+  const gap = gapMean * (n === 0 ? 0.05 + 0.25 * u[2] : 0.5 + u[2]); // the first vein sits close so a new shaft strikes something soon
   const start = round2(prevEnd + gap);
   return { ore: pick.o.id, start, len: Math.max(1, round2(hours * 60 / T.pk.minPerM)) };
 }

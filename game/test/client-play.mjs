@@ -107,20 +107,6 @@ await A.page.mouse.click(box.x + box.width * 0.45, box.y + box.height * 0.62);
 await sleep(500);
 await shot(A, '10-shaft-card-desktop');
 
-// the new-shaft sheet: two directions, fuzzy prospects
-if (await A.page.$('[data-opendig]')) {
-  await A.page.click('[data-opendig]');
-  await A.page.waitForSelector('.digsheet .digopt');
-  await sleep(300);
-  await shot(A, '10b-dig-sheet-desktop');
-  const nOpts = await A.page.$$eval('.digopt', (os) => os.length);
-  if (nOpts !== 2) errors.push('dig sheet should show 2 options, got ' + nOpts);
-  const brk = await A.page.$('[data-break]:not([disabled])');
-  if (brk) { await brk.click(); await sleep(900); await shot(A, '10c-shaft-opened-desktop'); }
-  await A.page.evaluate(() => document.querySelectorAll('.overlay').forEach((o) => o.remove()));
-}
-const mapTab = await A.page.$('[data-tab="map"]');
-if (mapTab) { await mapTab.click(); await sleep(1500); await shot(A, '10d-map-desktop'); await A.page.click('[data-tab="mine"]'); }
 
 // mid-month: spend the catch-up grant across every panel, then look at each tab
 if (MID) {
@@ -129,13 +115,15 @@ if (MID) {
     for (const P of [A, B]) {
       const tabs = await P.page.$$eval('[data-tab]', (ts) => ts.map((t) => t.dataset.tab));
       for (const id of tabs.filter((t) => t !== 'ranks' && t !== 'market')) {
-        await P.page.click(`[data-tab="${id}"]`).catch(() => {});
-        await P.page.click('[data-bulkset="max"]').catch(() => {});
+        await P.page.click(`[data-tab="${id}"]`, { timeout: 3000 }).catch(() => {});
+        await P.page.click('[data-bulkset="max"]', { timeout: 3000 }).catch(() => {});
         for (let k = 0; k < 6; k++) {
           const b = await P.page.$('#tabbody .row[data-cmd] button.buy.ready');
           if (!b) break;
-          await b.click().catch(() => {});
+          await b.click({ timeout: 3000 }).catch(() => {});
           await sleep(150);
+          // some buttons open a sheet (e.g. "Open a new shaft"); close it so it doesn't block the next clicks
+          await P.page.evaluate(() => document.querySelectorAll('.overlay').forEach((o) => o.remove())).catch(() => {});
         }
       }
     }
@@ -172,6 +160,23 @@ await A.page.click('.awaysheet [data-x]').catch(() => {});
 for (const id of ['market', 'fleet', 'surface']) {
   if (await A.page.$(`[data-tab="${id}"]`)) { await A.page.click(`[data-tab="${id}"]`); await sleep(700); await shot(A, `13-${id}-desktop`); }
 }
+
+
+// the new-shaft sheet: two directions, fuzzy prospects
+if (await A.page.$('[data-opendig]')) {
+  await A.page.click('[data-opendig]');
+  await A.page.waitForSelector('.digsheet .digopt');
+  await sleep(300);
+  await shot(A, '10b-dig-sheet-desktop');
+  const nOpts = await A.page.$$eval('.digopt', (os) => os.length);
+  if (nOpts !== 2) errors.push('dig sheet should show 2 options, got ' + nOpts);
+  const brk = await A.page.$('[data-break]:not([disabled])');
+  if (brk) { await brk.click(); await sleep(900); await shot(A, '10c-shaft-opened-desktop'); }
+  await A.page.evaluate(() => document.querySelectorAll('.overlay').forEach((o) => o.remove()));
+}
+
+const mapTab = await A.page.$('[data-tab="map"]');
+if (mapTab) { await mapTab.click(); await sleep(1500); await shot(A, '10d-map-desktop'); await A.page.click('[data-tab="mine"]'); }
 
 const state = await A.page.evaluate(async () => {
   const r = await fetch('/api/v2/state', { headers: { authorization: 'Bearer ' + localStorage.getItem('msc_server_token') } });

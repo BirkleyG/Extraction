@@ -73,6 +73,12 @@ for (let i = 0; i < 400; i++) {
   st = (await call(A, 'GET', '/api/v2/state')).body;
   if (st.colony.runEarned >= 2.2e7) break;
 }
+// autoSpend no longer digs shafts (the player picks a direction): open as many as the coin allows
+for (let k = 0; k < 4; k++) {
+  const r = await call(A, 'POST', '/api/v2/command', { cmd: { type: 'buyShaft', dir: k % 2 ? 'right' : 'left' } });
+  if (r.status !== 200) break;
+}
+st = (await call(A, 'GET', '/api/v2/state')).body;
 log('A runEarned', Math.round(st.colony.runEarned), 'day', Math.floor((clock() - st.world.startedAt) / 864e5) + 1, 'shafts', st.colony.shafts.length, 'panels', st.colony.unlocked.panels.join(','));
 await A.page.reload(); await A.page.waitForSelector('#app:not([hidden])');
 await B.page.reload(); await B.page.waitForSelector('#app:not([hidden])');
@@ -90,7 +96,8 @@ if (await A.page.$('[data-tab="safety"]')) {
   if (btn) await btn.click();
   await sleep(300);
   await shot(A, '04-safety-desktop');
-} else errors.push('no safety tab');
+} else if (st.colony.shafts.length >= 4) errors.push('no safety tab');
+else log('safety tab not open yet: only', st.colony.shafts.length, 'shafts (needs the 4th)');
 
 // ---------------------------------------------------------------- 3. prestige + nuke
 await A.page.click('[data-tab="prestige"]');

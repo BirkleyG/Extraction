@@ -201,7 +201,7 @@ export function createUI(S, A) {
     } else h += `<span class="mut">${fmtM(r.face)} dug</span>`;
     if (nx && no) {
       const mins = r.metresPerMin > 0 ? nx.at / r.metresPerMin : 0;
-      h += `<span>Next: ${oreTag(no)} in ${fmtM(nx.at)}${mins > 0 && !r.pocket ? ` <small class="mut">~${mins < 60 ? Math.ceil(mins) + ' min' : (mins / 60).toFixed(1) + ' h'}</small>` : ''}${nx.blocked ? ` <span class="pill warn">needs drill ${no.tier === 'mythic' ? 'mythic' : no.hardness}</span>` : ''}</span>`;
+      h += `<span>Next: ${oreTag(no)} in ${fmtM(nx.at)}${mins > 0 && !r.pocket ? ` <small class="mut">~${mins < 60 ? Math.ceil(mins) + ' min' : (mins / 60).toFixed(1) + ' h'}</small>` : ''}${nx.blocked ? ` <span class="pill warn">needs gear ${no.hardness}</span>` : ''}</span>`;
     }
     return h + '</div>';
   }

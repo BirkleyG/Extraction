@@ -9,7 +9,7 @@ import { prefs } from './juice.js';
 import { REF, drawPlanetRefinery, drawStation } from './refinery-art.js';
 
 // Spread out: tall galleries with air between them, one pile per ore, a long belt to a far shipyard.
-export const L = { LV: 48, G0: 10, GH: 30, GX0: 8, GLEN: 168, PILE_X0: 62, PILE_DX: 40, FEED_Y: -34, PAD_X0: 380, PAD_W: 84, LAYER_H: 136 };
+export const L = { LV: 74, G0: 10, GH: 30, GX0: 8, GLEN: 168, PILE_X0: 62, PILE_DX: 40, FEED_Y: -34, PAD_X0: 380, PAD_W: 84, LAYER_H: 136 };
 L.YARD_X = L.PILE_X0; L.CONV_X0 = L.PILE_X0 - 18;
 export const galleryTop = (k) => L.G0 + k * L.LV;
 export const padX = (i) => L.PAD_X0 + i * L.PAD_W + L.PAD_W / 2;
@@ -72,10 +72,10 @@ export function createMine(canvas, get, hooks = {}) {
     const c = get()?.colony;
     const left = c?.refinery?.planet ? 118 : 50;
     const span = L.PAD_X0 + Math.max(1, c ? c.pads : 1) * L.PAD_W + 20 + left;
-    let zz = clamp(cssW() / span, 1.8, 4);
+    let zz = clamp(cssW() / Math.min(span, L.PAD_X0 + L.PAD_W + 90 + left), 1.1, 4);
     if (cssH() < 260) zz = Math.min(zz, 2);
     const vw = cssW() / zz, vh = cssH() / zz;
-    return { z: zz, x: vw > span ? -left - (vw - span) / 2 : -left, y: -vh * 0.46 };
+    return { z: zz, x: vw > span ? -left - (vw - span) / 2 : -left, y: -vh * 0.36 };
   }
   function fitView() {
     const b = bounds(), zz = clamp(fitZ() * 0.96, zMin(), ZMAX);
@@ -308,8 +308,7 @@ export function createMine(canvas, get, hooks = {}) {
     g.textBaseline = 'top';
     if (z >= 1.5) {
       label(g, S(0, -64), 'LIFT', fs, 'center');
-      label(g, S(L.PILE_X0 - 16, -46), `YARD ${fmt(yardAmt)}/${fmt(yardCap)}`, fs, 'left', yardF >= 0.85 ? '#ff7a8a' : null);
-      if (yardF >= 0.97) label(g, S(L.PILE_X0 + 70, -46), 'FULL', fs, 'left', '#ff5a6e');
+      label(g, S(L.PILE_X0 - 16, -46), `YARD ${fmt(yardAmt)}/${fmt(yardCap)}${yardF >= 0.97 ? ' FULL' : ''}`, fs, 'left', yardF >= 0.85 ? '#ff7a8a' : null);
       if (z >= 2) for (const [id, i] of slots) if (ores[id]) label(g, S(pileX(i), 9), `${ores[id].name.toUpperCase().slice(0, 9)} ${fmt(c.yard[id] || 0)}`, Math.round(fs * 0.85), 'center', lite(ores[id].color));
       label(g, S(L.PAD_X0 + 30, 6), c.pads > 1 ? 'LAUNCH PADS' : 'LAUNCH PAD', fs, 'center');
       label(g, S((L.CONV_X0 + L.PAD_X0) / 2 + 40, -22), 'ORE BELT', fs, 'center');
@@ -322,7 +321,7 @@ export function createMine(canvas, get, hooks = {}) {
       const G = geo(c.shafts[k], infos[k].o);
       if (G.broken && z >= 1.2) label(g, S(G.xs + BREAK / 2, galleryTop(c.shafts[k].idx) + 8), `… ${fmt(Math.round(G.F))} M`, Math.round(fs * 0.85), 'center', '#b3a5d3');
     }
-    for (let k = 0; k < n; k++) badge(g, S, c.shafts[k], infos[k], fs, ores, gap, t);
+    for (let k = 0; k < n; k++) badge(g, S, c.shafts[k], infos[k], fs, ores, (L.LV - L.GH - 6) * Sc, t);
     if (unl.panels.includes('shafts') && n < 30) {
       const p = S(L.GX0 + 6, galleryTop(n) + 7);
       g.font = `${fs}px Silkscreen, monospace`;
@@ -408,7 +407,7 @@ export function createMine(canvas, get, hooks = {}) {
     const r = inf.r, o = inf.o;
     const G = geo(s, o), { x0, xs, xf, xr, X } = G;
     rockEnd = Math.max(rockEnd, xr);
-    hits.push({ kind: 'shaft', id: s.id, x0: x0 - 10, x1: xr, y0, y1 });
+    hits.push({ kind: 'shaft', id: s.id, x0: x0 - 10, x1: xr, y0, y1: y1 + 20 });
     if (y1 < view.y - 4 || y0 > view.y + view.h + 4) return;
     const ore = ores[s.ore];
     const ok = r ? r.ok : true;
@@ -549,7 +548,7 @@ export function createMine(canvas, get, hooks = {}) {
 
   function badge(g, S, s, inf, fs, ores, gap, t) {
     const y0 = galleryTop(s.idx), r = inf.r, o = inf.o;
-    const p = S(L.GX0 + 4, y0 + 2);
+    const p = S(L.GX0 + 4, y0 + L.GH + 4);
     if (p.y > canvas.height || p.y < -80) return;
     if (gap < fs + 9 * dpr) { g.fillStyle = o.full ? '#ff5a6e' : (ores[s.ore] ? ores[s.ore].color : '#fff'); g.fillRect(p.x, p.y, 3 * dpr, Math.max(3 * dpr, gap * 0.5)); return; }
     const ore = ores[s.ore];
@@ -572,14 +571,16 @@ export function createMine(canvas, get, hooks = {}) {
     const extra = 1 + (line4 ? 1 : 0);
     const tall = fs * (3 + extra) + (14 + 3 * extra) * dpr;
     const compact = gap < tall + 4 * dpr;
-    const w = Math.max(g.measureText(line1).width + (tag ? g.measureText(tag).width + 10 * dpr : 0), compact ? 0 : Math.max(g.measureText(line2).width, g.measureText(line3).width, line4 ? g.measureText(line4).width : 0), fs * 9) + 12 * dpr;
+    const midH = fs * 2 + 16 * dpr + Math.max(fs * 0.9, 7 * dpr), mid = compact && gap >= midH; // name + status + gauge
+    const w = Math.max(g.measureText(line1).width + (tag ? g.measureText(tag).width + 10 * dpr : 0), compact && !mid ? 0 : Math.max(g.measureText(line2).width, g.measureText(line3).width, line4 ? g.measureText(line4).width : 0), fs * 9) + 12 * dpr;
     const barH = Math.max(fs * 0.9, 7 * dpr);
-    const h = compact ? fs + barH + 9 * dpr : fs * (2 + extra) + barH + (13 + 3 * extra) * dpr;
+    const h = compact ? (mid ? fs * 2 + barH + 12 * dpr : fs + barH + 9 * dpr) : fs * (2 + extra) + barH + (13 + 3 * extra) * dpr;
     g.fillStyle = 'rgba(12,7,20,0.78)'; g.fillRect(p.x, p.y, w, h);
     g.fillStyle = full || blocked ? '#ff5a6e' : ore ? ore.color : '#fff'; g.fillRect(p.x, p.y, 2 * dpr, h);
     g.fillStyle = '#f4edff'; g.fillText(line1, p.x + 6 * dpr, p.y + 3 * dpr);
     if (tag) { g.fillStyle = full ? (Math.floor(t * 3) % 2 ? '#ff5a6e' : '#ffb0ba') : (Math.floor(t * 6) % 2 ? '#ffffff' : '#ffd23f'); g.textAlign = 'right'; g.fillText(tag, p.x + w - 4 * dpr, p.y + 3 * dpr); g.textAlign = 'left'; }
     let y = p.y + fs + 5 * dpr;
+    if (mid) { g.fillStyle = col2; g.fillText(line2, p.x + 6 * dpr, y); y += fs + 3 * dpr; }
     if (!compact) {
       g.fillStyle = col2; g.fillText(line2, p.x + 6 * dpr, y); y += fs + 3 * dpr;
       g.fillStyle = col3; g.fillText(line3, p.x + 6 * dpr, y); y += fs + 3 * dpr;
@@ -876,6 +877,12 @@ export function createMine(canvas, get, hooks = {}) {
     fit: () => setView(fitView(), true),
     zoom: (d) => zoomTo(zt * Math.pow(1.4, d), canvas.width / 2, canvas.height / 2),
     pop(wx, wy, text, col = '#ffd23f') { pops.push({ x: wx, y: wy, text, color: col, t0: performance.now() / 1000 }); if (pops.length > 30) pops.shift(); },
+    lookAt(wx, wy, zz) { setView({ z: zz, x: wx - cssW() / zz / 2, y: wy - cssH() / zz / 2 }); },
+    celebrate(sh) {
+      const y = galleryTop(sh.idx), t = performance.now() / 1000;
+      pops.push({ x: L.GX0 + 40, y: y + 4, text: 'NEW SHAFT!', color: '#ffd23f', t0: t });
+      for (let i = 0; i < (prefs.reduced ? 8 : 60); i++) { const a = (i / 60) * Math.PI * 2; emit({ x: L.GX0 + 40, y: y + L.GH / 2, vx: Math.cos(a) * (30 + Math.random() * 60), vy: Math.sin(a) * (20 + Math.random() * 40) - 20, g: 80, t0: t, life: 1.2, sz: i % 3 ? 1 : 2, col: ['#ffd23f', '#ff8a3d', '#ffffff'][i % 3], spark: true }); }
+    },
     focusShaft(idx) { goal = null; cam.y = galleryTop(idx) - cssH() / z * 0.4; clampCam(); },
     toCss, padX, galleryTop,
     refPos: (site) => (site === 'orbital' ? { x: REF.STX, y: REF.STY - 14 } : { x: REF.X, y: -46 }),

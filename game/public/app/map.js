@@ -2,6 +2,8 @@
  * (an orbital one floats in orbit) and your ships flying to their buyers as small moving sprites.
  * Ore fields are never drawn: the map only shows where things ARE, never what is in the ground. */
 import { renderPlanetMap } from './pixel/planetmap.js';
+
+const BASE = { key: null, cv: null }; // shared planet raster (one per planet)
 import { esc, clamp, hash, fmt } from './util.js';
 import { prefs } from './juice.js';
 
@@ -54,9 +56,16 @@ export function createMap(S, A) {
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     cv.style.width = w + 'px'; cv.style.height = w + 'px';
     cv.width = cv.height = Math.round(w * dpr);
-    base = document.createElement('canvas');
-    base.width = base.height = cv.width;
-    try { renderPlanetMap(base, S.world.planet, { labels: true }); } catch (e) { console.error(e); }
+    // Render the planet once per planet at a fixed size and reuse it: panels re-render often,
+    // and re-rasterising the whole planet each time used to exhaust memory on phones.
+    const key = S.world.planet.id;
+    if (BASE.key !== key) {
+      BASE.cv = document.createElement('canvas');
+      BASE.cv.width = BASE.cv.height = 640;
+      try { renderPlanetMap(BASE.cv, S.world.planet, { labels: true }); } catch (e) { console.error(e); }
+      BASE.key = key;
+    }
+    base = BASE.cv;
     size = cv.width;
   }
 

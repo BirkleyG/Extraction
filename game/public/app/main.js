@@ -264,6 +264,7 @@ async function boot() {
   const A = { send, mine, reload: () => location.reload(), loadBoard, flush: () => chain };
   ui = createUI(S, A);
   A.mine = mine;
+  window.__mine = mine; // handy for playtests and screenshots
   ui.render(true);
   slowTick();
   checkAway();

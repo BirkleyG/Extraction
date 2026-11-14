@@ -26,9 +26,9 @@ export const T = {
 
   // Tunnels and ore pockets (pockets.js). A metre = a minute of a reference crew's output at that shaft.
   pk: {
-    refOre: 2700,           // reference crew ore/min at shaft 1 (x richness per index): sets how long a vein lasts for a median player
+    refOre: 1200,           // reference crew ore/min at shaft 1 (a normal player's crew, not the greedy bot's) (x richness per index): sets how long a vein lasts for a median player
     minPerM: 1,            // minutes of reference output per metre
-    share: [0.04, 0.22, 0.32, 0.42], // share of the tunnel inside veins by band (x richness factor of the site)
+    share: [0.15, 0.3, 0.4, 0.5], // share of the tunnel inside veins by band (shallow is mostly common but still strikes now and then) (x richness factor of the site)
     shareMax: 0.7,
     hours: [6, 8],         // vein length (hours at the reference pace) = 6 x 8^u x size, clamped to hoursMin..hoursMax
     hoursMin: 4, hoursMax: 48,
@@ -40,7 +40,7 @@ export const T = {
     taperFrom: 0.95,       // below 5% left the rare share tapers linearly (5 equal steps), then back to common
     taperSteps: 5,
     ahead: 3,              // pockets rolled ahead of the face (the mine view draws them)
-    tiltRange: [0.45, 1.55], // a direction option multiplies each ore's richness by something in this range
+    tiltRange: [0.25, 1.9],  // wide enough that the two dig directions really differ // a direction option multiplies each ore's richness by something in this range
   },
   danger: 5,                          // hazard danger doubles every 5 shafts
 
