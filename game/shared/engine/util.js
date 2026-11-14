@@ -51,7 +51,8 @@ export function info(world) {
   if (I) return I;
   const ores = (planet.ores || []).map((o, i) => {
     const tier = ['common', 'rare', 'mythic'].includes(o.tier) ? o.tier : 'common';
-    const hardness = Math.min(5, Math.max(1, Math.round(num(o.hardness, 1))));
+    let hardness = Math.min(10, Math.max(1, Math.round(num(o.hardness, 1))));
+    if (tier === 'mythic') hardness = Math.max(9, hardness);
     let value = Number(o.baseValue);
     if (!(value > 0) || !Number.isFinite(value)) value = T.value[tier] * Math.pow(T.valueHard[tier], hardness - 1);
     value = Math.min(1e7, Math.max(0.05, value));

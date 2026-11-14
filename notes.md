@@ -1,6 +1,6 @@
 # Mineshaft Capital notes
 
-Current version: **0.4.00** (shown in the game under the logo, top left)
+Current version: **0.5.00** (shown in the game under the logo, top left)
 
 ## How versions work
 
@@ -11,6 +11,9 @@ Current version: **0.4.00** (shown in the game under the logo, top left)
 The bump command updates `game/version.json` (what the game displays) and adds an entry below. Every change that lands should come with a bump.
 
 ## Changelog
+
+### 0.5.00 (2026-11-14)
+- Monumental shafts and a painted planet. Each shaft is its own business with its own miners, gear and cart; opening one is a big purchase where you pick between two dig directions. The lift has speed, capacity and bucket upgrades. Ships upgrade per class, carry one ore each (freighters can unlock a second hold) and pick cargo fleet-wide. The planet is a shaded-relief climate map with hidden ore patches; new players land at a fair random spot, and a Map tab shows colonies and ships in flight. Separate ore piles, belts to a distant shipyard, natural tunnels, and no more recommended buys. Colonies restart.
 
 ### 0.4.00 (2026-11-13)
 - Phase 3: refineries and a hidden market. Build an on-planet or orbital refinery from day 4, set an asking price per ore with a markup slider and watch how 24 AI-named buyer parties respond (each has a secret top price). New Reports tab with income, rank, leaderboard-race and price charts, plus a ledger of every coin in and out. Colonies from v0.3 carry over.

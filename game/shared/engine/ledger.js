@@ -26,14 +26,14 @@ export function ledgerOut(c, key, amt) {
 }
 export function spendCategory(cmd) {
   switch (cmd.type) {
-    case 'hire': return 'miners';
-    case 'buyShaft': return 'shafts';
-    case 'upgradeShaft': return cmd.kind === 'lights' || cmd.kind === 'supports' ? 'safety' : 'shafts';
+    case 'hireMiners': return 'miners';
+    case 'buyShaft': case 'upgradeCart': return 'shafts';
+    case 'upgradeShaft': return 'safety';
     case 'upgradeSafety': return 'safety';
-    case 'upgradeDrill': return 'drill';
+    case 'upgradeGear': return 'drill';
     case 'upgradeLift': return 'lift';
     case 'upgradeConveyor': case 'upgradeYard': case 'buyPad': return 'surface';
-    case 'buyShip': case 'upgradeShip': return 'ships';
+    case 'buyShip': case 'upgradeClass': return 'ships';
     case 'buildRefinery': case 'upgradeRefinery': return 'refinery';
     default: return 'surface';
   }

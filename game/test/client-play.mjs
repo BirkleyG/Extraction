@@ -46,8 +46,7 @@ const shot = (p, n) => p.page.screenshot({ path: path.join(out, n + '.png') });
 const A = await player('Ana', { width: 1280, height: 800 });
 await sleep(600);
 await shot(A, '01-onboard-desktop');
-// pick the second region and a colour
-await A.page.click('#obRegions [data-r]:nth-child(2)');
+// the Guild picks the landing spot; just roll a species
 await A.page.click('#sbRoll');
 await A.page.click('#obGo');
 await A.page.waitForSelector('#app:not([hidden])');
@@ -90,10 +89,8 @@ for (let m = 0; m < 10; m++) {
   await ff(30_000);
   if (!bannerShot && await A.page.$('.banner.show')) { bannerShot = true; await shot(A, '07c-banner-desktop'); }
   for (const P of [A, B]) {
-    const adv = await P.page.$('#tabbody [data-advice]:not([disabled])');
     const ready = await P.page.$$('#tabbody .row[data-cmd] button.buy.ready');
-    if (adv) await adv.click().catch(() => {});
-    else if (ready.length) await ready[ready.length - 1].click().catch(() => {});
+    if (ready.length) await ready[ready.length - 1].click().catch(() => {});
     await sleep(300);
   }
 }
@@ -110,6 +107,7 @@ await A.page.mouse.click(box.x + box.width * 0.45, box.y + box.height * 0.62);
 await sleep(500);
 await shot(A, '10-shaft-card-desktop');
 
+
 // mid-month: spend the catch-up grant across every panel, then look at each tab
 if (MID) {
   for (let round = 0; round < 12; round++) {
@@ -117,13 +115,15 @@ if (MID) {
     for (const P of [A, B]) {
       const tabs = await P.page.$$eval('[data-tab]', (ts) => ts.map((t) => t.dataset.tab));
       for (const id of tabs.filter((t) => t !== 'ranks' && t !== 'market')) {
-        await P.page.click(`[data-tab="${id}"]`).catch(() => {});
-        await P.page.click('[data-bulkset="max"]').catch(() => {});
+        await P.page.click(`[data-tab="${id}"]`, { timeout: 3000 }).catch(() => {});
+        await P.page.click('[data-bulkset="max"]', { timeout: 3000 }).catch(() => {});
         for (let k = 0; k < 6; k++) {
           const b = await P.page.$('#tabbody .row[data-cmd] button.buy.ready');
           if (!b) break;
-          await b.click().catch(() => {});
+          await b.click({ timeout: 3000 }).catch(() => {});
           await sleep(150);
+          // some buttons open a sheet (e.g. "Open a new shaft"); close it so it doesn't block the next clicks
+          await P.page.evaluate(() => document.querySelectorAll('.overlay').forEach((o) => o.remove())).catch(() => {});
         }
       }
     }
@@ -160,6 +160,23 @@ await A.page.click('.awaysheet [data-x]').catch(() => {});
 for (const id of ['market', 'fleet', 'surface']) {
   if (await A.page.$(`[data-tab="${id}"]`)) { await A.page.click(`[data-tab="${id}"]`); await sleep(700); await shot(A, `13-${id}-desktop`); }
 }
+
+
+// the new-shaft sheet: two directions, fuzzy prospects
+if (await A.page.$('[data-opendig]')) {
+  await A.page.click('[data-opendig]');
+  await A.page.waitForSelector('.digsheet .digopt');
+  await sleep(300);
+  await shot(A, '10b-dig-sheet-desktop');
+  const nOpts = await A.page.$$eval('.digopt', (os) => os.length);
+  if (nOpts !== 2) errors.push('dig sheet should show 2 options, got ' + nOpts);
+  const brk = await A.page.$('[data-break]:not([disabled])');
+  if (brk) { await brk.click(); await sleep(900); await shot(A, '10c-shaft-opened-desktop'); }
+  await A.page.evaluate(() => document.querySelectorAll('.overlay').forEach((o) => o.remove()));
+}
+
+const mapTab = await A.page.$('[data-tab="map"]');
+if (mapTab) { await mapTab.click(); await sleep(1500); await shot(A, '10d-map-desktop'); await A.page.click('[data-tab="mine"]'); }
 
 const state = await A.page.evaluate(async () => {
   const r = await fetch('/api/v2/state', { headers: { authorization: 'Bearer ' + localStorage.getItem('msc_server_token') } });

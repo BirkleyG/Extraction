@@ -13,14 +13,13 @@ const got = (c) => c.earned + (c.grant || 0);
 export const PANELS = [
   { id: 'mine', label: 'Mine', at: 0 },
   { id: 'hire', label: 'Hire miners', at: 0 },
-  { id: 'shafts', label: 'Dig shafts', at: 30, early: (c) => c.miners >= 3 },
-  { id: 'carts', label: 'Carts & rails', at: 45 },
-  { id: 'lift', label: 'Lift', at: 150, early: (c, I, r) => r().limit === 'lift' && got(c) >= 15 },
+  { id: 'drill', label: 'Gear', at: 15 },
+  { id: 'carts', label: 'Carts & rails', at: 40, early: (c, I, r) => r().shafts.some((x) => x.limit === 'cart') && got(c) >= 15 },
+  { id: 'lift', label: 'Lift', at: 120, early: (c, I, r) => r().limit === 'lift' && got(c) >= 15 },
+  { id: 'shafts', label: 'Dig shafts', at: 2_000 },
   { id: 'ships', label: 'Ship upgrades', at: 300, early: (c, I, r) => r().limit === 'ships' && got(c) >= 15 },
-  { id: 'bunks', label: 'Bunkhouses', at: 400, early: (c) => c.miners >= 5 },
   { id: 'conveyor', label: 'Conveyors', at: 700, early: (c, I, r) => r().limit === 'conveyor' && got(c) >= 15 },
   { id: 'yard', label: 'Surface yard', at: 1_200, early: (c, I, r) => r().yardLoss > 0.03 && got(c) >= 15 },
-  { id: 'drill', label: 'Drill', at: 2_000, early: (c, I) => c.shafts.some((s) => /drill/.test(shaftStatus(c, I, s).reason)) },
   { id: 'routes', label: 'Routes & buyers', at: 3_000, hours: 1 },
   { id: 'fleet', label: 'Fleet', at: 5_000, hours: 3, early: (c, I, r) => r().limit === 'ships' && got(c) >= 1_000 },
   { id: 'pads', label: 'Launch pads', at: 12_000, hours: 6, early: (c) => c.ships.length >= 2 },
@@ -40,9 +39,11 @@ for (const p of PANELS) p.when = (c, I, r, lic) => (got(c) >= p.at && waited(c, 
 // Which panel a command needs.
 export function panelFor(cmd) {
   switch (cmd.type) {
-    case 'hire': return 'hire';
+    case 'hireMiners': return 'hire';
     case 'buyShaft': return 'shafts';
-    case 'upgradeShaft': return cmd.kind === 'bunk' ? 'bunks' : (cmd.kind === 'lights' || cmd.kind === 'supports') ? 'safety' : 'carts';
+    case 'upgradeGear': return 'drill';
+    case 'upgradeCart': return 'carts';
+    case 'upgradeShaft': return cmd.kind === 'lights' || cmd.kind === 'supports' ? 'safety' : null;
     case 'upgradeSafety': return 'safety';
     case 'nuke': case 'evolve': return 'prestige';
     case 'upgradeLift': return 'lift';
@@ -50,26 +51,25 @@ export function panelFor(cmd) {
     case 'upgradeYard': return 'yard';
     case 'buyPad': return 'pads';
     case 'buyShip': return 'fleet';
-    case 'upgradeShip': return 'ships';
+    case 'upgradeClass': return 'ships';
     case 'setRoute': return 'routes';
-    case 'upgradeDrill': return 'drill';
     case 'buildRefinery': case 'upgradeRefinery': case 'setRefine': return 'refinery';
     default: return null;
   }
 }
 
 export const TUTORIAL = [
-  { step: 0, id: 'hire', hint: 'Hire your first miner.' },
-  { step: 1, id: 'lift', hint: 'Your miner is digging. The lift carries ore up to the yard.' },
+  { step: 0, id: 'hire', hint: 'Your crew is digging. Hire more miners.' },
+  { step: 1, id: 'lift', hint: 'Your miners are digging. The lift carries ore up to the yard.' },
   { step: 2, id: 'launch', hint: 'Ore rides the conveyor into your ship. It launches when full.' },
   { step: 3, id: 'sale', hint: 'Your ship is flying to a buyer. Cargo is paid on arrival.' },
-  { step: 4, id: 'upgrade', hint: 'Coin in! Spend it on an upgrade: carts, the lift, or another miner.' },
+  { step: 4, id: 'upgrade', hint: 'Coin in! Spend it: miners, gear, carts or the lift.' },
   { step: 5, id: 'done', hint: '' },
 ];
 
 function tutorialStep(c) {
   let d = 0;
-  if (c.miners >= 1) d = 1;
+  d = 1;
   if (d >= 1 && c.stats.lifted > 0) d = 2;
   if (d >= 2 && c.stats.launches > 0) d = 3;
   if (d >= 3 && c.stats.sales > 0) d = 4;

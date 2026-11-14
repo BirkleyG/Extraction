@@ -3,17 +3,20 @@
  *
  * Contract API (game/DESIGN.md):
  *   ENGINE_VERSION
- *   newColony({ id, uid, name, species, planet, siteRegion, now, grant }) -> colony   (grant: coin number or { coin })
+
+ *   newColony({ id, uid, name, species, planet, siteRegion, site, now, grant }) -> colony   (grant: coin number or { coin })
  *   advance(colony, world, now) -> { colony, events, sales }       sales: [{ oreId, amount }] for recordSales
  *   applyCommand(colony, world, cmd, now) -> { colony, events, sales, error? }
  *   quote(colony, world, cmd) -> { cost, effect, canAfford, n, error?, currency?: 'sp', spectacle? }   (evolve costs SP)
  *   rates(colony, world) -> { orePerMin, minePerMin, liftPerMin, conveyorPerMin, conveyorPerPad, shipPerMin,
  *                             throughput, coinPerMin, valuePerOre, yardLoss, yardCap, tunnelCap, idleMiners, pads,
- *                             shafts: [{ id, name, ore (= oreId, mined now), miners, cap, orePerMin, perMiner, ok, reason,
+ *                             shafts: [{ id, name, ore (= oreId, mined now), idx, dir, band, miners, gear, cart, cap (cart haul rate), crew, limit ('miners'|'cart'), orePerMin, perMiner, ok, reason,
  *                                        face (m), metresPerMin, dug (pockets dug out), pocket: null | { ore, left, len } (m),
  *                                        next: null | { ore, at (m ahead), blocked }, blocked, need (drill level), wallRate,
  *                                        risk (mishaps/hour, 0..1), haltMins, lights, supports }],
- *                             ships: [{ id, name, cls, cap, dest, tripSecs, perMin, cycleSecs }],
+ *                             ships: [{ id, name, cls, cap, cap2? (freighter with multi), dest, tripSecs, perMin, cycleSecs,
+ *                                       oreId (what it loads: live, else the planned pick), oreId2? (freighter with multi),
+ *                                       fill (0..1: cargo of oreId / cap, while loading or flying), fill2?, state }],
  *                             hazards: { perHour, loss (share of output), lossPerMin, colony: { gas, flood, fire, quake } },
  *                             evo: { mine, ship, sell } (multipliers),
  *                             refinery: { [site: 'planet'|'orbital']: { inPerMin (raw), outPerMin, soldPerMin, coinPerMin, stock, cap, full,
@@ -22,8 +25,8 @@
  *       coinPerMin includes refined sales; score values refineries (steady state) for bestMoves.
  *       vsRaw = coin per raw ore from refining (at what sells now) / coin per raw ore sold raw - 1 (0.38 = "+38% vs selling raw").
  *       Ships flying to the orbital refinery show dest REF_DEST ('@refinery').
- *   bottleneck(colony, world) -> { stage, wastedPerMin, wastedOrePerMin, message, suggestion: { cmd, cost, label, gainPerMin, canAfford } }
- *       stage: 'mine' | 'lift' | 'yard' | 'conveyor' | 'ships' | 'idle' | 'blocked' | 'safety'
+ *   bottleneck(colony, world) -> { stage, wastedPerMin, wastedOrePerMin, message }   (a diagnosis only: no recommended buys)
+ *       stage: 'mine' | 'lift' | 'yard' | 'conveyor' | 'ships' | 'cart' | 'blocked' | 'safety'
  *   destinations(colony, world, shipClass) -> [{ id, name, distance, price: { oreId: n }, tripSecs, coinPerMin, best }]
  *   marketPrice(world, oreId, destId, now) -> number   (includes active world.changes; not the colony's sell evolution)
  *   activeChanges(world, now) -> changes in effect (at <= now < until; missing at/until = open-ended)
@@ -39,16 +42,21 @@
  *     hidden: tests and future intel only), demandGrowth(world, t), REF_DEST, LEDGER_IN, LEDGER_OUT.
  *
  * Commands ({ type, ...args }; n = 1 | 10 | 100 | 'max' where noted):
- *   hire {n} · buyShaft · upgradeShaft {shaftId, kind:'cart'|'bunk', n}
- *   upgradeLift {n} · upgradeConveyor {n} · upgradeYard {n} · buyPad {n} · upgradeDrill
- *   buyShip {cls:'hauler'|'cruiser'|'freighter'} · upgradeShip {shipId, n} · setRoute {shipId, policy:'best'|'nearest'|'fixed', destId?}
+ *   Shafts (Phase 3.5): hireMiners {shaftId, n} · upgradeGear {shaftId, n} (gear above 8 needs the mythicDrill license) ·
+ *     upgradeCart {shaftId, n} · buyShaft {dir:'left'|'right'} (see shaftOptions) · upgradeLift {kind:'speed'|'capacity'|'buckets', n}
+ *   upgradeConveyor {n} · upgradeYard {n} · buyPad {n}
+ *   buyShip {cls:'hauler'|'cruiser'|'freighter'} (each class has its own price ladder; new ships arrive with the class upgrades) ·
+ *   upgradeClass {cls, kind, n} (Ships rework: levels live in colony.fleet[cls], every ship of the class uses them; needs a ship of the class):
+ *     hold (all: cargo) · loading (hauler: load rate) · speed (cruiser: flight speed) · multi (freighter: ONE-TIME, T.fleetUp.multi.cost, adds a
+ *     second hold) · hold2 (freighter, needs multi: second hold capacity). Milestones at T.fleetUp.milestones (x2 cargo/loading, x1.5 speed).
+ *   setRoute {shipId, policy:'best'|'nearest'|'fixed'|'refinery', destId?}
  *   rename {target:'colony'|'shaft'|'ship', id, name} · tutorial {step} · autoSpend {keep?: 0..0.9}
- *   Safety: upgradeShaft {shaftId, kind:'lights'|'supports', n} (not the home shaft) · upgradeSafety {kind:'ventilation'|'pumps'|'firebreaks', n}
+ *   Safety: upgradeShaft {shaftId, kind:'lights'|'supports', n} (not the first shaft) · upgradeSafety {kind:'ventilation'|'pumps'|'firebreaks', n}
  *   Prestige: nuke {confirm:'NUKE'} (runEarned >= TUNING.nukeMin) · evolve {kind:'mine'|'ship'|'sell'|'spectacle', n} (costs SP)
  *   Refinery (license + panel 'refinery'): buildRefinery {site:'planet'|'orbital'} · upgradeRefinery {site, kind:'throughput'|'yield'|'storage'|'docks', n}
  *     (docks: orbital only) · setRefine {site, oreId, on?: bool, markup?: 0.5..3} (free) · setRoute {shipId, policy:'refinery'} (needs the orbital)
  *
- * Panels: mine, hire, shafts, carts, lift, ships, bunks, conveyor, yard, drill, routes, fleet, pads, market,
+ * Panels: mine, hire, drill (gear), carts, lift, shafts, ships, conveyor, yard, routes, fleet, pads, market,
  *   safety (a shaft at depth index >= 3, or the first mishap), prestige (runEarned >= 5M, or after a nuke).
  *   refinery (opens with the refinery license).
  * Licenses (day of month AND coin earned+grant): cruiser, freighter, mythicDrill, refinery (day 4, 20M).
@@ -58,12 +66,14 @@
  *     coin, earned, grant, runEarned (since the last nuke, grant excluded), monthEarned (all runs),
  *     sp, evo: { mine, ship, sell, spectacle }, nukes, lastNuke: null | { at, spectacle, runEarned, makerUsed },
  *     safety: { ventilation, pumps, firebreaks }, hz: { gas, flood, fire, quake }, hzRng,   (hz = hazard clocks, see hazards.js)
- *     miners, idle, drill, lift, conveyor, yardLvl, pads,
+ *     site: { id, regionId, soil, richness, veinSize, common }, miners (total of the shafts), lift: { speed, capacity, buckets }, conveyor, yardLvl, pads,
  *     tunnel: { oreId: amt }, tunnelG, yard: { oreId: amt }, yardG,   (…G = grade units: amount x depth grade; value = G x price)
- *     shafts: [{ id, idx, name, ore (mined now), face (m), pk: [{ ore, start, len, hit?, blk? }] (rolled ahead), pkN, pkEnd, dug,
- *                up: { bunk, cart, lights, supports }, miners, haltUntil (ms or null), hz: { cave, mad } }],
- *     ships: [{ id, name, cls, lvl, policy, destId, state: 'home'|'loading'|'out'|'back', cargo: { oreId: amt }, cargoG,
- *               dest, readyAt, dockedAt, firstLoadAt, departAt, arriveAt, homeAt }],
+ *     shafts: [{ id, idx, name, dir ('main'|'left'|'right'), band, seed, tilt, ore (mined now), face (m), pk: [{ ore, start, len, hit?, low?, blk? }] (veins rolled ahead), pkN, pkEnd, dug,
+ *                gear, cart, up: { lights, supports }, miners (owned by the shaft, no transfers), haltUntil (ms or null), hz: { cave, mad } }],
+ *     fleet: { hauler: { hold, loading }, cruiser: { hold, speed }, freighter: { hold, multi, hold2 } } (class upgrade levels; old colonies get zeros
+ *       and lose their per-ship `lvl` on the next advance/command),
+ *     ships: [{ id, name, cls, policy, destId, state: 'home'|'loading'|'out'|'back', oreId, oreId2 (freighter with multi; else null),
+ *               pickAt, cargo: { oreId: amt }, cargoG, dest, readyAt, dockedAt, firstLoadAt, departAt, arriveAt, homeAt }],
  *     stats: { mined, lifted, loaded, sold, sales, launches, upgrades, spent, firstSaleAt, hazards, lost },
  *     unlocked: { panels, licenses }, tutorial, nextId,
  *     refinery: { planet: null | R, orbital: null | R }, refineMemo: { [site]: ores } (buy settings kept through a nuke),
@@ -86,11 +96,30 @@
  *   (policy 'refinery', or 'best' when it pays better and docks/hold have room). advance() integrates it exactly (step-invariant).
  *   A nuke removes refineries (their buy settings are remembered).
  *
- * Tunnels (pockets.js): each shaft digs sideways; its face advances as ore is mined (ore per metre scales with the crew,
- *   the haul slows long tunnels). Pockets { ore, start, len } are rolled from (seed, nukes, depth, n), richer deeper
- *   (each ore's depthMin; rares peek up to 2 levels early, mythic only at depth). Outside pockets the crew mines the best
- *   common the drill can cut; a pocket harder than the drill stops the face (walls pay T.pk.wall of the rate).
- * Hazards: danger = shaft depth index (home shaft safe); none in a colony's first 30 minutes (after a nuke too).
+ * Ships (loading.js): one ore per hold. When a ship docks it picks the ore (and, for a freighter with `multi`, a second ore for hold 2) that
+ *   maximizes its coin/min: for each candidate ore, how much of it the hold would get within T.maxLoadSecs given the yard + tunnel stock, the
+ *   mine's inflow of that ore, and what ships already docked have claimed of it (their unfilled room, queued ahead because docked ships load in
+ *   dock order), valued at the best destination for that ore (or the orbital refinery) over load time + round trip. A scarce high-value ore
+ *   therefore goes to the first ship and the next takes the next-best ore; when stock or flow exceeds what the claimant can take, both load it.
+ *   Deterministic (no RNG) and made only at docking (plus one re-pick if a docked ship is still empty after T.maxLoadSecs), so advance() is
+ *   step-invariant. A ship leaves when every hold is full or T.maxLoadSecs after its first ore. Route policies apply to the chosen cargo.
+ *   Hold upgrades multiply cargo, `loading` multiplies a hauler's load rate over the conveyor's per-pad rate, `speed` a cruiser's flight speed.
+ *
+ * Shafts (Phase 3.5): AdVenture-Capitalist categories. Shaft 1 is free (T.startMiners miners, gear 1, cart 1); buyShaft costs
+ *   T.shaftBase x T.shaftGrowth^(idx-1) (x10 each) and starts with 0 miners. Miners, gear and cart belong to their shaft (no transfers);
+ *   their prices scale T.shaftScale^idx and rise geometrically per level. Output = miners x 10 x gearMult(gear) x T.richness^idx / site soil,
+ *   capped by the cart's haul rate; gear and cart double at levels 25/50/100/200/300. Ore value x T.grade^idx.
+ *   shaftOptions(colony, world) -> exactly 2 options for the next shaft: [{ dir:'left'|'right', label, idx, band, seed, cost,
+ *   prospects: { [oreId]: 'none'|'low'|'fair'|'good' } }]; each has its own seed and a hidden richness tilt per ore.
+ *   Lift = buckets x capacity x trips/min (speed, / (1 + T.lift.depthSlow x deepest working shaft index)).
+ *   Gear >= hardness cuts an ore (hardness 1-10; commons need none); gear above 8 needs the mythicDrill license; mythic = hardness 9-10.
+ * Veins (pockets.js): each shaft digs sideways; its face (m) advances as ore is mined (a metre = a minute of a reference crew, T.pk.refOre).
+ *   Bands by shaft index: shallow 0-2, middle 3-6, deep 7-11, deepest 12+. Veins { ore, start, len } are rolled from the shaft's seed,
+ *   only from ores present at the site (rares: shallow rarely, middle and deeper more; mythic only deepest at a mythic site); odds
+ *   and sizes grow with band and richness x veinSize x tilt. A rare vein lasts ~4 h to 2 days at the reference pace. Events: strike,
+ *   veinLow (20% left), pocketOut (dug out). Below 5% left the output tapers linearly (5 steps), then back to the site's common.
+ *   A vein harder than the shaft's gear stops the face (walls pay T.pk.wall of the rate).
+ * Hazards: danger = idx x 2^(idx/5) (doubles every 5 shafts; the first shaft is safe); none in a colony's first 30 minutes (after a nuke too).
  *   Each hazard spends a seeded Exp(1) clock at its current rate, so advance() stays deterministic and step-invariant.
  *   Halted shafts dig nothing until haltUntil; mishaps never take the colony's last miner.
  * Prestige: nuke pays paid cargo on ships in flight at today's price, then resets to a starter mine and keeps
@@ -99,7 +128,7 @@
  */
 import { applyCommand as baseApply } from './commands.js';
 import { autoSpend } from './autospend.js';
-export { ENGINE_VERSION, newColony, quote, catchUpGrant } from './commands.js';
+export { ENGINE_VERSION, newColony, quote, catchUpGrant, shaftOptions } from './commands.js';
 
 // autoSpend {keep?} buys the best-value moves in order (keep = fraction of coin to hold back).
 export function applyCommand(colony, world, cmd, now) {
@@ -107,8 +136,8 @@ export function applyCommand(colony, world, cmd, now) {
   return baseApply(colony, world, cmd, now);
 }
 export { advance } from './sim.js';
-export { rates, bottleneck, destinations, marketPrice, recordSales, bestMoves, candidateMoves, marketTable, activeChanges, priceMult } from './analysis.js';
-export { spectacleOf, evoMult } from './model.js';
+export { rates, bottleneck, destinations, marketPrice, recordSales, bestMoves, candidateMoves, bestDir, marketTable, activeChanges, priceMult } from './analysis.js';
+export { spectacleOf, evoMult, FLEET_KINDS, fleetLvl } from './model.js';
 export { unlocks, PANELS, TUTORIAL } from './unlocks.js';
 export { fmt } from './util.js';
 export { demandAt, growth as demandGrowth, REF_DEST } from './refinery.js';

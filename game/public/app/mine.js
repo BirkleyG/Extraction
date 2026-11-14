@@ -8,9 +8,12 @@ import { minerImg, clamp, fmt, hash } from './util.js';
 import { prefs } from './juice.js';
 import { REF, drawPlanetRefinery, drawStation } from './refinery-art.js';
 
-export const L = { LV: 34, G0: 8, GH: 24, GX0: 8, GLEN: 168, YARD_X: 26, CONV_X0: 38, PAD_X0: 76, PAD_W: 68, LAYER_H: 136 };
+// Spread out: tall galleries with air between them, one pile per ore, a long belt to a far shipyard.
+export const L = { LV: 74, G0: 10, GH: 30, GX0: 8, GLEN: 168, PILE_X0: 62, PILE_DX: 40, FEED_Y: -34, PAD_X0: 380, PAD_W: 84, LAYER_H: 136 };
+L.YARD_X = L.PILE_X0; L.CONV_X0 = L.PILE_X0 - 18;
 export const galleryTop = (k) => L.G0 + k * L.LV;
 export const padX = (i) => L.PAD_X0 + i * L.PAD_W + L.PAD_W / 2;
+const pileX = (i) => L.PILE_X0 + i * L.PILE_DX;
 
 const specCache = new Map();
 const specOf = (ore) => { let s = specCache.get(ore.id + ore.color); if (!s) { s = oreSpriteSpec(ore); specCache.set(ore.id + ore.color, s); } return s; };
@@ -41,6 +44,7 @@ export function createMine(canvas, get, hooks = {}) {
   const padMap = new Map(), lastPad = new Map();
   const keys = new Set();
   let rockEnd = 0; // right end of the longest drawn tunnel (camera bounds)
+  const slots = new Map(); // ore id -> pile slot (stable, so piles never move)
   let hits = [], pops = [], lastLaunch = new Map(), lastT = 0, prevUp = false, flowShown = new Map();
   const maxParts = () => (prefs.reduced ? 40 : 240);
   const emit = (p) => { if (parts.length < maxParts()) parts.push(p); };
@@ -68,10 +72,10 @@ export function createMine(canvas, get, hooks = {}) {
     const c = get()?.colony;
     const left = c?.refinery?.planet ? 118 : 50;
     const span = L.PAD_X0 + Math.max(1, c ? c.pads : 1) * L.PAD_W + 20 + left;
-    let zz = clamp(cssW() / span, 1.8, 4);
+    let zz = clamp(cssW() / Math.min(span, L.PAD_X0 + L.PAD_W + 90 + left), 1.1, 4);
     if (cssH() < 260) zz = Math.min(zz, 2);
     const vw = cssW() / zz, vh = cssH() / zz;
-    return { z: zz, x: vw > span ? -left - (vw - span) / 2 : -left, y: -vh * 0.46 };
+    return { z: zz, x: vw > span ? -left - (vw - span) / 2 : -left, y: -vh * 0.36 };
   }
   function fitView() {
     const b = bounds(), zz = clamp(fitZ() * 0.96, zMin(), ZMAX);
@@ -170,7 +174,7 @@ export function createMine(canvas, get, hooks = {}) {
     const bw = Math.ceil(canvas.width / Sc) + 2, bh = Math.ceil(canvas.height / Sc) + 2;
     if (buf.width !== bw || buf.height !== bh) { buf.width = bw; buf.height = bh; }
     const view = { x: Math.floor(cam.x), y: Math.floor(cam.y), scale: 1, w: bw, h: bh };
-    drawScene(bg, planet, region, view, t, { layerH: L.LAYER_H, weather: false });
+    drawScene(bg, planet, region, view, t, { layerH: L.LAYER_H, weather: false, noOre: true });
     const Pn = pen(bg, view);
     const ores = Object.fromEntries(planet.ores.map((o) => [o.id, o]));
     const look = st.look;
@@ -212,7 +216,7 @@ export function createMine(canvas, get, hooks = {}) {
       hits.push({ kind: 'dig', x0, x1, y0, y1: y0 + L.GH });
     }
 
-    // --- lift cage: carries ore up and tips it down the chute into the yard
+    // --- lift cage: carries ore up and tips it onto the feed belt
     const depthY = galleryTop(Math.max(0, deepestActive(c, R))) + L.GH - 3;
     const liftV = mineFlow > 0 ? clamp(25 + Math.sqrt(R.liftPerMin) * 6, 25, 160) : 0;
     let cageY = -2, goingUp = false;
@@ -222,9 +226,9 @@ export function createMine(canvas, get, hooks = {}) {
       cageY = ph < 0.5 ? depthY - ph * 2 * span : -2 + (ph - 0.5) * 2 * span;
       goingUp = ph < 0.5;
     }
-    if (prevUp && !goingUp && liftV > 0 && yardAmt < yardCap * 0.995) {
-      const cn = prefs.reduced ? 1 : 3, oc = topOreColor(c.tunnel, ores);
-      for (let i = 0; i < cn; i++) emit({ x: 7 + i, y: -16, vx: 14 + i * 3, vy: -4, g: 90, t0: t + i * 0.12, life: 1, sz: 2, col: oc });
+    if (prevUp && !goingUp && liftV > 0) {
+      const cn = prefs.reduced ? 1 : 4, oc = topOreColor(c.tunnel, ores);
+      for (let i = 0; i < cn; i++) emit({ x: 7 + i, y: -16, vx: 12 + i * 2, vy: -26, g: 60, t0: t + i * 0.1, life: 0.55, sz: 2, col: oc });
     }
     prevUp = goingUp;
     drawWinch(Pn, t);
@@ -233,35 +237,59 @@ export function createMine(canvas, get, hooks = {}) {
     drawHeadframe(Pn, t, liftV);
     const RF = R.refinery || {};
     if (RF.planet) drawPlanetRefinery(Pn, emit, t, dt, RF.planet, ingotCol(c.refinery?.planet, ores), prefs.reduced);
-    Pn.line(8, -17, 19, -8, '#5a5a66', 2); // tip chute
 
-    // --- yard: the pile grows with colony.yard / yardCap
-    Pn.rect(L.YARD_X - 14, -1, 28, 1, '#3a2a20');
-    const yardCol = yardF >= 0.85 ? (Math.floor(t * 3) % 2 ? '#ff5a6e' : '#a8404e') : '#6a4a2a';
-    for (let x = L.YARD_X - 14; x <= L.YARD_X + 14; x += 7) Pn.rect(x, -5, 1, 5, yardCol);
-    Pn.rect(L.YARD_X - 14, -4, 29, 1, yardCol);
-    if (yardAmt > 0.5) {
-      const h = 3 + 21 * Math.sqrt(yardF);
-      const hg = drawPile(bg, view, L.YARD_X, 0, Math.pow((h - 3) / 1.3, 2), yardF >= 0.9 ? mixRed(topOreColor(c.yard, ores), 0.35) : topOreColor(c.yard, ores), 24);
-      // other ores speckled onto the pile
-      const comp = composition(c.yard, ores);
-      for (let i = 0; i < Math.min(8, hg); i++) { const q = comp[(i * 5 + 1) % comp.length]; if (q) Pn.rect(L.YARD_X - 5 + ((i * 7) % 11), -3 - ((i * 3) % Math.max(1, hg - 3)), 1, 1, q.col); }
-    }
-    const gx = L.YARD_X - 14;
-    Pn.rect(gx - 1, 2, 31, 4, '#0d0814'); Pn.rect(gx, 3, 29, 2, '#2a2040');
-    Pn.rect(gx, 3, Math.round(29 * yardF), 2, gcol(yardF));
-    if (yardF >= 0.85 && Math.floor(t * 3) % 2) Pn.rect(L.YARD_X - 2, -34, 4, 4, '#ff5a6e');
-
-    // --- pads, ships, belt
-    if (RF.orbital) drawStation(Pn, emit, t, dt, RF.orbital, ingotCol(c.refinery?.orbital, ores), prefs.reduced);
+    // --- yard: one pile per ore. Slots are stable; ores appear as they are mined, loaded or stocked.
     const lay = layoutShips(c, R, now, t, dt);
+    for (const s of c.shafts) if (ores[s.ore] && !slots.has(s.ore)) slots.set(s.ore, slots.size);
+    for (const sh of R.ships) if (sh.oreId && ores[sh.oreId] && !slots.has(sh.oreId)) slots.set(sh.oreId, slots.size);
+    for (const k in c.yard) if ((c.yard[k] || 0) > 0.01 && ores[k] && !slots.has(k)) slots.set(k, slots.size);
+    const nPile = Math.max(1, slots.size), lastPileX = pileX(nPile - 1);
+    const pileOf = (id) => pileX(slots.has(id) ? slots.get(id) : 0);
+    // the long belt to the shipyard runs under the piles (drawn first, so the piles hide it)
+    const convEnd = L.PAD_X0 + Math.max(1, c.pads) * L.PAD_W - 8;
+    const anyFlow = lay.loading.some((d) => { const q = R.ships.find((x) => x.id === d.s.id); return q && (c.yard[q.oreId] || 0) > 0.01 && q.fill < 0.995; });
+    const beltV = clamp(8 + 5 * Math.log2(1 + (R.conveyorPerMin || 0) / 20), 8, 48);
+    drawConveyor(Pn, L.CONV_X0, convEnd, t, anyFlow ? beltV : 0);
+    const yardCol = yardF >= 0.85 ? (Math.floor(t * 3) % 2 ? '#ff5a6e' : '#a8404e') : '#6a4a2a';
+    for (const [id, i] of slots) {
+      const px = pileX(i), amt = c.yard[id] || 0, po = ores[id];
+      for (let x = px - 15; x <= px + 15; x += 10) Pn.rect(x, -5, 1, 5, yardCol);
+      Pn.rect(px - 15, -4, 31, 1, yardCol);
+      if (amt > 0.5) {
+        const share = clamp((amt / yardCap) * 1.6, 0, 1);
+        const h = 3 + 21 * Math.sqrt(share);
+        drawPile(bg, view, px, 0, Math.pow((h - 3) / 1.3, 2), yardF >= 0.9 ? mixRed(po.color, 0.35) : po.color, 24);
+        for (let q = 0; q < 5; q++) Pn.rect(px - 5 + ((q * 7) % 11), -3 - ((q * 3) % Math.max(1, Math.round(h) - 4)), 1, 1, color.shade(po.color, q % 2 ? 0.3 : -0.3));
+      }
+    }
+    const gx = L.PILE_X0 - 16, gw = lastPileX - L.PILE_X0 + 32;
+    Pn.rect(gx - 1, 3, gw + 2, 4, '#0d0814'); Pn.rect(gx, 4, gw, 2, '#2a2040');
+    Pn.rect(gx, 4, Math.round(gw * yardF), 2, gcol(yardF));
+    if (yardF >= 0.85 && Math.floor(t * 3) % 2) Pn.rect(L.PILE_X0 - 2, -48, 4, 4, '#ff5a6e');
+    // feed belt: lift tip -> over every pile. Chunks ride to their own pile and drop in.
+    drawFeedBelt(Pn, lastPileX + 14, t, liftV > 0 ? clamp(14 + Math.sqrt(R.liftPerMin) * 2.2, 14, 60) : 0);
+    if (liftV > 0) {
+      const inflow = []; let tot = 0;
+      for (const sh of c.shafts) { const w = wOre[sh.ore]; if (!inflow.some((q) => q.id === sh.ore)) { tot += w; inflow.push({ id: sh.ore, w: tot }); } }
+      const vB = clamp(14 + Math.sqrt(R.liftPerMin) * 2.2, 14, 60), spc = clamp(15 - 2 * Math.log2(1 + R.liftPerMin / 20), 7, 15) * (prefs.reduced ? 1.6 : 1);
+      const total = lastPileX - 16 + 18, nn = Math.ceil(total / spc), loop = nn * spc;
+      for (let q = 0; q < nn; q++) {
+        const raw = t * vB + q * spc, cyc = Math.floor(raw / loop), pos = ((raw % loop) + loop) % loop;
+        const u = (hash(`f${q}:${cyc}`) % 1000) / 1000 * tot;
+        const tg = inflow.find((e) => u <= e.w) || inflow[inflow.length - 1];
+        if (!tg || !ores[tg.id]) continue;
+        const dropX = pileOf(tg.id), x = 16 + pos, im = oreSprite(specOf(ores[tg.id]), 6);
+        if (x < dropX) Pn.sprite(im, x, L.FEED_Y - 3, 3, 3, false, 0.85);
+        else if (x < dropX + 14) { const f = (x - dropX) / 14; Pn.sprite(im, dropX, L.FEED_Y - 3 + f * (-L.FEED_Y - 14), 3, 3, false, 0.85, 1 - f * 0.5); }
+      }
+    }
+
+    // --- pads, ships, loading arms
+    if (RF.orbital) drawStation(Pn, emit, t, dt, RF.orbital, ingotCol(c.refinery?.orbital, ores), prefs.reduced);
     for (let i = 0; i < c.pads; i++) drawPad(Pn, padX(i), t, i);
     for (const d of lay.draw) drawShipK(bg, view, Pn, d, t);
-    const convEnd = L.PAD_X0 + Math.max(1, c.pads) * L.PAD_W - 8;
-    const flowing = yardAmt > 0.01 && lay.loading.length > 0;
-    const beltV = clamp(8 + 5 * Math.log2(1 + (R.conveyorPerMin || 0) / 20), 8, 48);
-    drawConveyor(Pn, L.CONV_X0, convEnd, t, flowing ? beltV : 0);
-    drawLoading(Pn, view, c, R, lay, ores, t, flowing, beltV);
+    drawLoading(Pn, view, c, R, lay, ores, t, beltV);
+    drawHolds(Pn, lay, R, ores, t);
     for (let i = 0; i < c.pads; i++) hits.length; // (pads are tapped through the 'ships' region)
 
     // --- particles
@@ -280,19 +308,20 @@ export function createMine(canvas, get, hooks = {}) {
     g.textBaseline = 'top';
     if (z >= 1.5) {
       label(g, S(0, -64), 'LIFT', fs, 'center');
-      label(g, S(L.YARD_X, -34), `YARD ${fmt(yardAmt)}/${fmt(yardCap)}`, fs, 'center', yardF >= 0.85 ? '#ff7a8a' : null);
-      if (yardF >= 0.97) label(g, S(L.YARD_X, -34 - (fs / Sc) - 5), 'FULL', fs, 'center', '#ff5a6e');
-      label(g, S(padX(0) + 20, 3), c.pads > 1 ? 'LAUNCH PADS' : 'LAUNCH PAD', fs, 'center');
+      label(g, S(L.PILE_X0 - 16, -46), `YARD ${fmt(yardAmt)}/${fmt(yardCap)}${yardF >= 0.97 ? ' FULL' : ''}`, fs, 'left', yardF >= 0.85 ? '#ff7a8a' : null);
+      if (z >= 2) for (const [id, i] of slots) if (ores[id]) label(g, S(pileX(i), 9), `${ores[id].name.toUpperCase().slice(0, 9)} ${fmt(c.yard[id] || 0)}`, Math.round(fs * 0.85), 'center', lite(ores[id].color));
+      label(g, S(L.PAD_X0 + 30, 6), c.pads > 1 ? 'LAUNCH PADS' : 'LAUNCH PAD', fs, 'center');
+      label(g, S((L.CONV_X0 + L.PAD_X0) / 2 + 40, -22), 'ORE BELT', fs, 'center');
       if (RF.planet) refLabel(g, S(REF.X, -54), RF.planet, fs);
       if (RF.orbital) refLabel(g, S(REF.STX, REF.STY - 26), RF.orbital, fs);
-    } else label(g, S(L.YARD_X, -34), `YARD ${Math.round(yardF * 100)}%`, fs, 'center', yardF >= 0.85 ? '#ff7a8a' : null);
+    } else label(g, S(L.PILE_X0, -48), `YARD ${Math.round(yardF * 100)}%`, fs, 'center', yardF >= 0.85 ? '#ff7a8a' : null);
     if (tunTot > 0.5 && z >= 1) label(g, S(0, bottom + 2), `LIFT BASE ${fmt(tunTot)}${tunF >= 0.97 ? ' FULL' : ''}`, fs, 'center', tunF >= 0.97 ? '#ff7a8a' : null);
     const gap = L.LV * Sc;
     for (let k = 0; k < n; k++) {
       const G = geo(c.shafts[k], infos[k].o);
       if (G.broken && z >= 1.2) label(g, S(G.xs + BREAK / 2, galleryTop(c.shafts[k].idx) + 8), `… ${fmt(Math.round(G.F))} M`, Math.round(fs * 0.85), 'center', '#b3a5d3');
     }
-    for (let k = 0; k < n; k++) badge(g, S, c.shafts[k], infos[k], fs, ores, gap, t);
+    for (let k = 0; k < n; k++) badge(g, S, c.shafts[k], infos[k], fs, ores, (L.LV - L.GH - 6) * Sc, t);
     if (unl.panels.includes('shafts') && n < 30) {
       const p = S(L.GX0 + 6, galleryTop(n) + 7);
       g.font = `${fs}px Silkscreen, monospace`;
@@ -301,15 +330,15 @@ export function createMine(canvas, get, hooks = {}) {
     }
     // cargo gauges over docked ships
     for (const d of lay.docked) {
-      const cap = R.ships.find((x) => x.id === d.s.id)?.cap || 1, amt = sum(d.s.cargo), f = clamp(amt / cap, 0, 1);
-      const bwid = 40 * Sc, bhgt = clamp(3.2 * Sc, 6 * dpr, 12 * dpr);
-      const p = S(d.x - 20, d.y - d.sp.ay - 8);
-      const txt = f >= 0.995 ? 'FULL - LAUNCH' : `LOADING ${Math.round(f * 100)}%`;
+      const rs = R.ships.find((x) => x.id === d.s.id) || {}, f = clamp(rs.fill || 0, 0, 1), on = ores[rs.oreId];
+      const bwid = 46 * Sc, bhgt = clamp(3.2 * Sc, 6 * dpr, 12 * dpr);
+      const p = S(d.x - 23, d.y - d.sp.ay - 10);
+      const txt = f >= 0.995 ? 'FULL - LAUNCH' : `LOADING ${on ? on.name.toUpperCase().slice(0, 8) + ' ' : ''}${Math.round(f * 100)}%`;
       g.font = `${fs}px Silkscreen, monospace`;
       g.fillStyle = 'rgba(10,6,16,0.82)'; g.fillRect(p.x - 2 * dpr, p.y - fs - 4 * dpr, Math.max(bwid, g.measureText(txt).width + 8 * dpr) + 4 * dpr, fs + bhgt + 8 * dpr);
       g.fillStyle = f >= 0.995 && Math.floor(t * 4) % 2 ? '#ffffff' : '#f4edff'; g.fillText(txt, p.x + 2 * dpr, p.y - fs - 1 * dpr);
       g.fillStyle = '#2a2040'; g.fillRect(p.x, p.y + 1 * dpr, bwid, bhgt);
-      g.fillStyle = f >= 0.95 ? '#5ee6a8' : '#ffd23f'; g.fillRect(p.x, p.y + 1 * dpr, bwid * f, bhgt);
+      g.fillStyle = on ? on.color : '#ffd23f'; g.fillRect(p.x, p.y + 1 * dpr, bwid * f, bhgt);
     }
     // waiting line
     if (lay.holdN > 0) {
@@ -378,52 +407,52 @@ export function createMine(canvas, get, hooks = {}) {
     const r = inf.r, o = inf.o;
     const G = geo(s, o), { x0, xs, xf, xr, X } = G;
     rockEnd = Math.max(rockEnd, xr);
-    hits.push({ kind: 'shaft', id: s.id, x0: x0 - 10, x1: xr, y0, y1 });
+    hits.push({ kind: 'shaft', id: s.id, x0: x0 - 10, x1: xr, y0, y1: y1 + 20 });
     if (y1 < view.y - 4 || y0 > view.y + view.h + 4) return;
     const ore = ores[s.ore];
     const ok = r ? r.ok : true;
     const blocked = !!(r && r.blocked);
     const H = hash(s.id);
     const len = xf - x0;
-    // carve
-    Pn.rect(-6, y0 + 4, x0 + 8, L.GH - 4, '#1b1226');
-    Pn.rect(x0, y0 - 1, len + 1, L.GH + 2, '#120a18');
-    Pn.rect(x0, y0, len, L.GH, '#21162e');
-    for (let i = 0; i < Math.min(60, len / 12); i++) { const hx = x0 + ((H >> (i % 16)) * 7 + i * 37) % Math.max(1, len); const hy = y0 + 2 + (i * 5 + (H >> 3)) % (L.GH - 8); Pn.rect(hx, hy, 2, 1, '#2c1f3a'); }
-    // floor + rails (the tunnel is as long as the face has been driven)
-    Pn.rect(x0, y1 - 3, len, 3, '#3b2b2a');
-    for (let x = x0 + 2; x < xf - 2; x += 4) Pn.rect(x, y1 - 3, 2, 1, '#5a3e26');
-    Pn.rect(x0, y1 - 4, Math.max(0, len - 2), 1, '#9aa0aa');
+    // carve a natural cavity: ragged ceiling and floor, so the strata keep running around it
+    const cav = (xa, xb) => {
+      for (let x = xa; x < xb; x += 2) {
+        const hh = hash(s.id + ':c' + x), ti = hh % 3, bi = (hh >> 3) % 2;
+        Pn.rect(x, y0 + ti, 2, L.GH - ti - bi, '#0e0914');
+        bg.globalAlpha = 0.55; Pn.rect(x, y0 + ti - 1, 2, 1, '#050309'); Pn.rect(x, y1 - bi, 2, 1, '#050309'); bg.globalAlpha = 1;
+        if (hh % 5 === 0) Pn.rect(x, y0 + 4 + (hh >> 5) % (L.GH - 12), 2, 1, '#1a1224');
+      }
+    };
+    cav(-6, x0 + 2);
+    cav(x0, xf + 1);
+    // packed dirt floor and timber sleepers with a dark iron rail (no grey bands)
+    for (let x = x0; x < xf; x += 2) { const hh = hash(s.id + ':f' + x); Pn.rect(x, y1 - 3, 2, 3, hh % 4 ? '#2b1e17' : '#3a2a1f'); }
+    for (let x = x0 + 2; x < xf - 2; x += 5) Pn.rect(x, y1 - 4, 2, 1, '#5a3e26');
+    Pn.rect(x0, y1 - 5, Math.max(0, len - 2), 1, '#6e5440');
     // supports + lamps
     for (let x = x0 + 40; x < xf - 14; x += 34) {
       if (G.broken && x > xs - 4 && x < xs + BREAK + 4) continue;
-      Pn.rect(x, y0, 2, L.GH - 3, '#6a4a2a'); Pn.rect(x - 3, y0, 8, 2, '#7a5634');
+      Pn.rect(x, y0 + 1, 2, L.GH - 4, '#5a3e24'); Pn.rect(x - 3, y0 + 1, 8, 2, '#6a4a2c');
       const fl = prefs.reduced ? 0.25 : 0.2 + 0.08 * Math.sin(t * 9 + x);
-      bg.globalAlpha = fl; Pn.disc(x + 1, y0 + 4, 6, '#ffd27a'); bg.globalAlpha = 1;
-      Pn.rect(x + 1, y0 + 3, 1, 2, '#ffe9a8');
+      bg.globalAlpha = fl; Pn.disc(x + 1, y0 + 6, 7, '#ffd27a'); bg.globalAlpha = 1;
+      Pn.rect(x + 1, y0 + 5, 1, 2, '#ffe9a8');
     }
-    // break marker: the long middle of the tunnel is cut out
+    // break marker: the long middle of the tunnel is cut out (rubble, not a grey wall)
     if (G.broken) {
-      Pn.rect(xs, y0 - 1, BREAK, L.GH + 2, '#120a18');
-      for (let y = y0; y < y1; y += 2) { const w = (y >> 1) % 2; Pn.rect(xs + 3 + w, y, 2, 2, '#5a4a6a'); Pn.rect(xs + BREAK - 5 - w, y, 2, 2, '#5a4a6a'); }
-      Pn.rect(xs + 6, y1 - 4, BREAK - 12, 1, '#9aa0aa');
+      cav(xs, xs + BREAK);
+      for (let y = y0 + 2; y < y1 - 2; y += 3) { const w = (y >> 1) % 2; Pn.rect(xs + 3 + w, y, 2, 2, '#3a2a40'); Pn.rect(xs + BREAK - 5 - w, y, 2, 2, '#3a2a40'); }
     }
     // the current pocket's dug part stains the tunnel walls
     for (const p of s.pk || []) {
       const a = Math.max(p.start, G.mMin), b = Math.min(p.start + p.len, G.F);
       if (b <= a || !ores[p.ore]) continue;
       const po = ores[p.ore], xa = X(a), xb = X(b);
-      bg.globalAlpha = 0.16; Pn.rect(xa, y0, xb - xa, L.GH - 4, po.color); bg.globalAlpha = 1;
-      for (let x = xa + 1, i = 0; x < xb - 1; x += 3, i++) { Pn.rect(x, y0 + (i % 3), 2, 1, po.color); if (i % 2) Pn.rect(x + 1, y1 - 5 - (i % 2), 1, 1, po.color); }
+      bg.globalAlpha = 0.12; Pn.rect(xa, y0 + 2, xb - xa, L.GH - 7, po.color); bg.globalAlpha = 1;
+      for (let x = xa + 1, i = 0; x < xb - 1; x += 3, i++) { Pn.rect(x, y0 + 2 + (i % 3), 2, 1, po.color); if (i % 2) Pn.rect(x + 1, y1 - 6 - (i % 2), 1, 1, po.color); }
     }
-    // rock ahead of the face, fading into the planet
-    const faceCol = '#33263f';
+    // the face: a ragged end to the cavity; the rock ahead is just the strata
     const shake = o.flash > 0 && t - o.flash < 0.08 ? 1 : 0;
-    Pn.rect(xf + shake, y0 - 1, xr - xf - shake, L.GH + 2, faceCol);
-    for (let i = 0; i < 6; i++) { bg.globalAlpha = 1 - (i + 1) / 7; Pn.rect(xr + i * 3, y0 - 1, 3, L.GH + 2, faceCol); }
-    bg.globalAlpha = 1;
-    for (let y = y0; y < y1; y += 3) Pn.rect(xf - 1 - ((y * 7 + H) % 3) + shake, y, 2, 3, faceCol);
-    for (let i = 0; i < 18; i++) Pn.rect(xf + 3 + ((H >> (i % 12)) * 11 + i * 17) % Math.max(4, xr - xf - 6), y0 + 1 + (i * 7 + (H >> 2)) % (L.GH - 3), 2, 1, '#3f3050');
+    for (let y = y0; y < y1; y += 2) { const hh = hash(s.id + ':e' + y); Pn.rect(xf - 1 - (hh % 3) + shake, y, 2 + (hh % 3), 2, '#0e0914'); }
     // ore pockets embedded in the rock: what is left of each, to scale (the engine's own pockets)
     for (const p of s.pk || []) {
       const a = Math.max(p.start, G.F), b = p.start + p.len;
@@ -519,20 +548,20 @@ export function createMine(canvas, get, hooks = {}) {
 
   function badge(g, S, s, inf, fs, ores, gap, t) {
     const y0 = galleryTop(s.idx), r = inf.r, o = inf.o;
-    const p = S(L.GX0 + 4, y0 + 2);
+    const p = S(L.GX0 + 4, y0 + L.GH + 4);
     if (p.y > canvas.height || p.y < -80) return;
     if (gap < fs + 9 * dpr) { g.fillStyle = o.full ? '#ff5a6e' : (ores[s.ore] ? ores[s.ore].color : '#fff'); g.fillRect(p.x, p.y, 3 * dpr, Math.max(3 * dpr, gap * 0.5)); return; }
     const ore = ores[s.ore];
     const full = o.full;
     const blocked = !!(r && r.blocked);
     const idle = !full && !inf.halted && r && r.ok && !inf.active;
-    const line1 = s.name.toUpperCase();
-    const line2 = inf.halted ? `CAVE-IN - HALTED ${mmss(inf.haltSecs)}` : r && !r.ok ? r.reason.toUpperCase() : full ? 'TUNNEL FULL - BACKED UP' : idle ? 'IDLE - NO MINERS' : `${s.miners}/${r ? r.cap : '?'} MINERS  C${s.up.cart} B${s.up.bunk}`;
-    const col2 = inf.halted || (r && !r.ok) || full ? '#ff5a6e' : idle ? '#ffb347' : '#b3a5d3';
+    const line1 = `${s.name.toUpperCase()} · ${(s.band || '').toUpperCase()}${s.dir && s.dir !== 'main' ? ' ' + s.dir.toUpperCase() : ''}`;
+    const line2 = inf.halted ? `CAVE-IN - HALTED ${mmss(inf.haltSecs)}` : r && !r.ok ? r.reason.toUpperCase() : full ? 'TUNNEL FULL - BACKED UP' : idle ? 'IDLE - HIRE MINERS' : `${s.miners} MINERS · GEAR ${s.gear} · CART ${s.cart}${r && r.limit === 'cart' ? ' · CART-LIMITED' : r && s.miners > 0 ? ' · CREW-LIMITED' : ''}`;
+    const col2 = inf.halted || (r && !r.ok) || full ? '#ff5a6e' : idle || (r && r.limit === 'cart') ? '#ffb347' : '#b3a5d3';
     // what the face is cutting now, and what's next in the rock
     const nm = (id) => (ores[id] ? ores[id].name.toUpperCase() : '?');
     const pk = r && r.pocket, nx = r && r.next;
-    const line3 = blocked ? `NEEDS DRILL ${r.need >= 6 ? 'MYTHIC' : r.need} FOR ${nm(nx && nx.ore)}` : pk ? `MINING ${nm(s.ore)} · ${fmtM(pk.left)} LEFT` : `MINING ${nm(s.ore)} · ${fmtM(r ? r.face : s.face || 0)} DUG`;
+    const line3 = blocked ? `NEEDS GEAR ${r.need} FOR ${nm(nx && nx.ore)}` : pk ? `MINING ${nm(s.ore)} · ${fmtM(pk.left)} LEFT` : `MINING ${nm(s.ore)} · ${fmtM(r ? r.face : s.face || 0)} DUG`;
     const col3 = blocked ? (Math.floor(t * 2) % 2 ? '#ff5a6e' : '#ffb0ba') : pk && ore ? lite(ore.color) : '#d8cfe8';
     const line4 = !blocked && nx ? `NEXT: ${nm(nx.ore)} IN ${fmtM(nx.at)}${nx.blocked ? ' (HARD)' : ''}` : '';
     const strikeOn = performance.now() / 1000 - o.strike < 2.5;
@@ -542,14 +571,16 @@ export function createMine(canvas, get, hooks = {}) {
     const extra = 1 + (line4 ? 1 : 0);
     const tall = fs * (3 + extra) + (14 + 3 * extra) * dpr;
     const compact = gap < tall + 4 * dpr;
-    const w = Math.max(g.measureText(line1).width + (tag ? g.measureText(tag).width + 10 * dpr : 0), compact ? 0 : Math.max(g.measureText(line2).width, g.measureText(line3).width, line4 ? g.measureText(line4).width : 0), fs * 9) + 12 * dpr;
+    const midH = fs * 2 + 16 * dpr + Math.max(fs * 0.9, 7 * dpr), mid = compact && gap >= midH; // name + status + gauge
+    const w = Math.max(g.measureText(line1).width + (tag ? g.measureText(tag).width + 10 * dpr : 0), compact && !mid ? 0 : Math.max(g.measureText(line2).width, g.measureText(line3).width, line4 ? g.measureText(line4).width : 0), fs * 9) + 12 * dpr;
     const barH = Math.max(fs * 0.9, 7 * dpr);
-    const h = compact ? fs + barH + 9 * dpr : fs * (2 + extra) + barH + (13 + 3 * extra) * dpr;
+    const h = compact ? (mid ? fs * 2 + barH + 12 * dpr : fs + barH + 9 * dpr) : fs * (2 + extra) + barH + (13 + 3 * extra) * dpr;
     g.fillStyle = 'rgba(12,7,20,0.78)'; g.fillRect(p.x, p.y, w, h);
     g.fillStyle = full || blocked ? '#ff5a6e' : ore ? ore.color : '#fff'; g.fillRect(p.x, p.y, 2 * dpr, h);
     g.fillStyle = '#f4edff'; g.fillText(line1, p.x + 6 * dpr, p.y + 3 * dpr);
     if (tag) { g.fillStyle = full ? (Math.floor(t * 3) % 2 ? '#ff5a6e' : '#ffb0ba') : (Math.floor(t * 6) % 2 ? '#ffffff' : '#ffd23f'); g.textAlign = 'right'; g.fillText(tag, p.x + w - 4 * dpr, p.y + 3 * dpr); g.textAlign = 'left'; }
     let y = p.y + fs + 5 * dpr;
+    if (mid) { g.fillStyle = col2; g.fillText(line2, p.x + 6 * dpr, y); y += fs + 3 * dpr; }
     if (!compact) {
       g.fillStyle = col2; g.fillText(line2, p.x + 6 * dpr, y); y += fs + 3 * dpr;
       g.fillStyle = col3; g.fillText(line3, p.x + 6 * dpr, y); y += fs + 3 * dpr;
@@ -561,7 +592,7 @@ export function createMine(canvas, get, hooks = {}) {
     g.fillStyle = gcol(o.f); g.fillRect(bx, y, bw * clamp(o.f, 0, 1), barH);
     g.font = `${Math.round(fs * 0.8)}px Silkscreen, monospace`;
     g.fillStyle = o.f > 0.5 ? '#140c1c' : '#f4edff';
-    g.fillText(compact && (r && !r.ok || idle || blocked) ? (blocked ? `NEEDS DRILL ${r.need >= 6 ? 'MYTHIC' : r.need}` : r && !r.ok ? r.reason.toUpperCase().slice(0, 14) : 'IDLE') : `TUNNEL ${pct}%`, bx + 3 * dpr, y + (barH - fs * 0.8) / 2);
+    g.fillText(compact && (r && !r.ok || idle || blocked) ? (blocked ? `NEEDS GEAR ${r.need}` : r && !r.ok ? r.reason.toUpperCase().slice(0, 14) : 'IDLE') : `TUNNEL ${pct}%`, bx + 3 * dpr, y + (barH - fs * 0.8) / 2);
     g.font = `${fs}px Silkscreen, monospace`;
   }
 
@@ -582,7 +613,7 @@ export function createMine(canvas, get, hooks = {}) {
     let lane = 0;
     const T_A = 3.5, T_D = 4;
     c.ships.forEach((s) => {
-      const lv = shipLvl(s.lvl), sp = shipSprite(s.cls, lv);
+      const lv = shipLvl(c.fleet?.[s.cls]?.hold), sp = shipSprite(s.cls, lv);
       let tg = null;
       if (s.state === 'loading' && padMap.has(s.id)) {
         const pad = padMap.get(s.id);
@@ -648,38 +679,56 @@ export function createMine(canvas, get, hooks = {}) {
     Pn.sprite(sp.cv, x, y, sp.ax, sp.ay, flip, k);
   }
 
-  // belt chunks -> loading arm -> hatch, per docked ship; speed follows the conveyor rate
-  function drawLoading(Pn, view, c, R, lay, ores, t, flowing, beltV) {
-    const comp = composition(c.yard, ores);
+  // Per docked ship: chunks of ITS ore ride the long belt from that ore's pile, up the gantry arm, into the hatch.
+  function drawLoading(Pn, view, c, R, lay, ores, t, beltV) {
     const spacing = clamp(16 - 2 * Math.log2(1 + (R.conveyorPerPad || 0) / 10), 8, 16);
     const reds = prefs.reduced ? 1.6 : 1;
-    for (const d of lay.loading) {
+    lay.loading.forEach((d, idx) => {
       const { sp, x: px } = d, s = d.s;
+      const rs = R.ships.find((q) => q.id === s.id) || {};
       const xr = Math.max(L.CONV_X0 + 8, px - Math.min(sp.ax, 34) - 6), topY = -2 - sp.ay - 7, hx = px - sp.ax * 0.1, hy = -2 - sp.ay * 0.6;
       // gantry arm
       Pn.rect(xr - 1, topY, 3, -topY - 9, '#4a4a58'); Pn.rect(xr - 1, topY, 3, 1, '#8a8a9a');
       Pn.rect(xr - 1, topY - 1, hx - xr + 4, 3, '#4a4a58'); Pn.rect(xr - 1, topY - 1, hx - xr + 4, 1, '#8a8a9a');
       Pn.rect(hx - 2, topY + 2, 5, 2, '#6a6a7a'); Pn.rect(hx - 1, topY + 4, 3, Math.max(1, hy - topY - 4), '#3a3a46');
-      const cap = (R.ships.find((q) => q.id === s.id) || {}).cap || 1;
-      const act = flowing && sum(s.cargo) < cap * 0.995;
-      if (!act) continue;
-      const pts = [[L.YARD_X + 8, -15], [L.CONV_X0 + 2, -11.5], [xr, -11.5], [xr, topY + 1], [hx, topY + 1], [hx, hy]];
-      const cum = [0]; for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
-      const Lp = cum[cum.length - 1], nn = Math.max(2, Math.floor(Lp / (spacing * reds))), loop = nn * spacing * reds;
-      const idx = lay.loading.indexOf(d);
-      for (let q = 0; q < nn; q++) {
-        const raw = t * beltV + q * spacing * reds + idx * 4;
-        const sPos = ((raw % loop) + loop) % loop, cyc = Math.floor(raw / loop);
-        if (sPos > Lp) continue;
-        let seg = 1; while (seg < cum.length - 1 && cum[seg] < sPos) seg++;
-        const u = (sPos - cum[seg - 1]) / Math.max(0.001, cum[seg] - cum[seg - 1]);
-        const cx = lerp(pts[seg - 1][0], pts[seg][0], u), cy = lerp(pts[seg - 1][1], pts[seg][1], u);
-        const pick = comp.length ? comp[pickIdx(comp, hash(`${q}:${cyc}:${idx}`) % 1000 / 1000)] : null;
-        const im = pick ? oreSprite(pick.spec, 6) : null;
-        if (!im) continue;
-        const endFade = Lp - sPos < 6 ? (Lp - sPos) / 6 : 1;
-        Pn.sprite(im, cx, cy, 3, 3, false, 0.85, endFade);
-      }
+      const lanes = [[rs.oreId, rs.fill], [rs.oreId2, rs.fill2]].filter(([id, f]) => id && ores[id] && f < 0.995 && (c.yard[id] || 0) > 0.01);
+      if (!lanes.length) return;
+      lanes.forEach(([oid], li) => {
+        const sx = pileX(slots.has(oid) ? slots.get(oid) : 0) + 15;
+        const pts = [[sx, -11.5], [xr, -11.5], [xr, topY + 1], [hx, topY + 1], [hx, hy]];
+        const cum = [0]; for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+        const Lp = cum[cum.length - 1], step = spacing * reds * lanes.length, nn = Math.max(2, Math.floor(Lp / step)), loop = nn * step;
+        const im = oreSprite(specOf(ores[oid]), 6);
+        for (let q = 0; q < nn; q++) {
+          const raw = t * beltV + q * step + idx * 4 + li * spacing * reds, sPos = ((raw % loop) + loop) % loop;
+          if (sPos > Lp) continue;
+          let seg = 1; while (seg < cum.length - 1 && cum[seg] < sPos) seg++;
+          const u = (sPos - cum[seg - 1]) / Math.max(0.001, cum[seg] - cum[seg - 1]);
+          const cx = lerp(pts[seg - 1][0], pts[seg][0], u), cy = lerp(pts[seg - 1][1], pts[seg][1], u);
+          Pn.sprite(im, cx, cy, 3, 3, false, 0.85, Lp - sPos < 6 ? (Lp - sPos) / 6 : 1);
+        }
+      });
+    });
+  }
+  // The hold window on each docked ship fills with chunks of its own ore; freighters with the second hold show two.
+  function drawHolds(Pn, lay, R, ores, t) {
+    for (const d of lay.docked) {
+      const rs = R.ships.find((q) => q.id === d.s.id) || {}, cv = d.sp.cv;
+      const holds = [[rs.oreId, rs.fill || 0]];
+      if (rs.oreId2) holds.push([rs.oreId2, rs.fill2 || 0]);
+      const w = Math.round(cv.width * 0.5), x0 = Math.round(d.x - d.sp.ax + cv.width * 0.25), h = 5;
+      holds.forEach(([oid, f], hi) => {
+        const o = ores[oid], y0 = Math.round(d.y - d.sp.ay + cv.height * (holds.length > 1 ? 0.28 + hi * 0.2 : 0.4));
+        Pn.rect(x0 - 1, y0 - 1, w + 2, h + 2, '#0d0814'); Pn.rect(x0, y0, w, h, '#241a32');
+        if (!o) return;
+        const fw = Math.round(w * clamp(f, 0, 1));
+        for (let x = 0; x < fw; x += 2) {
+          const hh = hash(oid + ':' + x), lift = (hh % 3 === 0 ? 1 : 0) + (x > fw - 5 ? 1 : 0);
+          Pn.rect(x0 + x, y0 + 1 + lift, 2, h - 1 - lift, hh % 4 ? o.color : color.shade(o.color, 0.3));
+          Pn.rect(x0 + x, y0 + h - 1, 2, 1, color.shade(o.color, -0.3));
+        }
+        if (f < 0.995 && !prefs.reduced && Math.floor(t * 6) % 2) Pn.rect(x0 + fw, y0 + 1, 1, h - 1, '#ffffff');
+      });
     }
   }
 
@@ -717,8 +766,8 @@ export function createMine(canvas, get, hooks = {}) {
   function markerPos(b, c) {
     switch (b.stage) {
       case 'lift': return { x: 0, y: -80 };
-      case 'yard': return { x: L.YARD_X, y: -40 };
-      case 'conveyor': return { x: (L.CONV_X0 + padX(0)) / 2, y: -26 };
+      case 'yard': return { x: L.PILE_X0 + 20, y: -50 };
+      case 'conveyor': return { x: (L.CONV_X0 + L.PAD_X0) / 2, y: -26 };
       case 'ships': return { x: padX(0), y: -70 };
       case 'blocked': { const s = c.shafts.find((x) => x.id === b.shaft?.id) || c.shafts[0]; return { x: geo(s, SH.get(s.id)).xf + 2, y: galleryTop(s ? s.idx : 0) + 2 }; }
       default: return { x: L.GX0 + L.GLEN - 30, y: galleryTop(0) + 2 };
@@ -811,7 +860,8 @@ export function createMine(canvas, get, hooks = {}) {
       if (wx >= h.x0 && wx <= h.x1 && wy >= h.y0 - 3 && wy <= h.y1 + 3) return hooks.onTap?.(h.kind, h.id, e);
     }
     if (wy < 2 && wy > -70 && Math.abs(wx) < 16) return hooks.onTap?.('lift', null, e);
-    if (wy < 8 && wy > -40 && Math.abs(wx - L.YARD_X) < 14) return hooks.onTap?.('yard', null, e);
+    if (wy < 8 && wy > -44 && wx > L.PILE_X0 - 20 && wx < pileX(Math.max(1, slots.size) - 1) + 20) return hooks.onTap?.('yard', null, e);
+    if (wy < 0 && wy > -22 && wx > L.CONV_X0 && wx < L.PAD_X0) return hooks.onTap?.('conveyor', null, e);
     const rf = get()?.colony?.refinery;
     if (rf?.planet && wy < 8 && wy > -44 && wx > REF.X - REF.W / 2 - 24 && wx < REF.X + REF.W / 2) return hooks.onTap?.('refinery', 'planet', e);
     if (rf?.orbital && Math.abs(wy - REF.STY) < 24 && Math.abs(wx - REF.STX) < 32) return hooks.onTap?.('refinery', 'orbital', e);
@@ -827,10 +877,16 @@ export function createMine(canvas, get, hooks = {}) {
     fit: () => setView(fitView(), true),
     zoom: (d) => zoomTo(zt * Math.pow(1.4, d), canvas.width / 2, canvas.height / 2),
     pop(wx, wy, text, col = '#ffd23f') { pops.push({ x: wx, y: wy, text, color: col, t0: performance.now() / 1000 }); if (pops.length > 30) pops.shift(); },
+    lookAt(wx, wy, zz) { setView({ z: zz, x: wx - cssW() / zz / 2, y: wy - cssH() / zz / 2 }); },
+    celebrate(sh) {
+      const y = galleryTop(sh.idx), t = performance.now() / 1000;
+      pops.push({ x: L.GX0 + 40, y: y + 4, text: 'NEW SHAFT!', color: '#ffd23f', t0: t });
+      for (let i = 0; i < (prefs.reduced ? 8 : 60); i++) { const a = (i / 60) * Math.PI * 2; emit({ x: L.GX0 + 40, y: y + L.GH / 2, vx: Math.cos(a) * (30 + Math.random() * 60), vy: Math.sin(a) * (20 + Math.random() * 40) - 20, g: 80, t0: t, life: 1.2, sz: i % 3 ? 1 : 2, col: ['#ffd23f', '#ff8a3d', '#ffffff'][i % 3], spark: true }); }
+    },
     focusShaft(idx) { goal = null; cam.y = galleryTop(idx) - cssH() / z * 0.4; clampCam(); },
     toCss, padX, galleryTop,
     refPos: (site) => (site === 'orbital' ? { x: REF.STX, y: REF.STY - 14 } : { x: REF.X, y: -46 }),
-    worldOf: (stage, c) => ({ lift: { x: 0, y: -48 }, yard: { x: L.YARD_X, y: -14 }, pads: { x: padX(0), y: -40 }, sky: { x: padX(0), y: -90 }, shaft: { x: L.GX0 + 60, y: galleryTop(0) + 12 } }[stage]),
+    worldOf: (stage, c) => ({ lift: { x: 0, y: -48 }, yard: { x: L.PILE_X0, y: -14 }, pads: { x: padX(0), y: -40 }, sky: { x: padX(0), y: -90 }, shaft: { x: L.GX0 + 60, y: galleryTop(0) + 12 } }[stage]),
   };
 }
 
@@ -923,6 +979,16 @@ function drawConveyor(P, x0, x1, t, v) {
   const off = v > 0 ? (t * v) % 6 : 0;
   for (let x = x0 + off; x < x1 - 2; x += 6) P.rect(x, -7, 2, 1, '#14101c');
   P.disc(x0, -7, 2, '#5a5a6a'); P.disc(x1, -7, 2, '#5a5a6a');
+}
+// feed belt: from the lift's tip chute over every pile, on trestles
+function drawFeedBelt(P, x1, t, v) {
+  const y = L.FEED_Y;
+  P.line(8, -20, 16, y + 1, '#5a5a66', 2);
+  for (let x = 30; x < x1; x += 28) P.rect(x, y + 3, 2, -y - 3, '#4a3a2a');
+  P.rect(14, y, x1 - 14, 3, '#2a2a36'); P.rect(14, y, x1 - 14, 1, '#6a6a7a');
+  const off = v > 0 ? (t * v) % 6 : 0;
+  for (let x = 14 + off; x < x1 - 2; x += 6) P.rect(x, y + 2, 2, 1, '#14101c');
+  P.disc(x1, y + 1, 2, '#6a6a7a');
 }
 function drawPad(P, cx, t, i) {
   P.rect(cx - 30, -2, 60, 3, '#5a5a6a'); P.rect(cx - 30, -2, 60, 1, '#8a8a9a');

@@ -114,6 +114,43 @@ Underground hazards (gives lights and supports a purpose)
 
 > **Playtest:** Is it satisfying to watch a tunnel break into a rare pocket? Does it pull players to dig deeper and longer?
 
+## Phase 3.5: Monumental shafts and a real planet (owner request, 2026-11-13)
+
+*Buying a shaft should feel like opening a new business; where you dig should matter.*
+
+Mine
+- Shafts are AdVenture-Capitalist-style categories: very expensive, each with its **own miners** (no transfers), **gear** (mining speed and the hardest ore it can cut) and **cart** (hauls ore from the face to the shaft entrance). You start with shaft 1.
+- Buying a shaft offers exactly 2 **dig directions** with different (fuzzy) ore prospects, so you choose better or worse ore.
+- The lift has three upgrades: **speed** (trips per minute), **capacity** (per bucket) and **buckets** (how many run at once).
+- No recommended buys anywhere. The bottleneck diagnosis stays as plain information.
+
+Planet layout (full spec; weather, wildlife, tribes and scouting land in Phase 5)
+- 12–18 regions, each with one of the planet's 2 common ores (common-ore zones never overlap), soil hardness, topography, weather and temperature.
+- Sites are specific spots in a region, not too close together. Each has richness per ore (0–100%) and vein sizes, soil, weather pattern, tribes/wildlife, and distances.
+- Distances: on-planet destinations 1–8 units, off-planet 10–60, plus 8 to leave or enter the surface.
+- Every player gets an equally good start, about one standard deviation above an average site, with no hostile tribes or boss monsters.
+- Rare ores (4) each appear at ~37% of sites independently (0 rares ~16%, 1 ~37%, 2 ~33%, 3 ~13%, 4 ~2%). Mythic (1) at ~5% of sites, only on naturally tough ground, hardness 9–10, needing special equipment.
+- Depth bands: shallow (mostly common, safe), middle (rare appears, moderate creatures), deep (more rare, toxic gas), deepest (the only place mythic appears, floods, worst creatures). Vein chance and size grow with depth; no shaft is guaranteed a vein.
+- A rare vein lasts ~4 hours to 2 days at a median player's pace; shafts often hit several. Warnings at 20%; below 5% output tapers; a dry vein falls back to common until the next.
+- Creature danger roughly doubles every 5 shafts. Soil hardness modifies mining speed.
+- Phase 5 adds: five weather types (clear, dust, storm, ash, cold) changing daily per region (production, storms ground ships, lightning); per-region wildlife (1–3 pests, 2–3 standard, 1–2 apex; neighbours share; 1–2 planet-roaming mythic creatures; traits fit terrain); tribes placed where it makes sense, from nomads to empires with villages and HQs; scouting from early reports (ore density without mythic, soil, common ore) to full reports (vein counts and sizes, soil, wildlife, danger, weather, tribe strength and relations).
+
+Ships (owner request, 2026-11-13)
+- Buy as many ships per class as you like, but upgrades are per class (fleet-wide), not per ship. Every class has a cargo hold upgrade plus one specialization: Cruiser speed, Hauler loading speed, Freighter a very expensive "second hold" unlock (then upgrade the second hold's capacity).
+- Each ship carries one ore type at a time; only Freighters with the second hold carry two.
+- Ships pick what to load by fleet-wide coin/min: if another ship is already taking the high-value ore, a ship may take a lower-value ore instead; if that ship can't take it all, others join in.
+- Loading animations show each ship visibly filling with chunks of its ore.
+
+Painted planet (owner request, 2026-11-13; supersedes discrete site lists)
+- The planet map is a painted, shaded-relief world (height, climate zones blending like a Köppen climate map), not Voronoi cells. Regions are named climate areas with organic borders.
+- Ore is painted as hidden fields of splotches and patches (they don't need to be contiguous): the two common ores split the land roughly 50/50; each rare covers about 37% of the land. Patches range from massive connected areas to smaller ones, but no single patch is smaller than about 5% of the land (2% for mythic), so every ore can realistically be landed on; mythic covers part of the tough (rugged, high) ground. Wildlife and tribe territories (Phase 5) are hidden fields too.
+- Players never see the ore or territory maps. A new player is dropped at a random spot that's equally good for everyone (about +1 SD), with no hostile tribes or bosses nearby. The map shows where you are, other players, refineries and ships flying overhead.
+- Later (outposts, Phase 5) players click any spot far enough from other sites to open a site there; the ores painted under that spot are what's in the ground. Scouting reports reveal estimates.
+
+Look and feel
+- More space: separate ore piles per ore, ore visibly travelling on belts and pipes, the shipyard set well away from the piles.
+- Tunnels look natural (no grey bands); the ore chunks in the rock are the actual veins.
+
 ## Phase 3: Refineries and a real market (Stage 2)
 
 - Refinery license unlocks mid-month. Build on-planet (cheap, close) or off-planet (expensive, big).

@@ -5,44 +5,54 @@ export const T = {
   startCoin: 40,                // enough for a few miners right away
   gridMs: 60_000, // advance() never integrates across a minute boundary in one piece
 
-  // Miners
-  minePerMiner: 10,          // ore/min per miner, before carts
-  hireBase: 10, hireGrowth: 1.02,
-
-  // Shafts (index = depth)
+  // Shafts are categories (AdVenture-Capitalist style). Shaft idx (0 = the free first shaft) scales everything in it.
   maxShafts: 30,
-  shaftBase: 60, shaftGrowth: 2.25,
-  bunkCap0: 3, bunkCapPer: 1,                 // miners per shaft = 3 + bunk
-  bunkBase: 60, bunkGrowth: 2.08,
-  cartBase: 25, cartGrowth: 1.83, cartAdd: 0.3,  // ore per miner +30% of base per level
-  upMax0: 10, upMaxPerDepth: 1,              // carts/bunks per shaft max out at 10 + depth
-  depthCost: 1.66,                            // per-shaft upgrade price x1.66 per depth
-  richness: 1.25,                             // ore per miner x1.25 per depth
-  grade: 1.05,                                // ore value x1.05 per depth (deeper ore is purer)
-  shaftBuffer: 40,                            // tunnel storage per shaft (ore)
+  startMiners: 3,                // the free first shaft starts with a few miners
+  minePerMiner: 10,              // ore/min per miner at gear 1, shaft 1
+  shaftScale: 6.8,               // miners, gear and cart cost x6.8 per shaft index (a shaft's ladder is as pricey as it is rich)
+  richness: 1.9,                 // ore per miner x1.9 per shaft index ("depth richness")
+  grade: 3.8,                    // ore value x3.8 per shaft index (deeper ore is purer; market volume is unaffected)
+  hire: { base: 20, growth: 1.11, max: 100 },          // miner n costs base x shaftScale^idx x growth^n
+  // Gear: level 1.. (mining speed). Level >= hardness cuts that ore. Above `free` needs the mythicDrill license.
+  gear: { base: 60, growth: 1.25, add: 0.5, max: 300, free: 8, hardMax: 10 },
+  // Cart: ore/min the cart hauls from the face to the shaft entrance. A shaft makes at most this much.
+  cart: { base: 90, growth: 1.25, add: 0.5, rate: 60, max: 300 },
+  // Gear and cart double at these levels (milestones), on top of their per-level gain.
+  milestones: [25, 50, 100, 200, 300],
+  shaftBase: 1_200_000, shaftGrowth: 10,   // shaft idx (>= 1) costs base x growth^(idx-1)
+  depthBands: [3, 7, 12],             // shaft index where middle, deep and deepest begin
+  bands: ['shallow', 'middle', 'deep', 'deepest'],
+  shaftBuffer: 40,                    // tunnel storage per shaft (ore)
 
-  // Tunnels and ore pockets (pockets.js). Lengths in metres.
+  // Tunnels and ore pockets (pockets.js). A metre = a minute of a reference crew's output at that shaft.
   pk: {
-    minPerM: 2.5,          // minutes a full crew needs per metre at the lift (ore per metre scales with the crew)
-    haulM: 60,             // every 60 m of tunnel adds another minPerM per metre: the haul back gets longer
-    wall: 0.6,             // a face stuck at a too-hard pocket: crews scrape common ore off the walls at 60%
-    first: [1.5, 3],       // a new shaft's first pocket starts this far in
-    homeFirst: [20, 30],   // the home shaft's first pocket (after the drill is affordable)
-    len: [2.5, 5],         // pocket length at depth 0 ...
-    lenDepth: 0.08,        // ... x(1 + 0.08 x depth)
-    share: [0.35, 0.03, 0.7], // share of the tunnel inside pockets: base + per depth, capped
-    mythicLen: 0.5,        // mythic pockets are half as long
+    refOre: 1200,           // reference crew ore/min at shaft 1 (a normal player's crew, not the greedy bot's) (x richness per index): sets how long a vein lasts for a median player
+    minPerM: 1,            // minutes of reference output per metre
+    share: [0.15, 0.3, 0.4, 0.5], // share of the tunnel inside veins by band (shallow is mostly common but still strikes now and then) (x richness factor of the site)
+    shareMax: 0.7,
+    hours: [6, 8],         // vein length (hours at the reference pace) = 6 x 8^u x size, clamped to hoursMin..hoursMax
+    hoursMin: 4, hoursMax: 48,
+    meanHours: 14,         // average vein, for spacing
+    mythicLen: 0.5,        // mythic veins are half as long
     mythicW: 0.5,          // and half as likely as a rare of the same weight
+    wall: 0.6,             // a face stuck at a too-hard vein: crews scrape common ore off the walls at 60%
+    low: 0.8,              // "running low" event when 80% of the vein is mined (20% left)
+    taperFrom: 0.95,       // below 5% left the rare share tapers linearly (5 equal steps), then back to common
+    taperSteps: 5,
     ahead: 3,              // pockets rolled ahead of the face (the mine view draws them)
+    tiltRange: [0.25, 1.9],  // wide enough that the two dig directions really differ // a direction option multiplies each ore's richness by something in this range
   },
-
-  // Drill: level >= hardness to mine. Level 6 = mythic drill (license).
-  drillCosts: [0, 0, 1_700, 38_000, 940_000, 19_000_000, 130_000_000], // cost to reach level i
-  drillMax: 6,
+  danger: 5,                          // hazard danger doubles every 5 shafts
 
   // Lift, conveyor, yard, pads
-  milestoneEvery: 40,                         // lift, conveyors and ship cargo double every 40 levels
-  liftBase: 25, liftMult: 1.19, liftCost: 25, liftGrowth: 1.46,
+  milestoneEvery: 40,                         // conveyors, ship cargo and lift speed/capacity double every 40 levels
+  // Lift: throughput = buckets x capacity x trips/min, slowed by the depth of the deepest working shaft.
+  lift: {
+    speed:    { base: 2,  mult: 1.12, cost: 30,  growth: 1.42, max: 400, label: 'Lift speed' },     // trips per minute
+    capacity: { base: 20, mult: 1.16, cost: 40,  growth: 1.5,  max: 400, label: 'Bucket capacity' }, // ore per bucket
+    buckets:  { base: 1,  add: 1,    cost: 150, growth: 1.85, max: 60,  label: 'Buckets' },         // buckets running at once
+    depthSlow: 0.03,                          // trips/min / (1 + 0.03 x deepest working shaft index)
+  },
   convBase: 60, convMult: 1.19, convCost: 35, convGrowth: 1.46,  // per pad
   yardBase: 120, yardMult: 1.35, yardCost: 50, yardGrowth: 1.42,
   padMax: 8, padCost: 2_500, padGrowth: 9,
@@ -53,12 +63,26 @@ export const T = {
     // upk: upgrade price per unit of cargo (fast ships cost more per crate)
     hauler:    { cap: 40,  speed: 1,    cost: 400,    upk: 1,   label: 'Hauler' },
     cruiser:   { cap: 16,  speed: 2.2,  cost: 3_000,  upk: 1.8, label: 'Cruiser' },
-    freighter: { cap: 180, speed: 0.55, cost: 60_000, upk: 0.6, label: 'Freighter' },
+    freighter: { cap: 180, speed: 0.6,  cost: 25_000, upk: 0.6, label: 'Freighter' },
   },
-  shipFleetGrowth: 2.6,                 // each extra ship costs 2.6x
-  shipCapMult: 1.25, shipUpCost: 0.8, shipUpGrowth: 1.43, // upgrade base = 0.8 coin per crate x upk
-  shipJoinLevel: 0.8,                   // new ships arrive at 80% of your best ship's level
-  maxLoadSecs: 40,                      // a ship leaves this long after its first ore even if not full
+  shipFleetGrowth: 2.6,                 // each extra ship of a class costs 2.6x
+  // Class upgrades (Phase 3.5 rework): levels live in colony.fleet[cls] and every ship of the class uses them.
+  //   hold (all): cargo x mult per level · loading (hauler): load rate x mult per level · speed (cruiser): flight speed x mult per level
+  //   multi (freighter): one-time unlock of a second hold (40% of the main hold; costs about a big shaft) · hold2 (freighter, needs multi): second hold x mult per level
+  // Costs: hold/hold2 base = cost x the class's cargo x upk (growth per level); loading/speed have their own base.
+  // Milestones (like gear and carts) multiply a stat at these levels: x2 for cargo and loading, x1.5 for speed.
+  fleetUp: {
+    hold:    { mult: 1.17, growth: 1.3, cost: 3, max: 300 },
+    loading: { mult: 1.12, growth: 1.45, cost: 160, max: 200 },
+    speed:   { mult: 1.03, growth: 1.5,  cost: 1_500, max: 120 },
+    hold2:   { mult: 1.17, growth: 1.3, cost: 3, max: 300, share: 0.4 },  // second hold = share x the main hold x mult^level
+    multi:   { cost: 12e12 },  // about one shaft-8 purchase (T.shaftBase x 10^7)
+    milestones: [10, 25, 50, 100, 200, 300],
+    bonus: { hold: 2, hold2: 2, loading: 2, speed: 1.5 },
+  },
+  maxLoadSecs: 40,
+  // How long each class waits at the pad after its first ore: freighters wait to fill their huge holds.
+  loadSecs: { hauler: 40, cruiser: 25, freighter: 150 },                      // a ship leaves this long after its first ore even if not full (a docked ship still empty re-picks its ore then)
   tripSecs: { near: 15, mid: 35, far: 70 },  // one way, speed 1
 
   // Ore values when the planet gives none
@@ -87,7 +111,7 @@ export const T = {
     computer: 0.6,              // no parties: a computer buyer takes everything at 0.6x base value
     tripSecs: 12,               // one way to the orbital refinery at speed 1
     growthPow: 1.3,
-    demandScale: 0.25,
+    demandScale: 0.1,
     tierDemand: { common: 1, rare: 0.5, mythic: 0.1 },
     markupMin: 0.5, markupMax: 3,
     planet:  { cost: 1_500_000,  thru: 4_000,  yield: 1,    storage: 60_000,  label: 'On-planet refinery' },

@@ -162,8 +162,8 @@ export function drawWeather(g, planet, region, view, t = 0) {
 
 /* ---------- strata ---------- */
 const TILE_W = 256; const TILES = new Map();
-function strataTile(planet, layerH) {
-  const key = `${planet.id}|${layerH}|${planet.layers.map((l) => l.color).join('')}`; let tile = TILES.get(key); if (tile) return tile;
+function strataTile(planet, layerH, noOre = false) {
+  const key = `${planet.id}|${layerH}|${noOre ? 'n' : 'o'}|${planet.layers.map((l) => l.color).join('')}`; let tile = TILES.get(key); if (tile) return tile;
   const H = layerH * 5; const [cv, g] = mkCv(TILE_W, H); const R0 = rng(hash(`${planet.id}rock`));
   const B = (x, y, w, h, c) => { g.fillStyle = c; g.fillRect(x, y, w, h); };
   const per = (x, k) => Math.sin((x / TILE_W) * Math.PI * 2 * k);
@@ -177,7 +177,7 @@ function strataTile(planet, layerH) {
     if (L > 0) for (let x = 0; x < TILE_W; x += 3) { const j = Math.floor(R0() * 4); B(x, y0 - j, 3, j, planet.layers[L - 1].color); }
   }
   // ore seams: each layer shows the ores that live at that depth (and a few shallower ones)
-  const ores = planet.ores || [];
+  const ores = noOre ? [] : (planet.ores || []);
   for (let L = 0; L < 5; L += 1) {
     const cand = []; for (const o of ores) { const ol = layerOfDepth(o.depthMin); if (ol === L) cand.push(o, o, o); else if (ol < L && (o.tier !== 'common' || L <= 2)) cand.push(o); }
     if (!cand.length) continue;
@@ -192,7 +192,7 @@ function strataTile(planet, layerH) {
 }
 /* rock layers from world y = 0 down to 5 * layerH, tiled horizontally; deeper than that is the core colour */
 export function drawStrata(g, planet, view, opts = {}) {
-  const layerH = opts.layerH || LAYER_H; const s = view.scale; const tile = strataTile(planet, layerH); const H = layerH * 5;
+  const layerH = opts.layerH || LAYER_H; const s = view.scale; const tile = strataTile(planet, layerH, !!opts.noOre); const H = layerH * 5;
   const y0 = Math.max(0, view.y); const y1 = Math.min(H, view.y + view.h / s); const prev = g.imageSmoothingEnabled; g.imageSmoothingEnabled = false;
   const SX = (x) => Math.round((x - view.x) * s); const SY = (y) => Math.round((y - view.y) * s);
   if (y1 > y0) for (let k = Math.floor(view.x / TILE_W); k * TILE_W < view.x + view.w / s; k += 1) {

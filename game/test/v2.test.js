@@ -33,12 +33,25 @@ describe('v2 server', () => {
     const region = s0.body.world.planet.regions[1].id;
     const st = await call('POST', '/api/v2/start', { species: { name: 'Gloops', color: '#33ccff' }, siteRegion: region }, a.token);
     assert.equal(st.status, 200);
-    assert.equal(st.body.colony.siteRegion, region);
+    assert.ok(s0.body.world.planet.regions.some(r => r.id === st.body.colony.siteRegion), 'landed in a real region');
     const coin0 = st.body.colony.coin;
-    const hire = await call('POST', '/api/v2/command', { cmd: { type: 'hire', n: 1 } }, a.token);
+    const hire = await call('POST', '/api/v2/command', { cmd: { type: 'hireMiners', shaftId: st.body.colony.shafts[0].id, n: 1 } }, a.token);
     assert.equal(hire.status, 200, JSON.stringify(hire.body));
     assert.ok(hire.body.colony.coin < coin0, 'hiring costs coin');
-    assert.ok(hire.body.colony.miners >= 1);
+    assert.ok(hire.body.colony.miners >= 4, 'three starting miners plus one');
+  });
+
+  test('players are dropped at fair random spots, apart from each other', async () => {
+    const p1 = await join('Site1'), p2 = await join('Site2');
+    const a = await call('POST', '/api/v2/start', {}, p1.token);
+    const b = await call('POST', '/api/v2/start', {}, p2.token);
+    assert.equal(a.status, 200); assert.equal(b.status, 200);
+    const sa = a.body.colony.site, sb = b.body.colony.site;
+    assert.ok(sa && Number.isFinite(sa.x) && sa.richness && sa.common, 'colony has a sampled site');
+    assert.ok(Math.hypot(sa.x - sb.x, sa.y - sb.y) >= 40, 'colonies are spaced apart');
+    const st = (await call('GET', '/api/v2/state', null, p1.token)).body;
+    assert.ok(st.colonies.some(c => c.uid === b.body.colony.uid), 'map shows other colonies');
+    assert.ok(!('richness' in st.colonies[0]), 'ore under other colonies stays hidden');
   });
 
   test('server time drives progress; clients cannot set money', async () => {

@@ -1,29 +1,86 @@
 // Derived numbers: per-level stats, miner assignment, shaft status, market prices.
 import { T } from './tuning.js';
 import { info, num, pos } from './util.js';
-import { syncTunnel, tunnelAt, needOf, needText } from './pockets.js';
+import { syncTunnel, tunnelAt, needOf, needText, bandOfIdx, bandOf, richnessAt } from './pockets.js';
+export { bandOfIdx, bandOf, richnessAt };
 
 // Every T.milestoneEvery levels a stat doubles (a "milestone"), on top of its per-level gain.
 export const milestone = (lvl) => Math.pow(2, Math.floor(lvl / T.milestoneEvery));
-export const liftRate = (lvl) => T.liftBase * Math.pow(T.liftMult, lvl) * milestone(lvl);
+// Gear and cart double at T.milestones (25, 50, 100, 200, 300).
+export const gearMilestone = (lvl) => { let m = 1; for (const x of T.milestones) if (lvl >= x) m *= 2; return m; };
+export const nextMilestone = (lvl) => T.milestones.find((x) => x > lvl) ?? null;
 export const convRate = (lvl) => T.convBase * Math.pow(T.convMult, lvl) * milestone(lvl);
 export const yardCap = (lvl) => T.yardBase * Math.pow(T.yardMult, lvl);
-export const bunkCap = (lvl) => T.bunkCap0 + T.bunkCapPer * lvl;
-export const perMiner = (cart, idx = 0) => T.minePerMiner * (1 + T.cartAdd * cart) * Math.pow(T.richness, idx);
+export const soilOf = (c) => { const x = Number(c?.site?.soil); return x > 0 && Number.isFinite(x) ? x : 1; };
+export const gearMult = (gear) => (1 + T.gear.add * (Math.max(1, gear) - 1)) * gearMilestone(Math.max(1, gear));
+// Ore/min of one miner (before the soil, the evolution and the cart): gear x depth richness.
+export const perMiner = (s) => T.minePerMiner * gearMult(num(s.gear, 1)) * richnessAt(s.idx);
+// Ore/min the shaft's cart hauls from the face to the shaft entrance.
+export const cartRate = (s) => T.cart.rate * (1 + T.cart.add * (Math.max(1, num(s.cart, 1)) - 1)) * gearMilestone(Math.max(1, num(s.cart, 1))) * richnessAt(s.idx);
+// Ore/min a shaft really makes while working (c = colony for the soil, k = evolution multiplier): the cart caps the crew.
+export const crewRate = (c, s, k = 1) => s.miners * perMiner(s) / soilOf(c) * k;
+export const shaftRate = (c, s, k = 1) => Math.min(crewRate(c, s, k), cartRate(s) * k);
+// Hazard danger of a shaft: its depth index, doubling every T.danger shafts (the first shaft is safe).
+export const dangerOf = (idx) => (idx <= 0 ? 0 : idx * Math.pow(2, idx / T.danger));
+export const shaftCost = (idx) => (idx <= 0 ? 0 : T.shaftBase * Math.pow(T.shaftGrowth, idx - 1));
+
+// Lift: buckets x capacity x trips/min. Trips slow with the depth of the deepest working shaft.
+export const liftLvl = (c) => ({ speed: num(c?.lift?.speed), capacity: num(c?.lift?.capacity), buckets: num(c?.lift?.buckets) });
+export const liftTrips = (lvl) => T.lift.speed.base * Math.pow(T.lift.speed.mult, lvl) * milestone(lvl);
+export const liftCapacity = (lvl) => T.lift.capacity.base * Math.pow(T.lift.capacity.mult, lvl) * milestone(lvl);
+export const liftBuckets = (lvl) => T.lift.buckets.base + T.lift.buckets.add * lvl;
+export const liftDepthIdx = (c) => c.shafts.reduce((a, s) => (s.miners > 0 ? Math.max(a, s.idx) : a), 0);
+export const liftRate = (c) => {
+  const l = liftLvl(c);
+  return liftBuckets(l.buckets) * liftCapacity(l.capacity) * liftTrips(l.speed) / (1 + T.lift.depthSlow * liftDepthIdx(c));
+};
+// The colony's grade class: its shafts' ore-weighted average grade. Buyers' demand for refined ore scales with it,
+// so a refinery's economics do not depend on how deep the colony digs.
+export const gradeScale = (c) => {
+  let w = 0, g = 0;
+  for (const s of c.shafts) { const r = shaftRate(c, s); if (r > 0) { w += r; g += r * Math.pow(T.grade, s.idx); } }
+  return w > 0 ? g / w : 1;
+};
 export const grade = (idx) => Math.pow(T.grade, idx);
 export const tunnelCap = (c) => T.shaftBuffer * Math.max(1, c.shafts.length);
-const capMemo = new Map();
-export const shipCap = (ship) => {
-  const key = (ship.cls || '') + (ship.lvl || 0);
-  let v = capMemo.get(key);
-  if (v === undefined) {
-    v = (T.ship[ship.cls] || T.ship.hauler).cap * Math.pow(T.shipCapMult, ship.lvl || 0) * milestone(ship.lvl || 0);
-    if (capMemo.size < 5000) capMemo.set(key, v);
+// Fleet (class upgrades): colony.fleet[cls][kind] = level; every ship of the class uses it.
+export const FLEET_KINDS = { hauler: ['hold', 'loading'], cruiser: ['hold', 'speed'], freighter: ['hold', 'multi', 'hold2'] };
+export const emptyFleet = () => ({ hauler: { hold: 0, loading: 0 }, cruiser: { hold: 0, speed: 0 }, freighter: { hold: 0, multi: 0, hold2: 0 } });
+// Fills `fleet` lazily and drops per-ship levels (colonies from engine v <= 5 had `ship.lvl`). Mutates c.
+export function ensureFleet(c) {
+  const f = emptyFleet();
+  const cur = c.fleet && typeof c.fleet === 'object' ? c.fleet : {};
+  for (const cls in f) f[cls] = { ...f[cls], ...(cur[cls] || {}) };
+  c.fleet = f;
+  for (const s of c.ships || []) {
+    delete s.lvl;
+    if (s.oreId === undefined) {
+      let id = null, best = 0;
+      for (const k in s.cargo || {}) if (s.cargo[k] > best) { best = s.cargo[k]; id = k; }
+      s.oreId = id; s.oreId2 = null; s.pickAt = null;
+    }
   }
-  return v;
+  return c;
+}
+export const fleetLvl = (c, cls, kind) => Math.max(0, Math.floor(num(c?.fleet?.[cls]?.[kind], 0)));
+export const fleetMilestone = (kind, lvl) => {
+  const U = T.fleetUp;
+  let n = 0;
+  for (const m of U.milestones) if (lvl >= m) n++;
+  return Math.pow(U.bonus[kind] || 2, n);
 };
-export const shipSpeed = (cls) => (T.ship[cls] || T.ship.hauler).speed;
-export const tripSecs = (buyer, cls, c) => T.tripSecs[buyer.distance] / (shipSpeed(cls) * (c ? evoMult(c, 'ship') : 1));
+export const nextFleetMilestone = (lvl) => T.fleetUp.milestones.find((x) => x > lvl) ?? null;
+const lvlMult = (kind, lvl) => Math.pow(T.fleetUp[kind].mult, lvl) * fleetMilestone(kind, lvl);
+export const holdAt = (cls, lvl) => (T.ship[cls] || T.ship.hauler).cap * lvlMult('hold', lvl);
+export const hold2At = (holdLvl, lvl) => T.fleetUp.hold2.share * holdAt('freighter', holdLvl) * lvlMult('hold2', lvl);
+export const loadMultAt = (lvl) => lvlMult('loading', lvl);
+export const speedMultAt = (lvl) => lvlMult('speed', lvl);
+export const shipCap = (ship, c) => holdAt(ship.cls, fleetLvl(c, ship.cls, 'hold'));
+export const shipCap2 = (ship, c) => (ship.cls === 'freighter' && fleetLvl(c, 'freighter', 'multi') > 0 ? hold2At(fleetLvl(c, 'freighter', 'hold'), fleetLvl(c, 'freighter', 'hold2')) : 0);
+// load rate multiplier (hauler 'loading'); a ship loads at conveyorRate x this
+export const loadMult = (c, cls) => (cls === 'hauler' ? loadMultAt(fleetLvl(c, 'hauler', 'loading')) : 1);
+export const shipSpeed = (cls, c) => (T.ship[cls] || T.ship.hauler).speed * (cls === 'cruiser' && c ? speedMultAt(fleetLvl(c, 'cruiser', 'speed')) : 1);
+export const tripSecs = (buyer, cls, c) => T.tripSecs[buyer.distance] / (shipSpeed(cls, c) * (c ? evoMult(c, 'ship') : 1));
 
 // Evolutions: each level adds `per` to a multiplier (mine: ore/min, ship: speed, sell: price, spectacle: next nuke).
 export const evoLvl = (c, kind) => Math.max(0, Math.floor(num(c?.evo?.[kind], 0)));
@@ -39,12 +96,12 @@ export const spectacleOf = (c, runEarned) => Math.pow(Math.max(0, num(runEarned,
 // Per-hour rates. Each shaft: cave (supports), mad (lights). Colony: gas, flood, fire, quake.
 const CUT = Array.from({ length: 64 }, (_, i) => Math.pow(T.hz.cut, i));
 const cut = (lvl) => CUT[Math.min(63, Math.max(0, lvl | 0))];
-export const depthOf = (c) => c.shafts.reduce((a, s) => a + s.idx, 0);
+export const depthOf = (c) => c.shafts.reduce((a, s) => a + dangerOf(s.idx), 0);
 export function hazardRates(c, t) {
   const calm = num(t, c.t) < num(c.born, 0) + T.hz.calmMs;
   const sh = c.shafts.map((s) => calm ? { cave: 0, mad: 0 } : {
-    cave: T.hz.cave * s.idx * cut(s.up.supports),
-    mad: s.miners > 0 ? T.hz.mad * s.idx * cut(s.up.lights) : 0,
+    cave: T.hz.cave * dangerOf(s.idx) * cut(s.up.supports),
+    mad: s.miners > 0 ? T.hz.mad * dangerOf(s.idx) * cut(s.up.lights) : 0,
   });
   const D = calm ? 0 : depthOf(c);
   const sf = c.safety || {};
@@ -71,24 +128,14 @@ export function shaftStatus(c, I, s) {
   return { ok: true, reason: '' };
 }
 
-// Syncs every shaft's tunnel (s.ore = what it mines now), then miners fill the most valuable open slots.
-// Mutates c.shafts[*].miners / ore / pockets.
+// Syncs every shaft's tunnel (s.ore = what it mines now) and the colony's miner total. Miners belong to their shaft.
+// Mutates c.shafts[*].ore / pockets, c.miners, c.idle.
 export function assignMiners(c, world) {
   const I = info(world);
-  const order = c.shafts
-    .map((s, k) => {
-      const st = syncTunnel(c, I, s);
-      return { k, ok: true, v: (I.ores[I.idx[s.ore]]?.value || 0) * (st.blocked ? T.pk.wall : 1) * grade(s.idx) * perMiner(s.up.cart, s.idx) };
-    })
-    .sort((a, b) => (b.ok - a.ok) || (b.v - a.v) || (a.k - b.k));
-  let left = c.miners;
-  for (const o of order) {
-    const s = c.shafts[o.k];
-    const n = o.ok ? Math.min(left, bunkCap(s.up.bunk)) : 0;
-    s.miners = n;
-    left -= n;
-  }
-  c.idle = left;
+  let n = 0;
+  for (const s of c.shafts) { syncTunnel(c, I, s); n += num(s.miners); }
+  c.miners = n;
+  c.idle = 0;
 }
 
 // Market --------------------------------------------------------------
@@ -134,7 +181,7 @@ export function priceAt(world, I, oi, bi, now) {
 }
 
 // Best destination for a cargo vector (per ore index) under a ship's policy.
-export function pickDest(world, I, ship, cargo, now) {
+export function pickDest(world, I, ship, cargo, now, c) {
   if (ship.policy === 'fixed' && I.buyerIdx[ship.destId] !== undefined) return I.buyerIdx[ship.destId];
   if (ship.policy === 'nearest') {
     let best = 0;
@@ -146,7 +193,7 @@ export function pickDest(world, I, ship, cargo, now) {
   for (let b = 0; b < I.buyers.length; b++) {
     let v = 0;
     for (let o = 0; o < I.n; o++) v += (total > 0 ? cargo[o] : 1) * priceAt(world, I, o, b, now);
-    v /= 2 * tripSecs(I.buyers[b], ship.cls);
+    v /= 2 * tripSecs(I.buyers[b], ship.cls, c);
     if (v > bestV) { bestV = v; best = b; }
   }
   return best;

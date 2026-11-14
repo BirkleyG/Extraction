@@ -8,9 +8,9 @@ import { createUI } from './ui.js';
 import { onboard } from './onboard.js';
 
 const PANEL_SUB = {
-  shafts: 'Dig deeper shafts for richer ore', carts: 'Carts: more ore per miner', lift: 'Upgrade the lift to haul more ore',
-  ships: 'Bigger holds for your ships', bunks: 'Bunkhouses: more miners per shaft', conveyor: 'Faster conveyors load ships quicker',
-  yard: 'A bigger yard holds ore while ships are away', drill: 'Better drills open harder ore', routes: 'Pick where each ship sells',
+  shafts: 'Open new shafts: pick a direction', carts: 'Carts haul more from the face', lift: 'Lift speed, capacity and buckets',
+  ships: 'Class upgrades: bigger holds, faster loading', conveyor: 'Faster conveyors load ships quicker',
+  yard: 'A bigger yard holds ore while ships are away', drill: 'Better gear digs faster and cuts harder ore', routes: 'Pick where each ship sells',
   fleet: 'Buy more ships', pads: 'More launch pads', market: 'Watch planet-wide prices',
   refinery: 'Refine ore and set your own price',
 };
@@ -18,7 +18,7 @@ const PANEL_SUB = {
 const S = {
   me: null, world: null, ew: null, colony: null, offset: 0, pending: [],
   rates: null, unl: null, bneck: null, digCost: null,
-  board: new Map(), boardFull: null, feed: new Map(),
+  colonies: [], board: new Map(), boardFull: null, feed: new Map(),
   ui: { tab: 'mine', bulk: store('msc2_bulk') ?? 1, editing: false, sheet: false, mktCls: 'hauler' },
   oreById: {}, region: null, look: null, I: null,
   now() { return Date.now() + this.offset; },
@@ -45,6 +45,7 @@ function recalc() {
 async function loadState() {
   const r = await api('GET', '/api/v2/state');
   S.offset = r.body.serverNow - Date.now();
+  if (r.body.colonies) S.colonies = r.body.colonies;
   return r.body;
 }
 
@@ -137,7 +138,7 @@ function send(cmd, btn) {
   recalc();
   const paid = q.cost > 0 && !['tutorial', 'rename', 'setRoute'].includes(cmd.type);
   if (paid) {
-    (q.n > 5 || cmd.type === 'buyShaft' || cmd.type === 'buyShip' || cmd.type === 'upgradeDrill' ? sfx.big : sfx.buy)();
+    (q.n > 5 || cmd.type === 'buyShaft' || cmd.type === 'buyShip' || cmd.type === 'upgradeGear' && q.n > 1 || cmd.type === 'upgradeClass' && cmd.kind === 'multi' ? sfx.big : sfx.buy)();
     if (btn) { popAt(btn, '-' + fmt(q.cost), 'spend'); btn.classList.remove('pressed'); void btn.offsetWidth; btn.classList.add('pressed'); }
     if (cmd.type === 'buyShaft') setTimeout(() => mine.focusShaft(S.colony.shafts.length - 1), 50);
   }
@@ -145,7 +146,7 @@ function send(cmd, btn) {
   S.pending.push(cmd);
   chain = chain.then(() => post(cmd));
   // The tutorial's last step says "carts, the lift, or another miner": count a hire too.
-  if (paid && cmd.type === 'hire' && S.unl.tutorial.step === 4) send({ type: 'tutorial', step: 5 });
+  if (paid && cmd.type === 'hireMiners' && S.unl.tutorial.step === 4) send({ type: 'tutorial', step: 5 });
 }
 async function post(cmd) {
   try {
@@ -182,7 +183,6 @@ async function resync() {
 }
 
 // ------------------------------------------------------------------ while you were away
-let A_send = () => {};
 const awayKey = () => `msc2_seen_${S.me.id}_${S.world.month}`;
 function snapshot() {
   const c = S.colony;
@@ -194,12 +194,7 @@ function checkAway() {
   const cur = snapshot();
   store(awayKey(), cur);
   if (!prev || cur.t - prev.t < 5 * 60_000 || cur.earned - prev.earned <= 0) return;
-  let next = null;
-  try {
-    const sug = E.bottleneck(S.colony, S.ew)?.suggestion;
-    if (sug && sug.cmd) next = { label: sug.label, cost: sug.cost, canAfford: S.colony.coin >= sug.cost, spend: () => A_send(sug.cmd) };
-  } catch {}
-  ui.awaySheet({ ms: cur.t - prev.t, coin: cur.earned - prev.earned, sold: cur.sold - prev.sold, launches: cur.launches - prev.launches, sales: cur.sales - prev.sales, pockets: Math.max(0, cur.out - prev.out), next });
+  ui.awaySheet({ ms: cur.t - prev.t, coin: cur.earned - prev.earned, sold: cur.sold - prev.sold, launches: cur.launches - prev.launches, sales: cur.sales - prev.sales, pockets: Math.max(0, cur.out - prev.out) });
 }
 
 // ------------------------------------------------------------------ loops
@@ -240,6 +235,7 @@ async function boot() {
   if (!st.colony) {
     $('#boot').hidden = true;
     await onboard(st);
+    S.justLanded = true;
     st = await loadState();
     store(`msc2_seen_${S.me.id}_${st.world.month}`, null);
   }
@@ -257,7 +253,7 @@ async function boot() {
     onTap(kind, id) {
       sfx.tap();
       if (kind === 'shaft') ui.openCard({ kind: 'shaft', id });
-      else if (kind === 'dig') ui.openCard({ kind: 'dig' });
+      else if (kind === 'dig') { ui.closeCard(); ui.openDig(); }
       else if (kind === 'bneck') ui.openCard({ kind: 'bneck' });
       else if (kind === 'lift' || kind === 'yard' || kind === 'conveyor') { ui.closeCard(); if (S.unl.panels.some((p) => ['lift', 'conveyor', 'yard', 'pads'].includes(p))) ui.setTab('surface'); }
       else if (kind === 'refinery') { ui.closeCard(); if (S.unl.panels.includes('refinery')) ui.setTab('refinery'); }
@@ -266,9 +262,9 @@ async function boot() {
     },
   });
   const A = { send, mine, reload: () => location.reload(), loadBoard, flush: () => chain };
-  A_send = send;
   ui = createUI(S, A);
   A.mine = mine;
+  window.__mine = mine; // handy for playtests and screenshots
   ui.render(true);
   slowTick();
   checkAway();

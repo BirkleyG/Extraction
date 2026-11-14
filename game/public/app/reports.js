@@ -8,7 +8,7 @@ import { lineChart } from './charts.js';
 
 const IN_LABEL = { raw: 'Raw ore sales', refined: 'Refined goods', nukeCargo: 'Cargo after a nuke', grant: 'Catch-up grant' };
 const IN_COL = { raw: '#c8a070', refined: '#ffd23f', nukeCargo: '#ff8a3d', grant: '#b892ff' };
-const OUT_LABEL = { miners: 'Miners', shafts: 'Shafts', drill: 'Drill', lift: 'Lift', surface: 'Yard, belts, pads', ships: 'Ships', refinery: 'Refinery', safety: 'Safety' };
+const OUT_LABEL = { miners: 'Miners', shafts: 'Shafts', drill: 'Gear', lift: 'Lift', surface: 'Yard, belts, pads', ships: 'Ships', refinery: 'Refinery', safety: 'Safety' };
 const OUT_COL = { miners: '#ff8a3d', shafts: '#c8a070', drill: '#aab4c4', lift: '#7ad1ff', surface: '#5ee6a8', ships: '#b892ff', refinery: '#ffd23f', safety: '#ff5a6e' };
 
 export function createReports(S) {

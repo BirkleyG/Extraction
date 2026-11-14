@@ -1,107 +1,123 @@
-// Tunnels and ore pockets.
+// Tunnels and veins (ore pockets).
 //
 // Every shaft is a horizontal tunnel driven sideways from the lift. Its `face` (metres) moves forward as ore
-// is mined. Outside a pocket the crew mines the shaft's endless common ore (the best common the drill can cut);
-// inside a pocket they mine that pocket's ore until the face passes its end. A pocket harder than the drill
-// stops the face at its start: the crew scrapes common ore off the walls at T.pk.wall of the normal rate.
+// is mined. Outside a vein the crew mines the site's endless common ore; inside a vein they mine that vein's rare
+// (or mythic) ore until the face passes its end. Veins are rolled deterministically from the shaft's own seed
+// (set when the shaft is bought: each of the two dig directions has its own), a few ahead of the face, and
+// pruned once dug out.
 //
-// Pockets are rolled deterministically from (colony seed, nukes, shaft depth, pocket number), a few ahead of
-// the face, and pruned once dug out, so a colony stays small however long its tunnels get.
-//
-// Ore per metre scales with the gallery's crew (bunks x carts x depth richness): a full crew advances about
-// 1 / T.pk.minPerM metres a minute at the lift, slower as the haul back grows (T.pk.haulM). So strikes come
-// on a human time scale: often early, rarer (and bigger) as tunnels get long.
+// Only ores present at the site occur (site.richness[ore] > 0). Rares need the middle band or deeper (shallow
+// shafts see them rarely), mythic only the deepest band at a site that has it. Vein odds and sizes grow with the
+// band and with richness x veinSize x the direction's tilt. A vein lasts about 4 h to 2 days at the pace of a
+// reference crew (T.pk.refOre): a metre is a minute of that crew. Events: "running low" at 20% left; below 5% left
+// the output tapers linearly (5 steps), then the face is back on common ore. A vein harder than the shaft's gear stops
+// the face at its start: the crew scrapes common ore off the walls at T.pk.wall of the normal rate.
 import { T } from './tuning.js';
 import { hashSeed, rngNext, num } from './util.js';
 
 const EPS = 1e-7;
 const round2 = (x) => Math.round(x * 100) / 100;
 
-const crewOre = (s) => (T.bunkCap0 + T.bunkCapPer * num(s.up?.bunk)) * T.minePerMiner * (1 + T.cartAdd * num(s.up?.cart)) * Math.pow(T.richness, s.idx);
-// Ore per metre at the lift (face 0). Mining from a to b takes opm * (b - a) * (1 + (a + b) / (2 haulM)).
-export const opm = (s) => T.pk.minPerM * crewOre(s);
-const Q = (s, f) => opm(s) * (f + f * f / (2 * T.pk.haulM));
-export const oreBetween = (s, a, b) => (b > a ? Q(s, b) - Q(s, a) : 0);
-export function faceAfter(s, a, m) {
-  const p = opm(s);
-  if (!(m > 0) || !(p > 0)) return a;
-  const H = T.pk.haulM, k = 1 + a / H;
-  return a + (2 * m / p) / (k + Math.sqrt(k * k + 2 * m / (p * H)));
-}
-// Metres a minute at `orePerMin` for this shaft's face.
-export const metresPerMin = (s, orePerMin) => (orePerMin > 0 ? orePerMin / (opm(s) * (1 + num(s.face) / T.pk.haulM)) : 0);
+export const bandOfIdx = (idx) => { const b = T.depthBands; return idx < b[0] ? 0 : idx < b[1] ? 1 : idx < b[2] ? 2 : 3; };
+export const bandOf = (idx) => T.bands[bandOfIdx(idx)];
+export const richnessAt = (idx) => Math.pow(T.richness, idx);
 
-export const cuts = (c, ore) => (ore ? (ore.tier === 'mythic' ? c.drill >= T.drillMax : ore.hardness <= c.drill) : false);
-export const needOf = (ore) => (ore.tier === 'mythic' ? T.drillMax : ore.hardness);
-export const needText = (ore) => (ore.tier === 'mythic' ? `Needs the mythic drill to break into ${ore.name}` : `Needs drill ${ore.hardness} to break into ${ore.name}`);
+// Ore per metre: a metre is T.pk.minPerM minutes of the reference crew at this depth.
+export const opm = (s) => T.pk.minPerM * T.pk.refOre * richnessAt(s.idx);
+export const oreBetween = (s, a, b) => (b > a ? opm(s) * (b - a) : 0);
+export const faceAfter = (s, a, m) => (m > 0 ? a + m / opm(s) : a);
+// Metres a minute at `orePerMin`.
+export const metresPerMin = (s, orePerMin) => (orePerMin > 0 ? orePerMin / opm(s) : 0);
 
-// The endless common ore of a shaft: the most valuable common the drill can cut at this depth.
-const commonMemo = new WeakMap();
-export function commonOre(I, idx, drill) {
-  let m = commonMemo.get(I);
-  if (!m) { m = new Map(); commonMemo.set(I, m); }
-  const key = idx * 16 + drill;
-  let v = m.get(key);
-  if (v) return v;
-  const commons = I.ores.filter((o) => o.tier === 'common');
-  const ok = commons.filter((o) => o.hardness <= drill && o.depthMin <= idx).sort((a, b) => b.value - a.value || a.i - b.i);
-  v = ok[0] || commons.sort((a, b) => a.hardness - b.hardness || a.value - b.value)[0] || I.ores[0];
-  m.set(key, v);
-  return v;
-}
+// Hardness: a gear level >= hardness cuts the ore. Mythic ore is hardness 9-10 (gear above T.gear.free needs the license).
+// Common ore needs no gear (the soil slows it instead).
+export const needOf = (ore) => (ore.tier === 'mythic' ? Math.max(T.gear.free + 1, ore.hardness) : ore.hardness);
+export const cuts = (s, ore) => (ore ? (ore.tier === 'common' ? true : num(s.gear, 1) >= needOf(ore)) : false);
+export const needText = (ore) => {
+  const n = needOf(ore);
+  return `Needs gear ${n}${n > T.gear.free ? ' (the Mythic drill license)' : ''} to break into ${ore.name}`;
+};
 
-// Pocket ores at a depth with their pick weights. Rares can peek one or two levels above their depthMin
-// (smaller odds); mythic only at or below its depth.
-const candMemo = new WeakMap();
-export function pocketCands(I, idx) {
-  let m = candMemo.get(I);
-  if (!m) { m = new Map(); candMemo.set(I, m); }
-  let v = m.get(idx);
-  if (v) return v;
-  v = [];
+// What a colony's site gives: the common ore and per-ore richness (0..1) and vein size (0.6..1.6).
+export function defaultSite(I, siteRegion = null) {
+  const common = I.ores.find((o) => o.tier === 'common') || I.ores[0];
+  const richness = {}, veinSize = {};
   for (const o of I.ores) {
-    if (o.tier === 'rare') {
-      const d = o.depthMin - idx;
-      if (d <= 0) v.push({ o, w: 1 + o.depthMin * 0.4 });
-      else if (d <= 2) v.push({ o, w: d === 1 ? 0.7 : 0.35 });
-    } else if (o.tier === 'mythic' && o.depthMin <= idx) v.push({ o, w: T.pk.mythicW * (1 + (idx - o.depthMin) * 0.3) });
+    if (o.tier === 'common') richness[o.id] = o.id === common?.id ? 1 : 0;
+    else if (o.tier === 'rare') richness[o.id] = 0.37;
+    else richness[o.id] = 0;
+    veinSize[o.id] = 1;
   }
-  const sum = v.reduce((a, x) => a + x.w, 0);
-  v.forEach((x) => { x.p = x.w / sum; });
-  m.set(idx, v);
+  return { id: 'default', regionId: siteRegion ?? null, soil: 1, richness, veinSize, common: common?.id ?? null };
+}
+export const commonOre = (c, I) => {
+  const id = c.site?.common;
+  const o = I.ores[I.idx[id]];
+  if (o && o.tier === 'common') return o;
+  return I.ores.filter((x) => x.tier === 'common').sort((a, b) => a.hardness - b.hardness || a.i - b.i)[0] || I.ores[0];
+};
+
+// Vein candidates of a shaft: [{ o, w (odds weight), r (site richness x tilt), size, p }], and their total weight P.
+export function veinCands(c, I, s) {
+  const site = c.site || {};
+  const band = bandOfIdx(s.idx);
+  const v = [];
+  let P = 0;
+  for (const o of I.ores) {
+    if (o.tier === 'common') continue;
+    if (o.tier === 'mythic' && band < 3) continue;
+    const r0 = num(site.richness?.[o.id]);
+    if (!(r0 > 0)) continue;
+    const r = r0 * num(s.tilt?.[o.id], 1);
+    const size = num(site.veinSize?.[o.id], 1);
+    const w = r * size * (o.tier === 'mythic' ? T.pk.mythicW : 1);
+    v.push({ o, w, r, size });
+    P += w;
+  }
+  v.forEach((x) => { x.p = x.w / P; });
+  v.P = P;
   return v;
 }
-export const pocketShare = (idx) => Math.min(T.pk.share[2], T.pk.share[0] + T.pk.share[1] * idx);
-const lenMean = (idx) => (T.pk.len[0] + T.pk.len[1]) / 2 * (1 + T.pk.lenDepth * idx);
+// Share of a tunnel that lies inside veins.
+export function veinShare(c, I, s) {
+  const v = veinCands(c, I, s);
+  if (!v.length) return 0;
+  return Math.min(T.pk.shareMax, T.pk.share[bandOfIdx(s.idx)] * (0.25 + 0.75 * Math.min(2, v.P)));
+}
+const meanLenM = () => T.pk.meanHours * 60 / T.pk.minPerM;
 
-// Pocket n of a shaft, starting after `prevEnd`. Pure.
+// Vein n of a shaft, starting after `prevEnd`. Pure.
 function rollPocket(c, I, s, n, prevEnd) {
-  const cands = pocketCands(I, s.idx);
-  if (!cands.length) return null;
-  let r = hashSeed(`${num(c.seed)}|${num(c.nukes)}|${s.idx}|${n}`);
+  const cands = veinCands(c, I, s);
+  const sh = veinShare(c, I, s);
+  if (!cands.length || !(sh > 0)) return null;
+  let r = hashSeed(`${s.seed}|${n}`);
   const u = [];
   for (let i = 0; i < 4; i++) { const [x, nx] = rngNext(r); u.push(x); r = nx; }
-  let x = u[0], pick = cands[cands.length - 1].o;
-  for (const cd of cands) { x -= cd.p; if (x <= 0) { pick = cd.o; break; } }
-  const mythic = pick.tier === 'mythic';
-  const len = (T.pk.len[0] + (T.pk.len[1] - T.pk.len[0]) * u[1]) * (1 + T.pk.lenDepth * s.idx) * (mythic ? T.pk.mythicLen : 1);
-  const sh = pocketShare(s.idx);
-  let gap;
-  if (n === 0) {
-    const f = s.idx === 0 ? T.pk.homeFirst : T.pk.first;
-    gap = f[0] + (f[1] - f[0]) * u[2];
-  } else gap = lenMean(s.idx) * (1 - sh) / sh * (0.5 + u[2]);
+  let x = u[0], pick = cands[cands.length - 1];
+  for (const cd of cands) { x -= cd.p; if (x <= 0) { pick = cd; break; } }
+  const mythic = pick.o.tier === 'mythic';
+  const sizeK = pick.size * (0.6 + 0.4 * Math.min(1.6, pick.r)) * (mythic ? T.pk.mythicLen : 1);
+  const hours = Math.min(T.pk.hoursMax * (mythic ? T.pk.mythicLen : 1), Math.max(T.pk.hoursMin * (mythic ? T.pk.mythicLen : 1), T.pk.hours[0] * Math.pow(T.pk.hours[1], u[1]) * sizeK));
+  const gapMean = meanLenM() * (1 - sh) / sh;
+  const gap = gapMean * (n === 0 ? 0.05 + 0.25 * u[2] : 0.5 + u[2]); // the first vein sits close so a new shaft strikes something soon
   const start = round2(prevEnd + gap);
-  return { ore: pick.id, start, len: Math.max(0.5, round2(len)) };
+  return { ore: pick.o.id, start, len: Math.max(1, round2(hours * 60 / T.pk.minPerM)) };
 }
 
-// Fill in the tunnel fields of a shaft (new or loaded) and keep T.pk.ahead pockets rolled past the face.
+// Fill in the tunnel fields of a shaft (new or loaded) and keep T.pk.ahead veins rolled past the face.
 export function ensureTunnel(c, I, s) {
   if (!Number.isFinite(s.face)) s.face = 0;
   if (!Array.isArray(s.pk)) s.pk = [];
   if (!Number.isFinite(s.pkN)) s.pkN = 0;
   if (!Number.isFinite(s.pkEnd)) s.pkEnd = 0;
   if (!Number.isFinite(s.dug)) s.dug = 0;
+  if (!Number.isFinite(s.gear) || s.gear < 1) s.gear = 1;
+  if (!Number.isFinite(s.cart) || s.cart < 1) s.cart = 1;
+  if (!Number.isFinite(s.seed)) s.seed = hashSeed(`${num(c.seed)}|${num(c.nukes)}|${s.idx}|${s.dir || 'main'}`);
+  if (!s.tilt || typeof s.tilt !== 'object') s.tilt = {};
+  if (!s.dir) s.dir = 'main';
+  s.band = bandOf(s.idx);
   let ahead = 0;
   for (const p of s.pk) if (p.start + p.len > s.face + EPS) ahead++;
   for (let guard = 0; ahead < T.pk.ahead && guard < 20; guard++) {
@@ -111,8 +127,20 @@ export function ensureTunnel(c, I, s) {
   }
 }
 
-// Where the face is: { cur (pocket the face is in), next (first pocket ahead), blocked, ore, target }.
-// target = metres where what is mined changes next (Infinity when blocked or no pockets).
+// Boundaries inside a vein, as fractions of its length: running low (80%), then the taper steps, then the end.
+const BOUNDS = (() => {
+  const b = [T.pk.low];
+  const w = (1 - T.pk.taperFrom) / T.pk.taperSteps;
+  for (let k = 0; k < T.pk.taperSteps; k++) b.push(T.pk.taperFrom + w * k);
+  b.push(1);
+  return [...new Set(b)].sort((x, y) => x - y);
+})();
+const stepW = (1 - T.pk.taperFrom) / T.pk.taperSteps;
+// Output share of the rare ore at fraction f of a vein: 1 until 95%, then 0.9, 0.7, 0.5, 0.3, 0.1 (linear taper to 0).
+export const taperAt = (f) => (f < T.pk.taperFrom - 1e-9 ? 1 : 1 - (Math.min(T.pk.taperSteps - 1, Math.floor((f - T.pk.taperFrom) / stepW + 1e-9)) + 0.5) / T.pk.taperSteps);
+
+// Where the face is: { cur (vein the face is in), next, blocked, ore, target, taper, common }.
+// target = metres where what is mined (or its taper) changes next (Infinity when blocked or no veins).
 export function tunnelAt(c, I, s) {
   const face = num(s.face);
   let cur = null, next = null;
@@ -120,16 +148,21 @@ export function tunnelAt(c, I, s) {
     if (p.start + p.len <= face + EPS) continue;
     if (p.start <= face + EPS) { if (!cur) cur = p; } else if (!next || p.start < next.start) next = p;
   }
-  const common = commonOre(I, s.idx, c.drill);
+  const common = commonOre(c, I);
   if (cur) {
     const o = I.ores[I.idx[cur.ore]];
-    if (o && !cuts(c, o)) return { cur, next, blocked: true, ore: common.id, pocketOre: o, target: Infinity, common };
-    return { cur, next, blocked: false, ore: cur.ore, pocketOre: o, target: cur.start + cur.len, common };
+    if (o && !cuts(s, o)) return { cur, next, blocked: true, ore: common.id, pocketOre: o, target: Infinity, common, taper: 1 };
+    const f = (face - cur.start) / cur.len;
+    let target = cur.start + cur.len;
+    for (const b of BOUNDS) { const m = cur.start + b * cur.len; if (m > face + EPS) { target = m; break; } }
+    return { cur, next, blocked: false, ore: cur.ore, pocketOre: o, target, common, taper: taperAt(f + EPS / cur.len) };
   }
-  return { cur: null, next, blocked: false, ore: common.id, pocketOre: null, target: next ? next.start : Infinity, common };
+  return { cur: null, next, blocked: false, ore: common.id, pocketOre: null, target: next ? next.start : Infinity, common, taper: 1 };
 }
+// 0..1: how much of the vein the face is through.
+export const veinDone = (s, p) => (p && p.len > 0 ? Math.min(1, Math.max(0, (num(s.face) - p.start) / p.len)) : 0);
 
-// Keep s.ore (what the crew is mining right now) in step with the face and the drill. Mutates s.
+// Keep s.ore (what the crew is mining right now) in step with the face and the gear. Mutates s.
 export function syncTunnel(c, I, s) {
   ensureTunnel(c, I, s);
   const st = tunnelAt(c, I, s);
@@ -137,26 +170,32 @@ export function syncTunnel(c, I, s) {
   return st;
 }
 
-// Long-run ore mix of a shaft at this drill level, as time shares: [{ i, share }] (planning only).
-// Pockets the drill can't cut count as wall-rate common ore.
-const mixMemo = new WeakMap();
-export function expectedMix(I, idx, drill) {
-  let m = mixMemo.get(I);
-  if (!m) { m = new Map(); mixMemo.set(I, m); }
-  const key = idx * 16 + drill;
-  let v = m.get(key);
-  if (v) return v;
-  const common = commonOre(I, idx, drill);
-  const sh = pocketShare(idx);
+// Long-run ore mix of a shaft at its gear, as time shares: [{ i, share }] (planning only).
+// Veins the gear can't cut count as wall-rate common ore.
+export function expectedMix(c, I, s) {
+  const common = commonOre(c, I);
+  const sh = veinShare(c, I, s);
   const out = new Map([[common.i, 1]]);
-  const fake = { drill };
-  for (const { o, p } of pocketCands(I, idx)) {
+  if (!(sh > 0)) return [{ i: common.i, share: 1 }];
+  for (const { o, p } of veinCands(c, I, s)) {
     const share = sh * p * (o.tier === 'mythic' ? T.pk.mythicLen : 1);
     out.set(common.i, out.get(common.i) - share);
-    if (cuts(fake, o)) out.set(o.i, (out.get(o.i) || 0) + share);
+    if (cuts(s, o)) out.set(o.i, (out.get(o.i) || 0) + share);
     else out.set(common.i, out.get(common.i) + share * T.pk.wall);
   }
-  v = [...out].map(([i, share]) => ({ i, share }));
-  m.set(key, v);
-  return v;
+  return [...out].map(([i, share]) => ({ i, share }));
+}
+
+// Fuzzy prospects of a shaft's veins, per ore: 'none' | 'low' | 'fair' | 'good' (the site's common is always 'good').
+export function prospectsOf(c, I, s) {
+  const out = {};
+  const band = bandOfIdx(s.idx);
+  const f = T.pk.share[band] / T.pk.share[1];
+  for (const o of I.ores) {
+    if (o.tier === 'common') { out[o.id] = o.id === commonOre(c, I).id ? 'good' : 'none'; continue; }
+    const cd = veinCands(c, I, s).find((x) => x.o.id === o.id);
+    const e = cd ? cd.r * cd.size * f : 0;
+    out[o.id] = e < 0.04 ? 'none' : e < 0.3 ? 'low' : e < 0.6 ? 'fair' : 'good';
+  }
+  return out;
 }

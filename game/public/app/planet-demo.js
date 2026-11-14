@@ -1,5 +1,7 @@
 /* Standalone planet demo: improvise a planet from a seed and draw every region, the sky, strata, ores, buyers and crew.
  * ?seed=abc picks the seed, ?all=1 shows all 39 terrains, ?ai=1 runs planetFromAI on garbage to show the fallbacks. */
+import { sampleSpot, startSpot } from '/shared/planet/index.js';
+import { renderPlanetMap } from './pixel/planetmap.js';
 import { SHAPES, improvisePlanet, planetFromAI, oreSpriteSpec, planetSummary, TERRAINS, TERRAIN_IDS, WEATHER, color } from '/shared/planet/index.js';
 import { drawScene, drawSky, drawStrata, drawLandscape, drawWeather, drawOre, oreSprite, personSprite, drawShip, pen, drawPile, LAYER_H } from './pixel/index.js';
 
@@ -42,6 +44,8 @@ function build(seed) {
   }
   $('layers').innerHTML = `<b>Rock layers</b>${planet.layers.map((l, i) => `<div style="background:${l.color};color:${color.luma(l.color) > 0.5 ? '#000' : '#fff'}">${i + 1}. ${esc(l.name)}</div>`).join('')}`;
   $('buyers').innerHTML = `<tr><th>buyer</th><th>dist</th>${planet.ores.map((o) => `<th title="${esc(o.name)}">${esc(o.name.split(' ')[0])}</th>`).join('')}</tr>${planet.buyers.map((b) => `<tr><td title="${esc(b.blurb)}">${esc(b.name)}</td><td>${b.distance}</td>${planet.ores.map((o) => `<td class="${b.likes[o.id] >= 1.2 ? 'hot' : ''}">${b.likes[o.id]}</td>`).join('')}</tr>`).join('')}`;
+  pickStarts(); picked = null; $('spot').textContent = 'Click the map to sample a spot.';
+  $('mapkey').innerHTML = `${planet.regions.length} climate areas. Yellow dots: 10 sampled start spots (about +1 SD, no mythic). Debug overlay: blue/orange = the two common zones, coloured outlines = the 4 rares, magenta = mythic. Players never see these fields.`;
   drawMap(); drawStatic(); drawShapes();
 }
 
@@ -50,20 +54,22 @@ function drawShapes() {
   SHAPES.forEach((shape, i) => { const o = planet.ores[i % 7]; const spec = { ...oreSpriteSpec(o), shape }; g.drawImage(oreSprite(spec, 24), 4 + i * 29, 4); g.drawImage(oreSprite(spec, 12), 10 + i * 29, 34); g.drawImage(oreSprite(spec, 8), 12 + i * 29, 50); });
 }
 
+let debug = false; let starts = []; let mapApi = null; let picked = null;
 function drawMap() {
-  const cv = $('map'); const g = cv.getContext('2d'); const N = cv.width; const k = 1000 / N; const rs = planet.regions;
-  const own = new Int16Array(N * N);
-  for (let y = 0; y < N; y += 1) for (let x = 0; x < N; x += 1) { let best = 0; let bd = 1e9; for (let i = 0; i < rs.length; i += 1) { const d = (rs[i].x - x * k) ** 2 + (rs[i].y - y * k) ** 2; if (d < bd) { bd = d; best = i; } } own[y * N + x] = best; }
-  for (let y = 0; y < N; y += 1) for (let x = 0; x < N; x += 1) {
-    const i = own[y * N + x]; const edge = (x && own[y * N + x - 1] !== i) || (y && own[(y - 1) * N + x] !== i);
-    const c = rs[i].biomes[(x + y) % 7 === 0 ? 1 : 0];
-    g.fillStyle = edge ? '#0b0714' : ((x * 7 + y * 13) % 23 === 0 ? color.shade(c, -0.2) : c); g.fillRect(x, y, 1, 1);
-  }
-  const dx = N / 2; const r = N / 2 - 1; const id = g.getImageData(0, 0, N, N);
-  for (let y = 0; y < N; y += 1) for (let x = 0; x < N; x += 1) { const d = Math.hypot(x - dx, y - dx); const i = (y * N + x) * 4; if (d > r) { id.data[i + 3] = 0; } else if (d > r * 0.8) { const a = (d - r * 0.8) / (r * 0.2) * 0.6; id.data[i] *= 1 - a; id.data[i + 1] *= 1 - a; id.data[i + 2] *= 1 - a; } }
-  g.putImageData(id, 0, 0);
-  for (const reg of rs) { g.fillStyle = '#ffffff'; g.fillRect(Math.round(reg.x / k) - 1, Math.round(reg.y / k) - 1, 3, 3); }
+  const cv = $('map'); const g = cv.getContext('2d');
+  mapApi = renderPlanetMap(cv, planet, { debug });
+  const mark = (x, y, c, r = 5) => { const p = mapApi.toMap(x, y); g.beginPath(); g.arc(p.x, p.y, r, 0, 7); g.fillStyle = c; g.fill(); g.lineWidth = 2; g.strokeStyle = '#000'; g.stroke(); };
+  starts.forEach((s, i) => { mark(s.x, s.y, '#ffe14a'); const p = mapApi.toMap(s.x, s.y); g.fillStyle = '#000'; g.font = 'bold 9px monospace'; g.textAlign = 'center'; g.fillText(i + 1, p.x, p.y + 3); });
+  if (picked) mark(picked.x, picked.y, '#ffffff', 4);
 }
+function pickStarts() { starts = []; for (let i = 0; i < 10; i += 1) { const s = startSpot(planet, starts, `${planet.seed}:p${i}`); if (s) starts.push(s); } }
+$('map').onclick = (ev) => {
+  const r = ev.target.getBoundingClientRect(); const p = mapApi.fromMap((ev.clientX - r.left) * (ev.target.width / r.width), (ev.clientY - r.top) * (ev.target.height / r.height));
+  picked = sampleSpot(planet, p.x, p.y); drawMap();
+  const names = Object.fromEntries(planet.ores.map((o) => [o.id, o.name]));
+  $('spot').textContent = JSON.stringify({ ...picked, richness: Object.fromEntries(Object.entries(picked.richness).map(([k, v]) => [names[k], v])), veinSize: undefined, common: names[picked.common] }, null, 1);
+};
+$('dbg').onclick = () => { debug = !debug; $('dbg').textContent = debug ? 'Hide ore fields' : 'Show ore fields (debug)'; drawMap(); };
 
 function drawStatic() {
   const cv = $('strata'); const g = cv.getContext('2d'); const view = { x: 0, y: -10, scale: 1, w: cv.width, h: cv.height };
