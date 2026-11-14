@@ -19,7 +19,7 @@ export const T = {
   cart: { base: 90, growth: 1.25, add: 0.5, rate: 60, max: 300 },
   // Gear and cart double at these levels (milestones), on top of their per-level gain.
   milestones: [25, 50, 100, 200, 300],
-  shaftBase: 3_000_000, shaftGrowth: 10,   // shaft idx (>= 1) costs base x growth^(idx-1)
+  shaftBase: 1_200_000, shaftGrowth: 10,   // shaft idx (>= 1) costs base x growth^(idx-1)
   depthBands: [3, 7, 12],             // shaft index where middle, deep and deepest begin
   bands: ['shallow', 'middle', 'deep', 'deepest'],
   shaftBuffer: 40,                    // tunnel storage per shaft (ore)

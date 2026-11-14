@@ -207,7 +207,7 @@ export function buildField(seed, regions, ores) {
   drownIslets(F);
   const land = landSamples(F);
   // region centres: spread over land, each terrain on the land that best fits it
-  const n = regions.length; const cand = land.filter((_, i) => i % 3 === Math.floor(R() * 3) || true).map((s) => ({ x: s.x, y: s.y, t: s.f.temperature, m: s.f.moisture, e: Math.min(1, s.f.e) }));
+  const n = regions.length; const cand = land.filter((s) => s.f.e > 0.04 && !fieldAt(F, Math.round(s.x), Math.round(s.y)).water).map((s) => ({ x: s.x, y: s.y, t: s.f.temperature, m: s.f.moisture, e: Math.min(1, s.f.e) }));
   const order = regions.map((r, i) => i).sort((a, b) => (PROFILE[regions[b].terrain] ? 1 : 0) - (PROFILE[regions[a].terrain] ? 1 : 0));
   const placed = []; const centres = new Array(n);
   for (const i of order) {
