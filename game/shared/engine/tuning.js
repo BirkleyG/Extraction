@@ -97,7 +97,7 @@ export const T = {
     computer: 0.6,              // no parties: a computer buyer takes everything at 0.6x base value
     tripSecs: 12,               // one way to the orbital refinery at speed 1
     growthPow: 1.3,
-    demandScale: 0.25,
+    demandScale: 0.03,
     tierDemand: { common: 1, rare: 0.5, mythic: 0.1 },
     markupMin: 0.5, markupMax: 3,
     planet:  { cost: 1_500_000,  thru: 4_000,  yield: 1,    storage: 60_000,  label: 'On-planet refinery' },

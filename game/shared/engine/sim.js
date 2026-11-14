@@ -9,7 +9,7 @@ import { T } from './tuning.js';
 import { info, clone, num, pos, fmt } from './util.js';
 import {
   liftRate, convRate, yardCap, shaftRate, tunnelCap, shipCap, tripSecs,
-  shaftStatus, assignMiners, pickDest, priceAt, grade, evoMult, hazardRates, changeTimes, dangerOf,
+  shaftStatus, gradeScale, assignMiners, pickDest, priceAt, grade, evoMult, hazardRates, changeTimes, dangerOf,
 } from './model.js';
 import { syncUnlocks } from './unlocks.js';
 import { tunnelAt, syncTunnel, oreBetween, faceAfter, needOf, needText } from './pockets.js';
@@ -268,7 +268,7 @@ export function advance(colony, world, now) {
   }
   function refine(site, buf, bufG, dt, t0, inflow = null, inflowG = null) {
     const x = rs[site];
-    const D = demandVec(world, I, x.ask, t0).map((d) => d / 60000);
+    const D = demandVec(world, I, x.ask, t0, gradeScale(c)).map((d) => d / 60000);
     const was = x.full;
     const r = refineFlow(buf, bufG, x.stock, x.on, D, x.thru, x.y, x.cap, dt, I.byValue, inflow, inflowG);
     let coin = 0;

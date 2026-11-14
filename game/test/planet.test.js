@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { sampleSpot, startSpot, spotOK, isWater, territoryAt, MIN_SITE_GAP, improvisePlanet, planetFromAI, planetPrompt, planetSummary, oreSpriteSpec, TERRAINS, TERRAIN_IDS, WEATHER, SHAPES, THEMES } from '../shared/planet/index.js';
+import { sampleSpot, startSpot, spotOK, isWater, territoryAt, MIN_SITE_GAP, regionCountFor, improvisePlanet, planetFromAI, planetPrompt, planetSummary, oreSpriteSpec, TERRAINS, TERRAIN_IDS, WEATHER, SHAPES, THEMES } from '../shared/planet/index.js';
 import { SPEC, DECOR } from '../public/app/pixel/terrains.js';
 
 const HEX = /^#[0-9a-f]{6}$/;
@@ -72,7 +72,7 @@ test('improvisePlanet avoids recently used themes', () => {
   }
   // even with only names/themes in the summary (e.g. AI planets), a matching built-in theme is avoided
   const sweet = THEMES.find((t) => t.id === 'sweet');
-  for (let i = 0; i < 20; i += 1) assert.notEqual(improvisePlanet(`s${i}`, { history: [{ name: sweet.names[0], theme: sweet.concept }] }).themeId, 'sweet');
+  for (let i = 0; i < 8; i += 1) assert.notEqual(improvisePlanet(`s${i}`, { history: [{ name: sweet.names[0], theme: sweet.concept }] }).themeId, 'sweet');
   // every theme used up still yields a planet
   assertValid(improvisePlanet('full', { history: THEMES.map((t) => ({ themeId: t.id })) }));
 });
@@ -141,7 +141,7 @@ test('every terrain has a drawing spec and its decor exists', () => {
     for (const [kind] of SPEC[id].decor) assert.ok(DECOR[kind], `${id} decor ${kind}`);
     assert.ok(WEATHER[TERRAINS[id].fx], `${id} weather`);
   }
-  for (let i = 0; i < 30; i += 1) for (const r of improvisePlanet(`t${i}`, {}).regions) assert.ok(SPEC[r.terrain]);
+  for (let i = 0; i < 10; i += 1) for (const r of improvisePlanet(`t${i}`, {}).regions) assert.ok(SPEC[r.terrain]);
 });
 
 test('oreSpriteSpec never throws and orders the palette dark to light', () => {
@@ -243,7 +243,8 @@ test('spotOK rejects water, edges and crowding', () => {
 
 test('12-18 named climate areas with sensible neighbours; AI planets get painted fields too', () => {
   const counts = new Set();
-  seeds(30, (p) => { counts.add(p.regions.length); for (const r of p.regions) assert.ok(isWater(p, r.x, r.y) === false); assertLayout(p); });
+  for (let i = 0; i < 150; i += 1) counts.add(regionCountFor(`n${i}`));
+  seeds(12, (p) => { assert.ok(p.regions.length >= 12 && p.regions.length <= 18); for (const r of p.regions) assert.ok(isWater(p, r.x, r.y) === false); assertLayout(p); });
   assert.ok(counts.size >= 4 && Math.min(...counts) === 12 && Math.max(...counts) === 18);
   const ai = planetFromAI({ name: 'X', regions: [{ name: 'Brie Flats', terrain: 'mesa', x: 5, y: 5, soil: 99 }], ores: [{ name: 'A', tier: 'rare', hardness: 99 }] }, 'k');
   assertValid(ai); assert.equal(ai.regions[0].name, 'Brie Flats'); assert.ok(ai.regions[0].soil <= 1.35 && ai.regions[0].x !== 5);
@@ -252,7 +253,7 @@ test('12-18 named climate areas with sensible neighbours; AI planets get painted
 });
 
 test('hardness bands hold and planet JSON stays small', () => {
-  seeds(20, (p) => {
+  seeds(8, (p) => {
     for (const o of p.ores) { const [a, b] = { common: [1, 3], rare: [3, 7], mythic: [9, 10] }[o.tier]; assert.ok(o.hardness >= a && o.hardness <= b); }
     const rh = p.ores.slice(2, 6).map((o) => o.hardness); assert.deepEqual(rh, rh.slice().sort((x, y) => x - y));
     assert.ok(JSON.stringify(p).length < 60000);

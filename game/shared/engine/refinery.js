@@ -9,7 +9,7 @@
 // Sales = min(output + stock drawdown, total demand). Unsold goods fill storage; a full store stops intake.
 import { T } from './tuning.js';
 import { num, info, DAY_MS } from './util.js';
-import { activeChanges, evoMult, shipSpeed, priceAt, tripSecs } from './model.js';
+import { activeChanges, evoMult, shipSpeed, priceAt, tripSecs, gradeScale } from './model.js';
 
 export const SITES = ['planet', 'orbital'];
 export const REF_DEST = '@refinery';
@@ -76,7 +76,7 @@ function changeMult(chs, oreId, partyId) {
 }
 
 // Units/min of refined ore o that the parties buy at ask p (a markup). Infinity = the computer buyer (no parties).
-function demandOne(world, I, P, chs, g, o, p) {
+function demandOne(world, I, P, chs, g, o, p, k0 = 1) {
   if (!P.length) return Infinity;
   const oreId = I.ores[o].id;
   let q = 0;
@@ -85,14 +85,15 @@ function demandOne(world, I, P, chs, g, o, p) {
     if (!(w > 0) || p > k.max + 1e-12) continue;
     q += k.demand * w * Math.pow(p / k.ref, -k.sigma) * (chs.length ? changeMult(chs, oreId, k.id) : 1);
   }
-  return q * g * T.ref.demandScale * (T.ref.tierDemand[I.ores[o].tier] ?? 1);
+  return q * g * k0 * T.ref.demandScale * (T.ref.tierDemand[I.ores[o].tier] ?? 1);
 }
 // Per-ore demand (units/min) at the given asks.
-export function demandVec(world, I, asks, t) {
+// k0 = the colony's grade class (model.gradeScale): buyers take more of a deeper colony's richer ore.
+export function demandVec(world, I, asks, t, k0 = 1) {
   const P = partiesOf(world, I);
   const chs = activeChanges(world, t);
   const g = growth(world, t);
-  return asks.map((p, o) => demandOne(world, I, P, chs, g, o, p));
+  return asks.map((p, o) => demandOne(world, I, P, chs, g, o, p, k0));
 }
 // Units/min summed over the parties at this ask (Infinity: no parties, the computer buyer takes everything).
 // For tests and the future intel feature; never shown in the UI.
@@ -101,7 +102,7 @@ export function demandAt(world, colony, oreId, ask, now) {
   const I = info(world);
   const o = I.idx[oreId];
   if (o === undefined) return 0;
-  return demandOne(world, I, partiesOf(world, I), activeChanges(world, now), growth(world, now), o, clampMarkup(ask));
+  return demandOne(world, I, partiesOf(world, I), activeChanges(world, now), growth(world, now), o, clampMarkup(ask), colony ? gradeScale(colony) : 1);
 }
 export const hasParties = (world, I) => partiesOf(world, I).length > 0;
 // The price one refined unit of ore o actually sells for (before the sell evolution).

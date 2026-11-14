@@ -3,7 +3,7 @@ import { T } from './tuning.js';
 import { info, pos } from './util.js';
 import {
   liftRate, convRate, yardCap, perMiner, cartRate, soilOf, tunnelCap, shipCap, tripSecs,
-  shaftStatus, pickDest, priceAt, grade, evoMult, hazardRates, depthOf, dangerOf, bandOf,
+  shaftStatus, gradeScale, pickDest, priceAt, grade, evoMult, hazardRates, depthOf, dangerOf, bandOf,
 } from './model.js';
 import { tunnelAt, expectedMix, metresPerMin, cuts } from './pockets.js';
 import { REF_DEST, refThru, refYield, refCap, refDocks, refCfg, refUnit, refTrip, demandVec, hasParties, nearestBuyer, intakeFrom, prefersRefinery } from './refinery.js';
@@ -139,7 +139,7 @@ export function rates(colony, world) {
     const site = (name, R) => {
       const cf = I.ores.map((o) => refCfg(R, o.id));
       const ask = cf.map((x) => x.markup), on = cf.map((x) => x.on);
-      const D = demandVec(world, I, ask, now);
+      const D = demandVec(world, I, ask, now, gradeScale(c));
       const unit = cf.map((x, o) => (parties ? x.markup : T.ref.computer) * refUnit(I, o) * sellK);
       const stock = I.ores.map((o) => Math.max(0, Number(R.stock?.[o.id]) || 0));
       return { name, R, cf, ask, on, D, unit, stock, thru: refThru(name, R), y: refYield(name, R), cap: refCap(name, R), full: !!R.full };

@@ -34,6 +34,13 @@ export const liftRate = (c) => {
   const l = liftLvl(c);
   return liftBuckets(l.buckets) * liftCapacity(l.capacity) * liftTrips(l.speed) / (1 + T.lift.depthSlow * liftDepthIdx(c));
 };
+// The colony's grade class: its shafts' ore-weighted average grade. Buyers' demand for refined ore scales with it,
+// so a refinery's economics do not depend on how deep the colony digs.
+export const gradeScale = (c) => {
+  let w = 0, g = 0;
+  for (const s of c.shafts) { const r = shaftRate(c, s); if (r > 0) { w += r; g += r * Math.pow(T.grade, s.idx); } }
+  return w > 0 ? g / w : 1;
+};
 export const grade = (idx) => Math.pow(T.grade, idx);
 export const tunnelCap = (c) => T.shaftBuffer * Math.max(1, c.shafts.length);
 const capMemo = new Map();

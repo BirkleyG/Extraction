@@ -12,7 +12,7 @@ import { TERRAINS } from './terrains.js';
 export const MIN_SITE_GAP = 44;
 export const RARE_P = 0.37;
 export const MYTHIC_SHARE = 0.05;
-const SEA_SHARE = 0.28; const TOUGH_SHARE = 0.3;
+const SEA_SHARE = 0.4; const TOUGH_SHARE = 0.3;
 const r2 = (v) => Math.round(v * 100) / 100;
 const r4 = (v) => Math.round(v * 1e4) / 1e4;
 const sstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -55,10 +55,10 @@ function rawHeight(F, x, y) {
   const qx = px + wx; const qy = py + wy;
   const base = fbm(qx * 3.2 + F.o[4], qy * 3.2 + F.o[5], s + 3, 6);
   const d = Math.hypot(qx - 0.5, qy - 0.5) + (fbm(px * 1.6 + F.o[6], py * 1.6 + F.o[7], s + 4, 3) - 0.5) * 0.3;
-  const env = 1 - sstep(0.26, 0.58, d);
+  const env = 1 - sstep(0.2, 0.5, d);
   const m = fbm(qx * 2.2 + F.o[8], qy * 2.2 + F.o[9], s + 5, 3);
-  const ridge = 1 - Math.abs(2 * fbm(qx * 3 + F.o[10], qy * 3 + F.o[11], s + 6, 4) - 1);
-  return { h: 0.42 * base + 0.4 * env + 0.28 * ridge * ridge * sstep(0.4, 0.62, m) * (0.4 + env), ridge: ridge * ridge, qx, qy };
+  const ridge = 1 - Math.abs(2 * fbm(qx * 3 + F.o[10], qy * 3 + F.o[11], s + 6, 3) - 1);
+  return { h: 0.42 * base + 0.4 * env + 0.22 * ridge * ridge * sstep(0.4, 0.62, m) * (0.4 + env), ridge: ridge * ridge, qx, qy };
 }
 
 export function fieldAt(F, x, y) {
@@ -68,7 +68,7 @@ export function fieldAt(F, x, y) {
   if (!water && F.dr) for (const d of F.dr) if ((x - d[0]) ** 2 + (y - d[1]) ** 2 < d[2] * d[2]) { water = true; break; }
   const lat = Math.abs(y - 500) / 500;
   const tn = fbm(r.qx * 2 + F.o[12], r.qy * 2 + F.o[13], F.s + 7, 3);
-  const temperature = clamp(0.9 - 1.7 * lat ** 1.1 - 0.85 * Math.min(1, e) + 0.3 * (tn - 0.5) + F.gt, -1, 1);
+  const temperature = clamp(0.95 - 1.5 * lat ** 1.2 - 0.85 * Math.min(1, e) + 0.3 * (tn - 0.5) + F.gt, -1, 1);
   const mn = fbm(r.qx * 2.6 + F.o[14], r.qy * 2.6 + F.o[15], F.s + 8, 4);
   const moisture = clamp(0.2 + 0.62 * mn + 0.2 * (1 - Math.min(1, e)) + 0.14 * Math.cos(lat * Math.PI * 1.7) + F.gm - 0.12, 0, 1);
   const rugged = r.ridge * (0.45 + 0.55 * clamp(e, 0, 1));
@@ -207,7 +207,7 @@ export function buildField(seed, regions, ores) {
   drownIslets(F);
   const land = landSamples(F);
   // region centres: spread over land, each terrain on the land that best fits it
-  const n = regions.length; const cand = land.filter((_, i) => i % 3 === Math.floor(R() * 3) || true).map((s) => ({ x: s.x + (R() - 0.5) * 12, y: s.y + (R() - 0.5) * 12, t: s.f.temperature, m: s.f.moisture, e: Math.min(1, s.f.e) }));
+  const n = regions.length; const cand = land.filter((_, i) => i % 3 === Math.floor(R() * 3) || true).map((s) => ({ x: s.x, y: s.y, t: s.f.temperature, m: s.f.moisture, e: Math.min(1, s.f.e) }));
   const order = regions.map((r, i) => i).sort((a, b) => (PROFILE[regions[b].terrain] ? 1 : 0) - (PROFILE[regions[a].terrain] ? 1 : 0));
   const placed = []; const centres = new Array(n);
   for (const i of order) {
@@ -287,7 +287,7 @@ function spotFrom(planet, x, y, f) {
 
 export function sampleSpot(planet, x, y) {
   x = clamp(Number(x) || 0, 0, 1000); y = clamp(Number(y) || 0, 0, 1000);
-  const s = spotFrom(planet, x, y, fieldAt(planet.field, x, y)); delete s.water; s.isWater = planet.field ? fieldAt(planet.field, x, y).water : false; return s;
+  const s = spotFrom(planet, x, y, fieldAt(planet.field, x, y)); delete s.water; return s;
 }
 export const isWater = (planet, x, y) => fieldAt(planet.field, x, y).water;
 export function territoryAt() { return null; } // Phase 5: tribe and wildlife fields

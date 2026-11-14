@@ -43,7 +43,7 @@ export function panelFor(cmd) {
     case 'buyShaft': return 'shafts';
     case 'upgradeGear': return 'drill';
     case 'upgradeCart': return 'carts';
-    case 'upgradeShaft': return 'safety';
+    case 'upgradeShaft': return cmd.kind === 'lights' || cmd.kind === 'supports' ? 'safety' : null;
     case 'upgradeSafety': return 'safety';
     case 'nuke': case 'evolve': return 'prestige';
     case 'upgradeLift': return 'lift';
