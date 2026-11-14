@@ -98,12 +98,11 @@ export function rates(colony, world) {
   const orbR = RF.orbital || null;
   const pass = (mixIn, supplyIn, orb) => {
     const fillRate = Math.max(1e-9, Math.min(convPad, supplyIn / Math.max(1, Math.min(N, c.pads))));
-    const W = loadWindow();
     let docks = orb ? orb.docks : 0, accept = orb ? orb.accept : 0;
     // Each ship picks its ore in turn (loading.js): the best coin/min given what earlier ships already take of the flow.
     const avail = mixIn.slice();
     const ships = c.ships.map((s) => {
-      const C1 = shipCap(s, c), C2 = shipCap2(s, c), lr = shipLoadRate(c, s);
+      const C1 = shipCap(s, c), C2 = shipCap2(s, c), lr = shipLoadRate(c, s), W = loadWindow(s);
       const fillFn = (o1, c1, o2, c2, rt) => {
         const cyc = (c1 + c2) / lr + rt;
         let q1 = Math.min(c1, avail[o1] * cyc), q2 = o2 >= 0 ? Math.min(c2, avail[o2] * cyc) : 0;

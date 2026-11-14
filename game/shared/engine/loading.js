@@ -66,4 +66,5 @@ export function holdFill(C, stock, claim, flow, lr, W) {
 
 // Load rate of one ship in ore/min: the conveyor's per-pad rate x the class's loading upgrade.
 export const shipLoadRate = (c, s) => convRate(c.conveyor) * loadMult(c, s.cls);
-export const loadWindow = () => T.maxLoadSecs / 60; // minutes
+export const loadSecsOf = (s) => (s && T.loadSecs && T.loadSecs[s.cls]) || T.maxLoadSecs;
+export const loadWindow = (s) => loadSecsOf(s) / 60; // minutes

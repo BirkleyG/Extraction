@@ -19,7 +19,7 @@ import {
   hasParties, nearestBuyer, prefersRefinery,
 } from './refinery.js';
 import { ensureLedger, ledgerIn } from './ledger.js';
-import { pickLoad, holdFill, shipLoadRate, loadWindow } from './loading.js';
+import { pickLoad, holdFill, shipLoadRate, loadWindow, loadSecsOf } from './loading.js';
 
 const MAX_EVENT_SALES = 12;
 const MAX_EVENT_HAZARDS = 12;
@@ -155,11 +155,11 @@ export function advance(colony, world, now) {
       if (j === k || q.state !== 'loading') return;
       // what it can still take before it must leave: its room, but never more than its load rate over the time left in its window
       const hs = holdsOf(j), room = hs.map((h) => Math.max(0, h.cap - cargo[j][h.o]));
-      const left = q.firstLoadAt != null ? Math.max(0, q.firstLoadAt + T.maxLoadSecs * 1000 - t) / 60000 : T.maxLoadSecs / 60;
+      const left = q.firstLoadAt != null ? Math.max(0, q.firstLoadAt + loadSecsOf(q) * 1000 - t) / 60000 : loadSecsOf(q) / 60;
       const lim = shipLoadRate(c, q) * left, tot = sum(room), kk = tot > lim && tot > 0 ? lim / tot : 1;
       hs.forEach((h, i) => { claim[h.o] += room[i] * kk; });
     });
-    const lr = shipLoadRate(c, s), W = loadWindow();
+    const lr = shipLoadRate(c, s), W = loadWindow(s);
     const fill = (o1, C1, o2, C2) => {
       const a = holdFill(C1, stock[o1], claim[o1], flow[o1], lr, W);
       const b = o2 >= 0 ? holdFill(C2, stock[o2], claim[o2], flow[o2], lr, W) : { q: 0, t: 0 };
@@ -175,7 +175,7 @@ export function advance(colony, world, now) {
     }
     s.oreId = I.ores[o1].id;
     s.oreId2 = o2 >= 0 ? I.ores[o2].id : null;
-    s.pickAt = t + T.maxLoadSecs * 1000;
+    s.pickAt = t + loadSecsOf(s) * 1000;
   }
 
   // Discrete events due at time t, in time order.
@@ -222,7 +222,7 @@ export function advance(colony, world, now) {
       if (s.state !== 'loading') return;
       const load = sum(cargo[k]);
       const full = shipFull(k);
-      const timeout = s.firstLoadAt != null && t >= s.firstLoadAt + T.maxLoadSecs * 1000 - 1e-6;
+      const timeout = s.firstLoadAt != null && t >= s.firstLoadAt + loadSecsOf(s) * 1000 - 1e-6;
       if (load > 0 && (full || timeout)) {
         const bi = pickDest(world, I, s, cargoG[k], t, c);
         if (rs.orbital && toRefinery(k, s, bi, t)) {
@@ -435,7 +435,7 @@ export function advance(colony, world, now) {
     // exact ship events
     c.ships.forEach((s) => {
       const due = s.state === 'out' ? s.arriveAt : s.state === 'back' ? s.homeAt
-        : s.state === 'loading' && s.firstLoadAt != null ? s.firstLoadAt + T.maxLoadSecs * 1000
+        : s.state === 'loading' && s.firstLoadAt != null ? s.firstLoadAt + loadSecsOf(s) * 1000
         : s.state === 'loading' && s.pickAt != null ? s.pickAt : Infinity;
       if (due > t && due < te) te = due;
     });

@@ -80,7 +80,9 @@ export const T = {
     milestones: [10, 25, 50, 100, 200, 300],
     bonus: { hold: 2, hold2: 2, loading: 2, speed: 1.5 },
   },
-  maxLoadSecs: 40,                      // a ship leaves this long after its first ore even if not full (a docked ship still empty re-picks its ore then)
+  maxLoadSecs: 40,
+  // How long each class waits at the pad after its first ore: freighters wait to fill their huge holds.
+  loadSecs: { hauler: 40, cruiser: 25, freighter: 150 },                      // a ship leaves this long after its first ore even if not full (a docked ship still empty re-picks its ore then)
   tripSecs: { near: 15, mid: 35, far: 70 },  // one way, speed 1
 
   // Ore values when the planet gives none
