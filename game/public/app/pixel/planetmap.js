@@ -82,21 +82,41 @@ function paintDebug(planet, N) {
   const cv = makeCanvas(N, N); cv.getContext('2d').putImageData(img, 0, 0); return cv;
 }
 
+// Retro look: shrink the painted map to a chunky pixel grid, cut it to a small palette with ordered
+// dithering (classic 4x4 Bayer), then draw it with hard pixel edges. Same map, more 8-bit.
+const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
+function retroize(src, R) {
+  const cv = makeCanvas(R, R); const g = cv.getContext('2d');
+  g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high'; g.drawImage(src, 0, 0, R, R);
+  const img = g.getImageData(0, 0, R, R); const d = img.data; const LV = 9; const step = 255 / (LV - 1);
+  for (let j = 0; j < R; j += 1) for (let i = 0; i < R; i += 1) {
+    const o = (j * R + i) * 4; const th = (BAYER[(j & 3) * 4 + (i & 3)] / 16 - 0.5) * step * 0.55; // gentle dither: texture, not static
+    for (let q = 0; q < 3; q += 1) d[o + q] = Math.max(0, Math.min(255, Math.round((d[o + q] + th) / step) * step));
+  }
+  g.putImageData(img, 0, 0); return cv;
+}
+
 export function renderPlanetMap(canvas, planet, opts = {}) {
   const res = opts.res || 384; const g = canvas.getContext('2d'); const view = { w: canvas.width, h: canvas.height };
   let c = cache.get(planet); if (!c) { c = {}; cache.set(planet, c); }
   c.base ||= {}; c.base[res] ||= paintBase(planet, res);
   g.fillStyle = '#0b0714'; g.fillRect(0, 0, view.w, view.h);
-  const b = box(view); g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
-  g.drawImage(c.base[res], b.ox, b.oy, b.size, b.size);
+  const b = box(view);
+  const retro = opts.retro !== false && !opts.debug;
+  if (retro) {
+    const R = opts.retroRes || 150; c.retro ||= {}; c.retro[res + ':' + R] ||= retroize(c.base[res], R);
+    g.imageSmoothingEnabled = false; g.drawImage(c.retro[res + ':' + R], b.ox, b.oy, b.size, b.size);
+    // faint scanlines on the pixel rows
+    const px = b.size / R; if (px >= 2) { g.fillStyle = 'rgba(8,4,16,0.16)'; for (let y = b.oy; y < b.oy + b.size; y += px) g.fillRect(b.ox, Math.round(y + px - Math.max(1, px / 3)), b.size, Math.max(1, Math.round(px / 3))); }
+  } else { g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high'; g.drawImage(c.base[res], b.ox, b.oy, b.size, b.size); }
   if (opts.debug) { c.debug ||= paintDebug(planet, 200); g.imageSmoothingEnabled = false; g.drawImage(c.debug, b.ox, b.oy, b.size, b.size); g.imageSmoothingEnabled = true; }
   if (opts.labels !== false && b.size >= 300) {
-    const fs = Math.max(9, Math.round(b.size / 52)); g.font = `600 ${fs}px ui-sans-serif, system-ui, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.lineJoin = 'round'; g.lineWidth = Math.max(2, fs / 4);
+    const fs = Math.max(9, Math.round(b.size / 60)); g.font = `${fs}px Silkscreen, monospace`; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.lineJoin = 'miter'; g.lineWidth = Math.max(2, fs / 3);
     const used = [];
     for (const r of planet.regions) {
-      const p = toMap(view, r.x, r.y); const tw = g.measureText(r.name).width / 2 + 3;
-      if (used.some((q) => Math.abs(q.x - p.x) < q.w + tw && Math.abs(q.y - p.y) < fs * 1.1)) continue; used.push({ x: p.x, y: p.y, w: tw }); g.strokeStyle = 'rgba(20,12,30,0.55)'; g.strokeText(r.name, p.x, p.y); g.fillStyle = 'rgba(255,255,255,0.78)'; g.fillText(r.name, p.x, p.y);
+      const p = toMap(view, r.x, r.y); const tw = g.measureText(r.name.toUpperCase()).width / 2 + 3;
+      if (used.some((q) => Math.abs(q.x - p.x) < q.w + tw && Math.abs(q.y - p.y) < fs * 1.1)) continue; used.push({ x: p.x, y: p.y, w: tw }); const up = r.name.toUpperCase(); g.fillStyle = 'rgba(14,8,24,0.85)'; g.fillText(up, p.x + 1, p.y + 1); g.fillText(up, p.x + 2, p.y + 2); g.fillStyle = '#f4edff'; g.fillText(up, p.x, p.y);
     }
   }
   return { toMap: (x, y) => toMap(view, x, y), fromMap: (px, py) => fromMap(view, px, py) };

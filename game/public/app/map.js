@@ -84,6 +84,7 @@ export function createMap(S, A) {
     const x0 = clamp(view.cx - vs / 2, 0, 1000 - vs), y0 = clamp(view.cy - vs / 2, 0, 1000 - vs);
     g.imageSmoothingEnabled = false;
     g.fillStyle = '#0b0714'; g.fillRect(0, 0, W, W);
+    g.imageSmoothingEnabled = false; // keep the retro pixels crisp when zoomed
     g.drawImage(base, (x0 / 1000) * base.width, (y0 / 1000) * base.height, (vs / 1000) * base.width, (vs / 1000) * base.height, 0, 0, W, W);
     const P = (x, y) => ({ x: ((x - x0) / vs) * W, y: ((y - y0) / vs) * W });
     const u = dpr * 1; // css px
