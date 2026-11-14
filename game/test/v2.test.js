@@ -33,12 +33,12 @@ describe('v2 server', () => {
     const region = s0.body.world.planet.regions[1].id;
     const st = await call('POST', '/api/v2/start', { species: { name: 'Gloops', color: '#33ccff' }, siteRegion: region }, a.token);
     assert.equal(st.status, 200);
-    assert.equal(st.body.colony.siteRegion, region);
+    assert.ok(s0.body.world.planet.regions.some(r => r.id === st.body.colony.siteRegion), 'landed in a real region');
     const coin0 = st.body.colony.coin;
-    const hire = await call('POST', '/api/v2/command', { cmd: { type: 'hire', n: 1 } }, a.token);
+    const hire = await call('POST', '/api/v2/command', { cmd: { type: 'hireMiners', shaftId: st.body.colony.shafts[0].id, n: 1 } }, a.token);
     assert.equal(hire.status, 200, JSON.stringify(hire.body));
     assert.ok(hire.body.colony.coin < coin0, 'hiring costs coin');
-    assert.ok(hire.body.colony.miners >= 1);
+    assert.ok(hire.body.colony.miners >= 4, 'three starting miners plus one');
   });
 
   test('players are dropped at fair random spots, apart from each other', async () => {

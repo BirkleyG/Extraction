@@ -257,6 +257,7 @@ export function createV2({ store, ai, currentModel, broadcast, now: clock = () =
         id: me.id, uid: me.id, name: String(body.name || look.name + ' Mining Co.').slice(0, 28),
         species: look, planet: engineWorld(world).planet, siteRegion: region.id, site: siteArg, now: t, grant: E.catchUpGrant(engineWorld(world), t),
       });
+      if (sampled && colony.site) colony.site = { ...colony.site, x: Math.round(sampled.x), y: Math.round(sampled.y) }; // map position
       await store.setDoc('col2', me.id, colony);
       const r = await settle(colony, world, t);
       await addFeed(`${me.name} landed in ${region.name} as the ${look.name}.`, 'land', me.id, t);
