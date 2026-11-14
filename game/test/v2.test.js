@@ -41,18 +41,17 @@ describe('v2 server', () => {
     assert.ok(hire.body.colony.miners >= 1);
   });
 
-  test('each player lands on their own starting site', async () => {
+  test('players are dropped at fair random spots, apart from each other', async () => {
     const p1 = await join('Site1'), p2 = await join('Site2');
-    const s1 = (await call('GET', '/api/v2/state', null, p1.token)).body;
-    const start = s1.world.planet.sites.find(x => x.start && !s1.takenSites.includes(x.id));
-    assert.ok(start, 'a free start site');
-    const a = await call('POST', '/api/v2/start', { siteId: start.id }, p1.token);
-    assert.equal(a.status, 200);
-    assert.equal(a.body.colony.site && a.body.colony.site.id, start.id);
-    const s2 = (await call('GET', '/api/v2/state', null, p2.token)).body;
-    assert.ok(s2.takenSites.includes(start.id), 'taken sites are shown to others');
-    const b = await call('POST', '/api/v2/start', { siteId: start.id }, p2.token);
-    assert.equal(b.status, 409, 'cannot land on a taken site');
+    const a = await call('POST', '/api/v2/start', {}, p1.token);
+    const b = await call('POST', '/api/v2/start', {}, p2.token);
+    assert.equal(a.status, 200); assert.equal(b.status, 200);
+    const sa = a.body.colony.site, sb = b.body.colony.site;
+    assert.ok(sa && Number.isFinite(sa.x) && sa.richness && sa.common, 'colony has a sampled site');
+    assert.ok(Math.hypot(sa.x - sb.x, sa.y - sb.y) >= 40, 'colonies are spaced apart');
+    const st = (await call('GET', '/api/v2/state', null, p1.token)).body;
+    assert.ok(st.colonies.some(c => c.uid === b.body.colony.uid), 'map shows other colonies');
+    assert.ok(!('richness' in st.colonies[0]), 'ore under other colonies stays hidden');
   });
 
   test('server time drives progress; clients cannot set money', async () => {

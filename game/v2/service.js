@@ -3,7 +3,7 @@
 // colony saves and the shared market consistent.
 import crypto from 'node:crypto';
 import * as E from '../shared/engine/index.js';
-import { improvisePlanet, planetPrompt, planetFromAI, planetSummary } from '../shared/planet/index.js';
+import { improvisePlanet, planetPrompt, planetFromAI, planetSummary, startSpot, sampleSpot } from '../shared/planet/index.js';
 import { createMaker } from './maker.js';
 import { createEvents } from './events.js';
 import { generateParties, partiesPrompt, applyPartyNames } from '../shared/market/parties.js';
@@ -115,13 +115,14 @@ export function createV2({ store, ai, currentModel, broadcast, now: clock = () =
     if (Math.random() < 0.05) store.pruneColl('feed2', 200).catch(() => {});
   }
 
-  async function takenSites(world) {
-    const ids = new Set();
+  // Where every colony on this planet sits (public: the map shows other players).
+  async function colonySpots(world) {
+    const out = [];
     for (const d of await store.listColl('col2')) {
       const c = d.data;
-      if (c && c.planetId === world.planet.id && c.site && c.site.id) ids.add(c.site.id);
+      if (c && c.planetId === world.planet.id && c.site && Number.isFinite(c.site.x)) out.push({ uid: c.uid, name: c.name, x: c.site.x, y: c.site.y, color: c.species && c.species.color });
     }
-    return ids;
+    return out;
   }
 
   async function loadColony(uid, world) {
@@ -232,7 +233,7 @@ export function createV2({ store, ai, currentModel, broadcast, now: clock = () =
         me: { id: me.id, name: me.name, owner: !!me.owner },
         colony, world, serverNow: t,
         grant: colony ? null : E.catchUpGrant(ew, t),
-        takenSites: colony ? undefined : [...await takenSites(world)],
+        colonies: await colonySpots(world),
       };
     }),
 
@@ -241,14 +242,13 @@ export function createV2({ store, ai, currentModel, broadcast, now: clock = () =
       const world = await getWorld();
       const existing = await loadColony(me.id, world);
       if (existing) return { colony: existing, serverNow: t };
-      // Each player takes their own starting site (equally good spots; see the planet's start sites).
-      const taken = await takenSites(world);
-      const starts = (world.planet.sites || []).filter(x => x.start && !taken.has(x.id));
-      let site = starts.find(x => x.id === body.siteId) || null;
-      if (!site && body.siteId && (world.planet.sites || []).some(x => x.id === body.siteId)) throw Object.assign(new Error('That site is taken. Pick another landing site.'), { status: 409, code: 'site_taken', expose: true });
-      if (!site) site = starts.find(x => x.regionId === body.siteRegion) || starts[0] || null;
-      const region = world.planet.regions.find(r => r.id === (site ? site.regionId : body.siteRegion)) || world.planet.regions[0];
-      const siteArg = site ? { id: site.id, regionId: site.regionId, soil: site.soil, richness: site.richness, veinSize: site.veinSize, common: region.common } : undefined;
+      // Players are dropped at a random spot that's equally good for everyone, clear of other colonies.
+      // The ore painted under that spot (hidden from players) is what's in the ground.
+      const taken = (await colonySpots(world)).map(p => ({ x: p.x, y: p.y }));
+      const spot = startSpot(world.planet, taken, me.id + ':' + world.month);
+      const sampled = spot ? sampleSpot(world.planet, spot.x, spot.y) : null;
+      const region = world.planet.regions.find(r => r.id === (sampled ? sampled.regionId : body.siteRegion)) || world.planet.regions[0];
+      const siteArg = sampled ? { ...sampled, id: `s${Math.round(sampled.x)}_${Math.round(sampled.y)}` } : undefined;
       const sp = (body.species && typeof body.species === 'object') ? body.species : {};
       const lib = await species();
       const look = lib ? lib.cleanSpecies({ ...sp, name: sp.name || me.name + "'s kin" })
@@ -259,7 +259,7 @@ export function createV2({ store, ai, currentModel, broadcast, now: clock = () =
       });
       await store.setDoc('col2', me.id, colony);
       const r = await settle(colony, world, t);
-      await addFeed(`${me.name} landed at ${site ? site.name + ', ' : ''}${region.name} as the ${look.name}.`, 'land', me.id, t);
+      await addFeed(`${me.name} landed in ${region.name} as the ${look.name}.`, 'land', me.id, t);
       return { colony: r.colony, serverNow: t };
     }),
 
