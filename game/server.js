@@ -10,6 +10,7 @@ import { WebSocketServer } from 'ws';
 import { createStore } from './store.js';
 import { createAi } from './ai.js';
 import { createV2, SUB_COLLS } from './v2/service.js';
+import { createV3, SUB_COLLS3 } from './v3/service.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const VERSION = JSON.parse(fs.readFileSync(path.join(here, 'version.json'), 'utf8')).version;
@@ -190,6 +191,23 @@ export async function startServer(opts = {}) {
     res.json({ rolled: await v2.forceRoll() });
   }));
 
+  // ---------- v3: the guild game (the main game) ----------
+  const v3 = createV3({ store, ai, currentModel, broadcast: (c, i, d) => broadcast(c, i, d), v2, now: opts.now });
+  app.get('/api/v3/state', need(async (req, res, me) => res.json(await v3.state(me))));
+  app.post('/api/v3/start', need(async (req, res, me) => res.json(await v3.start(me, req.body || {}))));
+  app.post('/api/v3/command', need(async (req, res, me) => res.json(await v3.command(me, req.body && req.body.cmd))));
+  app.get('/api/v3/board', need(async (req, res) => res.json(await v3.board())));
+  app.get('/api/v3/feed', need(async (req, res) => res.json(await v3.feed())));
+  app.get('/api/v3/bulletin', need(async (req, res) => res.json(await v3.bulletin())));
+  app.get('/api/v3/history', need(async (req, res, me) => res.json(await v3.history(me))));
+  app.post('/api/v3/maker', need(async (req, res, me) => res.json(await v3.maker(me, req.body))));
+  app.post('/api/v3/admin/end-month', need(async (req, res, me) => {
+    if (!me.owner) throw fail(403, 'permission_denied', 'Owner only');
+    const rolled = await v2.forceRoll();
+    await v3.rollIfDue();
+    res.json({ rolled });
+  }));
+
   app.use('/shared', express.static(path.join(here, 'shared'), { maxAge: '1m' }));
   app.use(express.static(path.join(here, 'public'), { extensions: ['html'], maxAge: '1m' }));
 
@@ -208,9 +226,9 @@ export async function startServer(opts = {}) {
     ws.on('close', () => subs.delete(ws));
     ws.on('message', async raw => {
       let m; try { m = JSON.parse(raw); } catch { return; }
-      if (m.op === 'sub' && (COLLS.has(m.coll) || SUB_COLLS.has(m.coll))) {
+      if (m.op === 'sub' && (COLLS.has(m.coll) || SUB_COLLS.has(m.coll) || SUB_COLLS3.has(m.coll))) {
         subs.get(ws)?.add(m.coll);
-        const docs = await store.listColl(m.coll, (m.coll === 'feed' || m.coll === 'feed2') ? { orderBy: 't', desc: true, limit: 50 } : {});
+        const docs = await store.listColl(m.coll, (m.coll === 'feed' || m.coll === 'feed2' || m.coll === 'feed3') ? { orderBy: 't', desc: true, limit: 50 } : {});
         send(ws, { op: 'init', coll: m.coll, docs });
       }
     });
@@ -228,6 +246,9 @@ export async function startServer(opts = {}) {
     setInterval(() => v2.rollIfDue().catch(e => console.error('rollover', e)), 60_000),
     setInterval(() => v2.sweep().catch(e => console.error('sweep', e)), 60_000),
     setInterval(() => v2.maybeEvent().catch(e => console.error('event', e)), 60_000),
+    setInterval(() => v3.rollIfDue().catch(e => console.error('rollover3', e)), 60_000),
+    setInterval(() => v3.sweep().catch(e => console.error('sweep3', e)), 60_000),
+    setInterval(() => v3.maybeEvent().catch(e => console.error('event3', e)), 60_000),
   ];
 
   const port = opts.port ?? Number(env.PORT || 3000);

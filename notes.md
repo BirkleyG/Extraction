@@ -1,6 +1,6 @@
 # Mineshaft Capital notes
 
-Current version: **0.5.01** (shown in the game under the logo, top left)
+Current version: **1.0.00** (shown in the game under the logo, top left)
 
 ## How versions work
 
@@ -11,6 +11,9 @@ Current version: **0.5.01** (shown in the game under the logo, top left)
 The bump command updates `game/version.json` (what the game displays) and adds an entry below. Every change that lands should come with a bump.
 
 ## Changelog
+
+### 1.0.00 (2026-11-16)
+- The guild game. You are now a Guild General running operations across the planet instead of hiring miners: found mines, refineries, air stations and research hubs on the map; survey with drones; fly ships on routes you choose to Guild contractors, your own refineries or other players' refineries; build a Galactic Exchange and sign or haggle contracts with galactic buyers you get to know over time. Prices come from a real nested CES market with outside suppliers (commons barely move, mythic crashes if you flood it). Research, mine intensity, incidents, the nuke and the Maker all carry over. Most coin at month's end wins. The old mineshaft game moved to /mines/.
 
 ### 0.5.01 (2026-11-14)
 - Retro pass: the classic pixel fonts are now bundled with the game so they always load (no more plain system-font fallback), small text is a touch bigger like the classic, and the planet map has a retro filter: chunky pixels, a small dithered palette, scanlines and pixel-font labels.

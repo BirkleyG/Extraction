@@ -1,8 +1,73 @@
-# Mineshaft Capital v2: architecture contract
+# Mineshaft Capital: architecture contract
 
 This is the contract every builder works to. `ROADMAP.md` says *what* and *why*; this says *how the pieces fit*. **Fun first**: when a detail here fights fun, change the detail and note it in your report.
 
-## Shape
+## Guild game contract (v3, the main game since v1.0)
+
+The guild game is the game at `/`. The v2 mineshaft game below still runs at `/mines/` and shares the month's planet and buyers.
+
+**Shape**
+```
+game/shared/guild/   pure engine: tuning.js (all balance), market.js (nested CES), engine.js (guild, advance, commands, view),
+                     contracts.js (offers, haggling), world.js (contractor refineries, dossiers, spots), text.js (dark humor), util.js
+game/v3/service.js   server: guilds, market flow, refinery directory, transfers between guilds, month roll, Maker, events
+game/public/index.html + game/public/guild/   client: map.js (the planet map, the main screen), main.js (HUD, card, tabs, sheets), guild.css
+game/public/mines/index.html                  the v2 client (uses /app/)
+```
+
+**Principles (on top of the ones above)**
+- The browser does **not** run `advance`. The server sends `{ guild (public), view }`; the client counts coin forward with `view.netH` between syncs (every 20s and after each command). This keeps hidden information on the server: ore under the ground (`site.ground`), buyers' top prices (`offer.max`) and buyer parameters (`world.parties`) never reach the client.
+- `advance(guild, world, now)` integrates whole minutes on the absolute minute grid (step-invariant by construction). All randomness is `roll(...keys)` from the guild seed and the minute index.
+- No recommendations anywhere: the view reports facts (rates, prices, distances), never a "best" move.
+
+**Engine API (`game/shared/guild/index.js`)**
+```js
+newGuild({ uid, name, species, world, x, y, now, grant }) -> guild
+advance(guild, world, now) -> { guild, events, sales: { oreId: refined units sold to the galaxy }, transfers: [{ uid, siteId, oreId, amount, coin, from }] }
+applyCommand(guild, world, cmd, now) -> same + error
+view(guild, world, now) -> everything the UI shows (sites with rates, routes with paths and t/h, prices, npcPrices, offers without max, buyers met, costs)
+prices(world, now) -> { oreId: { p, pbar, idx, D, Q, out, share, tier } }      recordSales(world, sales, now) -> world
+canBuildAt(guild, world, kind, x, y) -> null | reason      surveyCost(guild, x, y) -> { cost, hours }
+```
+`world` = `{ month, planet, parties, flow: { oreId: { q, t } }, changes, startedAt, endsAt, directory: [refineries buying ore], sites: [every guild's operations] }`.
+
+**Guild (plain JSON):** `{ v, uid, name, species, planetId, seed, t, born, coin, earned, runEarned, monthEarned, grant, sp, evo, nukes, lastNuke, landing,
+sites: [{ id, kind: 'hub'|'mine'|'refinery'|'air'|'lab', name, x, y, level, build: null|{ to, at, doneAt }, ...kind fields }], ships: [{ id, cls, name, routeId }],
+routes: [{ id, from (mine id), to: { kind: 'npc'|'site'|'rival', id, uid? }, cargo: 'all'|oreId }], exchange: null|{ level, build, stock, spot },
+tech: { id: time }, rp, surveys: [{ id, x, y, status, at, doneAt, precision, report }], offers, contracts, buyers: { id: { met, deals, defaults, walked } },
+rate (refined units/hr per ore), ema: { in, out }, ledger: { in, out }, log (last 80 chronicle lines), inbox (ore delivered by other guilds), stats }`.
+Mine fields: `intensity, focus, stock, dug, ground (hidden truth), haltUntil`. Refinery fields: `input, buy: { on, pct }`.
+
+**Commands:** `build { kind, x, y }` · `upgrade { siteId }` · `demolish { siteId }` · `setMine { siteId, intensity?, focus? }` · `setRefinery { siteId, on?, pct? }` ·
+`buyShip { cls, routeId? }` · `sellShip { shipId }` · `route { from, to, cargo?, shipId? }` · `setRoute { routeId, cargo }` · `deleteRoute { routeId }` · `assign { shipId, routeId|null }` ·
+`survey { x, y }` · `research { tech }` · `buildExchange` · `upgradeExchange` · `setSpot { oreId, on }` · `offer { offerId, action: 'accept'|'decline'|'counter', price? }` ·
+`rename { target: 'guild'|'site'|'ship', id, name }` · `nuke { confirm: 'NUKE' }` · `evolve { kind }`.
+
+**Flows each minute:** constructions and surveys finish → offers and contract deadlines → mines dig into stockpiles (stop when full) → routes move ore at `ships × hold / round trip`
+(flight path hops through your hubs and air stations, legs ≤ ship range) to a contractor (paid at its posted price), your refinery (input buffer) or another guild's refinery
+(paid `pct × galactic price`; the server credits it to their `inbox` and charges them) → refineries refine at throughput × yield → refined goods go to your exchange
+(contracts first, then spot unless held) or to the Guild exchange at 55% → running costs and research → seeded incidents at mines.
+
+**Market (`market.js`):** nested CES per buyer (materials vs. numeraire σ0 = 0.5; across uses σ1 = 1.3; across ores within a use σ2 = the buyer's sigma), goods in
+baseline-value units, outside supply `S0 · p̂^η` by tier, planet supply = EMA of recorded sales (6h half-life). Calibrated so that at the expected planet supply
+(tier share of galactic demand) every price is its baseline. World changes: `global`/`buyer` scale budgets, `demand` scales needs for one ore, `supply` scales outside supply.
+
+**Server v3 API** (Bearer token from the join flow)
+```
+GET  /api/v3/state      -> { me, guild, view, world (public: planet, npc, changes, directory, sites), serverNow, grant }
+POST /api/v3/start      { name, species } -> state (fair landing spot, near a contractor, far from other guilds when possible)
+POST /api/v3/command    { cmd } -> state + { events, error }
+GET  /api/v3/board | /api/v3/feed | /api/v3/bulletin | /api/v3/history
+POST /api/v3/maker      same as v2 (kinds demand, supply, global)
+POST /api/v3/admin/end-month (owner)
+WS   board3, feed3, world3 (public market state only)
+```
+Storage: `world3/current` (public), `buyers3/current` (secret buyer numbers and dossiers), `col3/<uid>`, `board3`, `feed3`, `hall3`, `stats3`, `hist3`, `phist3`, `maker3`.
+The month's planet and buyer parties come from the v2 world; buyer dossiers (backstory, voice, quirk, opening lines) come from one AI call per month, with fallbacks.
+
+**Testing:** `game/test/guild.test.js` (engine, market, server); `node game/test/guild-pacing.mjs` plays bot months; `node game/test/client-guild.mjs [outdir]` is the two-player browser playtest (fast-forwarded server clock, screenshots).
+
+## Shape (v2)
 
 ```
 game/

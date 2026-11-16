@@ -32,7 +32,7 @@ async function player(name, viewport, code = '') {
   page.on('console', (m) => { if (m.type() === 'error' && !/fonts\.g|ERR_FAILED/.test(m.text())) errors.push(`[${name}] ${m.text()}`); });
   page.on('pageerror', (e) => errors.push(`[${name}] pageerror ${e.message}`));
   page.on('requestfailed', (r) => { if (!/fonts\.g/.test(r.url())) errors.push(`[${name}] request failed ${r.url()}`); });
-  await page.goto(base + '/');
+  await page.goto(base + '/mines/');
   await page.fill('#jName', name);
   if (code) await page.fill('#jRec', '');
   await page.click('form.join button[type=submit]');
@@ -191,7 +191,7 @@ const O = await (async () => {
   const page = await ctx.newPage();
   page.on('console', (m) => { if (m.type() === 'error' && !/fonts\.g|ERR_FAILED/.test(m.text())) errors.push(`[Boss] ${m.text()}`); });
   page.on('pageerror', (e) => errors.push(`[Boss] pageerror ${e.message}`));
-  await page.goto(base + '/');
+  await page.goto(base + '/mines/');
   await page.fill('#jName', 'Boss');
   await page.click('form.join details summary');
   await page.fill('#jCode', 'boss');

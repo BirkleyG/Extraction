@@ -29,7 +29,7 @@ async function player(name, viewport) {
   const page = await ctx.newPage();
   page.on('console', (m) => { if (m.type() === 'error' && !/fonts\.g|ERR_FAILED|status of 4\d\d/.test(m.text())) errors.push(`[${name}] ${m.text()}`); });
   page.on('pageerror', (e) => errors.push(`[${name}] pageerror ${e.message}`));
-  await page.goto(base + '/');
+  await page.goto(base + '/mines/');
   await page.fill('#jName', name);
   await page.click('form.join button[type=submit]');
   await page.waitForSelector('.onboard #obGo');
