@@ -16,6 +16,7 @@ Planning rules:
 
 - 2026-11-12: Pacing is a few check-ins a day; months stay calendar-length; plan for 3–10 players; AI cap 300 calls a day, 60 per player.
 - 2026-11-16: **The guild game replaces the mineshaft game.** Macro over micro. Winner = most coin (profit). Buyers are discovered, not listed. Galactic exchanges come later in the month: mines sell to refineries, refineries to exchanges, exchanges to galactic buyers. Keep the nuke, SP and the Maker. The side-view mine comes back later as something you click into to watch. The old mineshaft game stays at `/mines/`, the original artifact at `/classic/`.
+- 2026-11-16 (after playing v1.0): **Zoom out to plan, zoom in to play.** The map stays simple; every operation opens into a living inside view. Upgrades cost coin, not waiting (only travel takes time). No hand-holding: no "what this site needs" lines or advice banners; players discover problems by looking (a full pile, a "!" over a cart). Workers are bought off-planet, die often and funnily, and are topped up automatically from a labor pool so offline play is safe. Two ways to win emerge from what you build and research (no charters): specialize in one link of the chain, or own the whole chain. Refiners always buy ore outright (no toll refining). Territory is fully open; only cost grows with distance. Research becomes a skill tree whose branches are unlocked by research hubs in different regions. Everything AI-generated follows the planet's theme. No late-join bonus: join next month. Balance across the whole spending mix is a hard requirement.
 
 ---
 
@@ -37,13 +38,50 @@ Planning rules:
 
 > **Playtest:** Is the first check-in clear without reading anything? Does a 5-minute player stay competitive with an hour-a-day player? Do players route to each other's refineries? Does anyone haggle? Does a mythic find feel like a jackpot? Is it ever obvious what the best move is (if so, change it)?
 
-## Guild 2: tune and deepen (next)
+## Guild 2: the living operations (next)
 
-- Balance from real month data: income curve, running costs, contract sizes, exchange timing, nuke threshold.
-- Buyer conversations voiced by the AI (within the daily limits), with the engine still deciding the deal.
-- Market intel as discovery: price history charts, "what if I flood it" estimates (the engine has `priceAt`), share of each market.
-- Click into a mine to watch the side-view crew dig (the old renderer), with macro upgrades shown in it.
-- Contracts between players (sell refined goods to another guild's exchange).
+*Zoom out to plan, zoom in to play. The map is the strategy layer; every operation is a little world you can open, watch and tune.*
+
+The map
+- Simple at a glance: operation icons, routes as ships with ore-coloured cargo, a "!" where something is wrong. No advice text, no "short on workers", no "pile growing" banners. Players find out by clicking in.
+- Click a ship in flight and the camera follows it over the changing terrain: cargo, ETA, the regions it passes.
+- Click into other guilds' operations to watch them work (look, don't touch).
+
+Inside every operation (one shared mechanic, different looks)
+- Opening any operation shows a side-view "anthill" scene: mines (shafts, miners, carts, lift, ore piles), refineries (landing pad → silo → conveyors → vats → export yard), the command hub (main office, shuttle pad with workers arriving and leaving, analytics and reports), air stations (hangars, fuel), research hubs, the Galactic Exchange.
+- **Parts instead of one "Expand" button.** Each operation has parts you buy and see: mines get shafts, drill rigs, bunkhouses, carts and lift, lights and supports; refineries get pads, silos, pipelines, vats, holds; the hub gets bunks, shuttle pads, an office; and so on. Parts cost coin and go in right away; travel is the only thing you wait for. Stockpile bars and "!" markers show what is full or stuck.
+- **Shift orders** for mines (and the equivalent elsewhere): Relaxed (less output, morale up), Normal, Overtime (more now, tired crews), Blast (a burst of ore, cave-in risk). A real edge for active players, never a big one; offline guilds run on the standing order.
+- **Incidents as small choices** with dark jokes ("6 miners trapped: pay for the rescue, or seal it and keep digging"). Offline, a default policy decides.
+
+Workers
+- Ordered from an off-planet labor company (themed to the planet), shuttled to the hub, sent to operations. Staffing drives output.
+- They die, get hurt, tire and occasionally unionize. Frequent and funny, kept simple: wages and safety as broad levers, a fixed going rate for labor (no labor market).
+- **Labor pool:** set how many spares to keep and a replacement budget at the hub; dead workers are replaced automatically so you never come back to an empty mine.
+
+Specialize or integrate (emerges from what you build and research)
+- **Mining:** post a gate price at a mine; other guilds' ships can buy ore there.
+- **Shipping:** freight contracts. Haul another guild's ore from their mine to a refinery for a rate per tonne. A pure shipping guild can win without owning a mine.
+- **Refining:** refiners always buy ore outright (as now). No toll refining.
+- **Trading:** the Galactic Exchange and its buyers are the global market.
+- **Later:** fighting and hunting as hired services (escorts, clearing nests) with Guild 3.
+- **NPC customers** for every service (freight jobs, gate buyers, ore sellers) so a specialist always has work, even with three players.
+
+Open territory
+- Build anywhere. Cost grows with distance from your hubs and air stations (supplies fly in); nothing else is forbidden. Guilds can build fairly close to each other and race for rich ground and good shipping hubs. Air stations become trade infrastructure, not fences.
+
+Research as a skill tree
+- A Forager-style skill tree you explore and unlock node by node, replacing the flat list.
+- Branches unlock by **where** your research hubs stand: a hub in a volcanic region opens one branch, a glacier another. Spreading research hubs across the planet opens broader research.
+
+Theme everything
+- The month's AI build themes contractor refineries, the labor company, workers, incidents and buyers' lines to the planet (a candy planet gets a candy crushery). Themed fallbacks when the AI is off.
+
+Also in this phase
+- No late-join bonus: join next month.
+- Balance pass across the whole spending mix (parts, workers, ships, buildings, research) with the pacing bot, so no single purchase dominates the way shafts did in v0.5.
+- Buyer conversations voiced by the AI (within the daily limits), with the engine still deciding the deal; market intel as discovery (price history, "what if I flood it").
+
+> **Playtest:** Do players open their operations just to watch? Do they notice a full pile without being told? Does anyone specialize (all shipping, all refining) and still compete with an integrated guild? Does a 5-minute player still keep up? Is any one purchase obviously the best?
 
 ## Guild 3: the planet fights back
 
