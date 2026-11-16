@@ -1,0 +1,82 @@
+/* Guild game additions on top of the classic look (/app/style.css). */
+body.guild .layout { grid-template-columns: minmax(0, 1fr) 410px; }
+#map { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: crosshair; image-rendering: pixelated; }
+#map.drag { cursor: grabbing; }
+.stat.coin i.neg, #net.neg { color: var(--bad); }
+.stat.rp b { color: var(--ok); font-size: 18px; }
+.muted { color: var(--muted); }
+.neg { color: var(--bad); }
+
+/* hint line and mode bar on the map */
+.hint, .modebar { position: absolute; left: 50%; transform: translateX(-50%); top: 10px; z-index: 4; max-width: min(560px, calc(100% - 120px)); background: rgba(28,20,48,.94); border: 2px solid var(--accent); box-shadow: 4px 4px 0 #05030a; padding: 8px 12px; font-size: 14px; }
+.modebar { border-color: var(--coin); animation: blinkb 1.2s steps(2) infinite; }
+@keyframes blinkb { 50% { border-color: var(--accent); } }
+.tip { background: rgba(255,138,61,.1); border: 2px dashed var(--accent); padding: 8px 10px; font-size: 14px; margin: 8px 0; }
+
+/* card on the map */
+body.guild .card { width: min(380px, calc(100% - 70px)); max-height: calc(100% - 80px); }
+.card h5, .sheet h5 { font-family: var(--f-display); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 12px 0 6px; font-weight: 400; }
+.btnrow.wrap { flex-wrap: wrap; }
+.btnrow { display: flex; gap: 8px; margin: 8px 0; align-items: center; }
+.card .buy.sm { min-width: 0; }
+.card .buy .bl { font-size: 9px; }
+.bar { height: 8px; background: var(--ink); border: 2px solid var(--line); margin: 4px 0 8px; position: relative; }
+.bar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--ok); }
+.bar.hot i { background: var(--warn); }
+.row .bar { margin: 6px 0 0; }
+.vein { display: inline-block; width: 46px; height: 7px; background: var(--ink); border: 1px solid var(--line); vertical-align: middle; position: relative; }
+.vein i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--sky); }
+.linkish { background: none; border: 0; padding: 0; color: var(--muted); text-decoration: underline; font-size: 13px; }
+.linkish:hover { color: var(--text); }
+.card select, .tabbody select, .sheet select, .sheet textarea, .sheet input:not([type]), .sheet input[type=text] { background: var(--ink); border: 2px solid var(--line); padding: 6px 8px; max-width: 100%; }
+.sheet textarea { width: 100%; }
+input[type=range] { width: 100%; accent-color: var(--accent); }
+.row.slim { padding: 6px 8px; margin: 4px 0; width: 100%; text-align: left; }
+button.row { width: 100%; text-align: left; color: inherit; font: inherit; }
+.row .go { font: 24px/1 var(--f-mono); color: var(--muted); }
+.row.done { opacity: .6; }
+.row .tag { font-family: var(--f-display); font-size: 10px; text-transform: uppercase; }
+.row.price .pv, .row.lb .pv { font-family: var(--f-mono); font-size: 20px; text-align: right; }
+.row .pv small { display: block; font-size: 13px; color: var(--muted); }
+.row.lb.me { border-color: var(--coin); }
+.row .col { display: flex; flex-direction: column; gap: 4px; align-items: stretch; }
+.row .quote { font-style: italic; color: var(--text); opacity: .85; margin-top: 4px; }
+.x { background: var(--panel2); border: 2px solid var(--line); min-height: 30px; }
+.report { border-left: 3px solid var(--sky); padding-left: 8px; margin: 6px 0; }
+.report p, .mineout p, .prices p { margin: 3px 0; }
+.prices { columns: 2; column-gap: 12px; }
+.ledger { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.feed p { margin: 4px 0; }
+.feed time { color: var(--accent); font-family: var(--f-mono); font-size: 15px; margin-right: 6px; }
+.feed .incident { color: #ffc4c4; }
+.dossier { background: var(--panel2); border: 2px solid var(--line); padding: 8px 10px; margin: 6px 0; }
+.dossier summary { cursor: pointer; }
+.dev { word-break: break-all; background: var(--ink); padding: 2px 6px; }
+.sp { color: var(--sp); }
+
+/* buyers on the line */
+.calls { position: absolute; right: 10px; bottom: 10px; z-index: 5; }
+.call { width: 250px; background: var(--panel); border: 2px solid var(--coin); box-shadow: 4px 4px 0 #05030a; padding: 8px 10px; display: flex; flex-direction: column; gap: 3px; animation: cardin .2s ease-out; }
+.call small { font-family: var(--f-display); font-size: 9px; text-transform: uppercase; color: var(--coin); letter-spacing: .08em; }
+.call span { font-size: 14px; }
+.call .btnrow { margin: 4px 0 0; }
+
+/* negotiation chat */
+.chat { background: var(--ink); border: 2px solid var(--line); padding: 8px 10px; max-height: 240px; overflow-y: auto; margin: 10px 0; }
+.chat p { margin: 6px 0; padding: 6px 9px; max-width: 86%; }
+.chat .them { background: var(--panel2); border-left: 3px solid var(--sp); }
+.chat .you { background: rgba(255,138,61,.14); border-right: 3px solid var(--accent); margin-left: auto; text-align: right; }
+.sheet.maker .chat .them { border-left-color: var(--coin); font-family: var(--f-display); font-size: 12px; line-height: 1.6; }
+.sheet.land h1 { font-family: var(--f-display); color: var(--accent); margin: 8px 0 2px; }
+
+@media (max-width: 860px) {
+  body.guild .layout { grid-template-columns: 1fr; grid-template-rows: minmax(300px, 55vh) 1fr; }
+  body.guild .stage { border-right: 0; border-bottom: 2px solid var(--line); }
+  .stat.rp, .stat.day .lw { display: none; }
+  .hint { top: auto; bottom: 10px; font-size: 13px; }
+  .call { width: 210px; }
+}
+.row .d { display: block; }
+.row .t + small { margin-left: 4px; }
+body.guild #toasts { left: auto; right: 430px; transform: none; bottom: 46px; align-items: flex-end; width: min(380px, calc(100% - 24px)); }
+@media (max-width: 860px) { body.guild #toasts { right: 12px; } }
