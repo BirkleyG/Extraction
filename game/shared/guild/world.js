@@ -4,41 +4,116 @@ import { rng, hash, clamp, r2, dist } from './util.js';
 import { spotOK, sampleSpot } from '../planet/index.js';
 import { oreInfo } from './market.js';
 
-const NPC_NAMES = [
-  ['Grindwell & Daughters', 'Four generations of crushing things. The daughters are the machines.'],
-  ['Consolidated Pulverizing', 'Will refine anything. Has refined several auditors.'],
-  ['The Benevolent Crushery', 'A charity, technically. Nobody knows for whom.'],
-  ['Last Chance Smelting', 'The sign used to say First Chance. Then came the first chance.'],
-  ['Ore & Order Ltd.', 'Guild contractor. Pays on time, mostly in coin.'],
-  ['Mother Vat', 'A refinery that insists on being called Mother.'],
-  ['The Slag Cathedral', 'Smelters in hooded robes. They hum. The ore hums back.'],
-  ['Bargain Furnace No. 9', 'Furnaces one through eight are not discussed.'],
+import { THEMES } from '../planet/index.js';
+
+const REFINERY_NOUNS = ['Crushery', 'Smeltworks', 'Rendering Co.', 'Boilhouse', 'Vatworks', 'Reduction Plant', 'Furnace & Sons', 'Processing Concern'];
+const CAMP_NOUNS = ['Diggings', 'Claim', 'Prospector Camp', 'Holes', 'Outfit', 'Dig'];
+const REFINERY_LINES = [
+  'Will refine anything. Has refined several auditors.',
+  'Four generations of crushing things. The current generation is a machine.',
+  'A charity, technically. Nobody knows for whom.',
+  'Pays on time, mostly in coin.',
+  'The sign used to say First Chance.',
+  'Smelters in hooded robes. They hum. The ore hums back.',
+  'Furnaces one through eight are not discussed.',
+  'Guild contractor. Certified, in the sense that someone certified it.',
 ];
+const CAMP_LINES = [
+  'A dozen prospectors, one shovel, endless optimism.',
+  'They will sell you ore. They will not say where they found it.',
+  'Independent miners. Independence is mostly a tax status.',
+  'The camp dog runs the books. The books are excellent.',
+  'Squatters with a permit, or permits with squatters.',
+  'They dig by hand and sell by the ton. Nobody asks why so cheap.',
+];
+
+// Words for themed names: the planet's own theme when it has one, else its motifs.
+function themeWords(planet) {
+  const th = THEMES.find((t) => t.id === planet.themeId);
+  const cap = (w) => String(w || '').replace(/^\w/, (c) => c.toUpperCase());
+  const adj = (th && th.adj) || (planet.motifs || ['Odd']).map(cap);
+  const nouns = (th && th.oreWords) || (planet.motifs || ['Rock']).map(cap);
+  const quips = (th && th.quips) || [];
+  return { adj, nouns, quips };
+}
+
+// Flavor names for the month (AI-written when available, else built from the theme): contractors, camps, the labor company.
+export function flavorOf(planet) {
+  if (planet._flavor) return planet._flavor;
+  const R = rng('flavor:' + planet.id);
+  const W = themeWords(planet);
+  const pick = (a) => a[Math.floor(R() * a.length)];
+  const used = new Set();
+  const uniq = (f) => { let n = f(); for (let k = 0; k < 8 && used.has(n); k++) n = f(); used.add(n); return n; };
+  const ai = planet.flavor || {};
+  const out = {
+    npc: Array.from({ length: 8 }, (_, i) => ai.npc?.[i] || { name: uniq(() => `${pick(W.adj)} ${pick(W.nouns)} ${pick(REFINERY_NOUNS)}`), blurb: pick(REFINERY_LINES) }),
+    camps: Array.from({ length: 8 }, (_, i) => ai.camps?.[i] || { name: uniq(() => `${pick(W.nouns)} ${pick(CAMP_NOUNS)}`), blurb: pick(CAMP_LINES) }),
+    labor: ai.labor || { name: `${pick(W.adj)} ${pick(W.nouns)} Labor Co.`, tagline: W.quips.length ? pick(W.quips) : 'Bodies by the shuttle-load. No refunds.' },
+    worker: ai.worker || 'workers',
+  };
+  Object.defineProperty(planet, '_flavor', { value: out, enumerable: false, configurable: true });
+  return out;
+}
+
+export function flavorPrompt(planet) {
+  return `You name the companies on a newly opened mining planet in a darkly funny, satirical space-extraction game. Planet: ${planet.name}. Theme: ${planet.theme || ''}. Mood: ${planet.mood || ''}. Everything must fit this theme (a candy planet gets candy-themed companies).
+Write: 8 Guild contractor refineries (name max 4 words, blurb max 14 words), 8 independent prospector camps that sell ore cheaply (name max 3 words, blurb max 14 words), one off-planet labor company that ships workers in (name max 4 words, tagline max 12 words), and a plural nickname the company uses for its workers (max 2 words). No real organisations or people.
+Reply with ONLY JSON: {"npc":[{"name":"...","blurb":"..."}],"camps":[{"name":"...","blurb":"..."}],"labor":{"name":"...","tagline":"..."},"worker":"..."}`;
+}
+export function cleanFlavor(raw) {
+  const s = (v, n) => (typeof v === 'string' && v.trim() ? v.trim().replace(/[<>]/g, '').slice(0, n) : '');
+  const list = (a) => (Array.isArray(a) ? a.map((x) => ({ name: s(x && x.name, 40), blurb: s(x && x.blurb, 140) })).filter((x) => x.name) : []);
+  return { npc: list(raw && raw.npc), camps: list(raw && raw.camps), labor: raw && raw.labor && s(raw.labor.name, 40) ? { name: s(raw.labor.name, 40), tagline: s(raw.labor.tagline, 120) } : null, worker: s(raw && raw.worker, 24) || null };
+}
+
+function spreadSpots(planet, seed, n, taken = []) {
+  const R = rng(seed);
+  const out = [];
+  for (let k = 0; k < n; k++) {
+    const a0 = (k / n) * Math.PI * 2 + R() * 0.6;
+    let spot = null;
+    for (let t = 0; t < 160 && !spot; t++) {
+      const rad = 120 + R() * 330, a = a0 + (R() - 0.5) * 0.9;
+      const x = Math.round(500 + Math.cos(a) * rad), y = Math.round(500 + Math.sin(a) * rad);
+      if (spotOK(planet, x, y, out.concat(taken)).ok) spot = { x, y };
+    }
+    if (spot) out.push(spot);
+  }
+  return { out, R };
+}
 
 // Guild contractor refineries: spread over the land, each keeps a cut and has ore tastes. Deterministic per planet.
 export function npcRefineries(planet) {
   if (planet._npc) return planet._npc;
-  const R = rng('npc:' + planet.id);
   const ores = oreInfo(planet);
-  const names = NPC_NAMES.slice().sort(() => R() - 0.5);
-  const out = [];
-  const n = G.npcCount;
-  for (let k = 0; k < n; k++) {
-    // one per sector around the planet, then the best land spot found
-    const a0 = (k / n) * Math.PI * 2 + R() * 0.6;
-    let spot = null;
-    for (let t = 0; t < 120 && !spot; t++) {
-      const rad = 140 + R() * 300, a = a0 + (R() - 0.5) * 0.9;
-      const x = Math.round(500 + Math.cos(a) * rad), y = Math.round(500 + Math.sin(a) * rad);
-      if (spotOK(planet, x, y, out).ok) spot = { x, y };
-    }
-    if (!spot) continue;
-    const [name, blurb] = names[k % names.length];
+  const F = flavorOf(planet);
+  const { out: spots, R } = spreadSpots(planet, 'npc:' + planet.id, G.npcCount);
+  const out = spots.map((spot, k) => {
     const cut = G.npcCut[0] + (G.npcCut[1] - G.npcCut[0]) * R();
     const bias = Object.fromEntries(ores.map((o) => [o.id, r2(0.82 + 0.36 * R())]));
-    out.push({ id: 'npc' + k, kind: 'npc', name, blurb, x: spot.x, y: spot.y, cut: r2(cut), bias });
-  }
+    return { id: 'npc' + k, kind: 'npc', name: F.npc[k].name, blurb: F.npc[k].blurb, x: spot.x, y: spot.y, cut: r2(cut), bias };
+  });
   Object.defineProperty(planet, '_npc', { value: out, enumerable: false, configurable: true });
+  return out;
+}
+
+// Prospector camps: computer-run diggings that sell whatever is under them at the gate. They give haulers and refiners
+// a source of ore without owning a mine. What they dig is the real ground at their spot.
+export function npcCamps(planet) {
+  if (planet._camps) return planet._camps;
+  const F = flavorOf(planet);
+  const ores = oreInfo(planet);
+  const { out: spots } = spreadSpots(planet, 'camps:' + planet.id, G.camps.count, npcRefineries(planet));
+  const out = spots.map((spot, k) => {
+    const gr = groundAt(planet, spot.x, spot.y);
+    const mix = {};
+    for (const o of ores) { const r = Number(gr.richness[o.id]) || 0; if (r > 0 && o.hardness <= 6) mix[o.id] = r * G.mine.share[o.tier]; }
+    const tot = Object.values(mix).reduce((a, b) => a + b, 0) || 1;
+    for (const id of Object.keys(mix)) mix[id] = r2(mix[id] / tot * 1000) / 1000;
+    return { id: 'camp' + k, kind: 'camp', name: F.camps[k].name, blurb: F.camps[k].blurb, x: spot.x, y: spot.y, rate: G.camps.rate, pct: G.camps.gate, mix };
+  });
+  Object.defineProperty(planet, '_camps', { value: out, enumerable: false, configurable: true });
   return out;
 }
 

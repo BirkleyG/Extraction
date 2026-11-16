@@ -1,6 +1,6 @@
 # Mineshaft Capital notes
 
-Current version: **1.0.01** (shown in the game under the logo, top left)
+Current version: **1.1.00** (shown in the game under the logo, top left)
 
 ## How versions work
 
@@ -11,6 +11,9 @@ Current version: **1.0.01** (shown in the game under the logo, top left)
 The bump command updates `game/version.json` (what the game displays) and adds an entry below. Every change that lands should come with a bump.
 
 ## Changelog
+
+### 1.1.00 (2026-11-16)
+- Guild 2: the living operations. Step inside any operation to watch it work (mines, refineries, the hub, air stations, labs, the exchange, and other guilds' sites). Parts instead of expand-and-wait, workers shipped in by the planet's labor company who die often and get replaced automatically, shift orders and Blast, cave-in and strike decisions with standing orders for when you are away, open territory, prospector camps, Guild freight jobs, selling ore at your mine gate, a research skill tree whose branches open with labs in different lands, themed contractors and camps, and following ships across the planet. No late-join bonus. Guild 1 guilds are migrated.
 
 ### 1.0.01 (2026-11-16)
 - Roadmap: Guild 2 planned (living inside views for every operation, workers shuttled in, parts instead of expand-and-wait, open territory, specialize or integrate, regional skill tree, everything themed).

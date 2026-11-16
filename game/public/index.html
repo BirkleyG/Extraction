@@ -26,8 +26,9 @@
   <main class="layout">
     <section class="stage" id="stage">
       <canvas id="map" aria-label="The planet"></canvas>
-      <div class="zoom"><button id="zoomIn" aria-label="Zoom in">+</button><button id="zoomOut" aria-label="Zoom out">−</button><button id="zoomHome" aria-label="Back to your hub">◎</button></div>
-      <div id="hint" class="hint" hidden></div>
+      <canvas id="inside" aria-label="Inside the operation" hidden></canvas>
+      <div class="zoom" id="zoomBox"><button id="zoomIn" aria-label="Zoom in">+</button><button id="zoomOut" aria-label="Zoom out">−</button><button id="zoomHome" aria-label="Back to your hub">◎</button></div>
+      <div id="insideBar" class="insidebar" hidden></div>
       <div id="mode" class="modebar" hidden></div>
       <div id="card" class="card" hidden></div>
       <div id="calls" class="calls"></div>

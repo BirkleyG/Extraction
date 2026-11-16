@@ -196,6 +196,7 @@ export async function startServer(opts = {}) {
   app.get('/api/v3/state', need(async (req, res, me) => res.json(await v3.state(me))));
   app.post('/api/v3/start', need(async (req, res, me) => res.json(await v3.start(me, req.body || {}))));
   app.post('/api/v3/command', need(async (req, res, me) => res.json(await v3.command(me, req.body && req.body.cmd))));
+  app.get('/api/v3/peek', need(async (req, res, me) => res.json(await v3.peek(me, req.query.uid, String(req.query.site || '')))));
   app.get('/api/v3/board', need(async (req, res) => res.json(await v3.board())));
   app.get('/api/v3/feed', need(async (req, res) => res.json(await v3.feed())));
   app.get('/api/v3/bulletin', need(async (req, res) => res.json(await v3.bulletin())));

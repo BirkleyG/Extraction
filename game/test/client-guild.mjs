@@ -1,12 +1,12 @@
-// Browser playtest of the guild game: two players on one planet, server clock fast-forwarded.
+// Browser playtest of the guild game: two players on one planet, server clock fast-forwarded, screenshots of each screen.
 //   node game/test/client-guild.mjs [outdir]
 import { createRequire } from 'node:module';
-const { chromium } = createRequire(import.meta.url)('playwright');
+import fs from 'node:fs';
 import { startServer } from '../server.js';
 import { createStore } from '../store.js';
 
+const { chromium } = createRequire(import.meta.url)('playwright');
 const out = process.argv[2] || '/tmp/guild-shots';
-const fs = await import('node:fs');
 fs.mkdirSync(out, { recursive: true });
 let offset = 0;
 const H = 3_600_000;
@@ -15,8 +15,8 @@ const srv = await startServer({ port: 0, store, ai: { enabled: false, providers:
 const base = `http://127.0.0.1:${srv.port}`;
 const browser = await chromium.launch();
 const errors = [];
-async function player(name) {
-  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1 });
+async function player(name, opts = { viewport: { width: 1280, height: 800 } }) {
+  const ctx = await browser.newContext({ deviceScaleFactor: 1, ...opts });
   const page = await ctx.newPage();
   page.on('pageerror', (e) => errors.push(`${name}: ${e.message}`));
   page.on('console', (m) => { if (m.type() === 'error') errors.push(`${name} console: ${m.text()}`); });
@@ -24,7 +24,6 @@ async function player(name) {
   await page.fill('#jName', name);
   await page.click('form.join button[type=submit]');
   await page.waitForSelector('#gName');
-  await page.screenshot({ path: `${out}/${name}-0-landing.png` });
   await page.click('form.land button[type=submit]');
   await page.waitForFunction(() => window.__guild && window.__guild.S.view);
   await page.waitForTimeout(1200);
@@ -32,83 +31,120 @@ async function player(name) {
 }
 const shot = (p, n) => p.screenshot({ path: `${out}/${n}.png` });
 const G = (p, f, arg) => p.evaluate(f, arg);
-const sweep = async () => { const v3 = srv; await fetch(base + '/healthz'); };
+const refresh = (p) => G(p, () => window.__guild.refresh());
+const money = async (uid, coin) => { const d = await store.getDoc('col3', uid); d.coin = coin; await store.setDoc('col3', uid, d); };
+const idOf = (p) => G(p, () => window.__guild.S.me.id);
+const clickMap = async (p, x, y) => {
+  await G(p, ([x, y]) => window.__guild.map.focus(x, y), [x, y]);
+  await p.waitForTimeout(1500);
+  const s = await G(p, ([x, y]) => { const q = window.__guild.map.toScreen(x, y); const r = document.getElementById('map').getBoundingClientRect(); return { x: r.left + q.x, y: r.top + q.y }; }, [x, y]);
+  await p.mouse.click(s.x, s.y);
+  await p.waitForTimeout(700);
+};
 
 const A = await player('Ada');
 const B = await player('Bo');
-await shot(A, 'Ada-1-start');
+await shot(A, '01-map');
 
-// Ada: click her Landing Pit in the ops list, then Ship ore to... the nearest contractor (clicked on the map)
-await A.click('[data-sel="pit"]');
-await A.waitForTimeout(800);
-await shot(A, 'Ada-2-pit-card');
-await A.click('[data-dest="pit"]');
-await A.waitForTimeout(900);
-const npcPos = await G(A, () => { const { S, map } = window.__guild; const pit = S.view.sites.find((s) => s.id === 'pit'); const n = S.world.npc.slice().sort((a, b) => Math.hypot(a.x - pit.x, a.y - pit.y) - Math.hypot(b.x - pit.x, b.y - pit.y))[0]; map.focus(n.x, n.y); return n; });
+// Ada steps inside her Landing Pit
+await A.click('[data-enter="pit"]');
 await A.waitForTimeout(1500);
-const scr = await G(A, (n) => { const { map } = window.__guild; const p = map.toScreen(n.x, n.y); const r = document.getElementById('map').getBoundingClientRect(); return { x: r.left + p.x, y: r.top + p.y }; }, npcPos);
-await A.mouse.click(scr.x, scr.y);
-await A.waitForTimeout(1200);
-await shot(A, 'Ada-3-route');
+await shot(A, '02-inside-mine');
+// she adds a lift part from inside
+await A.click('[data-part="haul"]');
+await A.waitForTimeout(800);
+// then ships ore to the nearest contractor: Ship ore to… then click it on the map
+await A.click('[data-dest="pit"]');
+await A.waitForTimeout(500);
+const npc = await G(A, () => { const { S } = window.__guild; const pit = S.view.sites.find((s) => s.id === 'pit'); return S.world.npc.slice().sort((a, b) => Math.hypot(a.x - pit.x, a.y - pit.y) - Math.hypot(b.x - pit.x, b.y - pit.y))[0]; });
+await clickMap(A, npc.x, npc.y);
+await shot(A, '03-route');
 console.log('Ada routes', await G(A, () => window.__guild.S.view.routes.map((r) => `${r.from.name}->${r.to.name} ${r.tph.toFixed(1)}t/h ok=${r.ok}`)));
 
-// Ada surveys a spot near home; Bo buys two haulers via the console API path the UI uses
-const spot = await G(A, () => { const { S } = window.__guild; const h = S.guild.landing; return { x: h.x + 60, y: h.y + 20 }; });
-await G(A, async (s) => { await window.__guild.cmd({ type: 'survey', x: s.x, y: s.y }); }, spot);
-await G(B, async () => { const { S, cmd } = window.__guild; const n = S.world.npc.slice().sort((a, b) => Math.hypot(a.x - S.guild.landing.x, a.y - S.guild.landing.y) - Math.hypot(b.x - S.guild.landing.x, b.y - S.guild.landing.y))[0]; await cmd({ type: 'route', from: 'pit', to: { kind: 'npc', id: n.id }, shipId: S.guild.ships[0].id }); await cmd({ type: 'buyShip', cls: 'hauler', routeId: S.guild.routes[0].id }); });
+// the hub: labor office
+await A.click('[data-tab="ops"]');
+await A.click('[data-enter="hub"]');
+await A.waitForTimeout(1500);
+await shot(A, '04-inside-hub');
+await A.click('[data-hire="5"]');
+await A.waitForTimeout(500);
+await A.click('[data-act="exit"]');
 
-// three hours later
+// Ada surveys near home; time passes
+const spot = await G(A, () => { const h = window.__guild.S.guild.landing; return { x: h.x + 70, y: h.y + 25 }; });
+await G(A, async (s) => { await window.__guild.cmd({ type: 'survey', x: s.x, y: s.y }); }, spot);
 offset += 3 * H;
-await G(A, () => window.__guild.refresh());
-await G(B, () => window.__guild.refresh());
-await A.waitForTimeout(1000);
-console.log('Ada after 3h', await G(A, () => { const { S } = window.__guild; return { coin: Math.round(S.view.coin), net: Math.round(S.view.netH), surveys: S.guild.surveys.map((s) => s.status + ':' + (s.report ? s.report.headline : '')) }; }));
-console.log('Bo after 3h', await G(B, () => { const { S } = window.__guild; return { coin: Math.round(S.view.coin), net: Math.round(S.view.netH) }; }));
-// Ada opens the survey report and builds a mine there
-await G(A, (s) => { const { S } = window.__guild; S.sel = { type: 'spot', x: s.x, y: s.y }; window.__guild.map.focus(s.x, s.y, 3); }, spot);
-await G(A, () => window.__guild.refresh());
-await A.waitForTimeout(1200);
-await shot(A, 'Ada-4-survey-card');
-const built = await G(A, async (s) => { const r = await window.__guild.cmd({ type: 'build', kind: 'mine', x: s.x, y: s.y }); return r && r.error; }, spot);
-console.log('build mine error:', built);
-// Bo builds a refinery near home and opens it to other guilds
-const bref = await G(B, async () => { const { S, cmd } = window.__guild; for (let k = 0; k < 20; k++) { const a = k * 0.7; const r = await cmd({ type: 'build', kind: 'refinery', x: S.guild.landing.x + Math.cos(a) * 50, y: S.guild.landing.y + Math.sin(a) * 50 }); if (r && !r.error) return S.view.sites.find((s) => s.kind === 'refinery'); } return null; });
-console.log('Bo refinery', bref && bref.name);
-offset += 5 * H;
-await G(B, async () => { const { S, cmd } = window.__guild; await window.__guild.refresh(); const r = S.view.sites.find((s) => s.kind === 'refinery'); await cmd({ type: 'setRefinery', siteId: r.id, on: true, pct: 0.5 }); });
-await G(A, () => window.__guild.refresh());
+await refresh(A); await refresh(B);
 await A.waitForTimeout(800);
-// Ada can see Bo's refinery as a buyer
-const dir = await G(A, () => window.__guild.S.world.directory);
-console.log('directory seen by Ada', dir.map((d) => `${d.guild}/${d.name} on=${d.on} pct=${d.pct} room=${d.room}`));
-// jump to day 6 for the exchange
-offset += 5 * 24 * H;
-for (const p of [A, B]) await G(p, () => window.__guild.refresh());
-const ex = await G(A, async () => { const { S, cmd } = window.__guild; for (let k = 0; k < 20; k++) { const a = k * 0.9; const r = await cmd({ type: 'build', kind: 'refinery', x: S.guild.landing.x + Math.cos(a) * 45, y: S.guild.landing.y + Math.sin(a) * 45 }); if (r && !r.error) break; } return { coin: S.view.coin, err: null }; });
-offset += 5 * H;
-await G(A, async () => { const { S, cmd } = window.__guild; await window.__guild.refresh(); const ref = S.view.sites.find((s) => s.kind === 'refinery'); for (const r of S.guild.routes) await cmd({ type: 'deleteRoute', routeId: r.id }); await cmd({ type: 'route', from: 'pit', to: { kind: 'site', id: ref.id }, shipId: S.guild.ships[0].id }); S.guild.coin < 50000 && console.log('poor'); });
-console.log('Ada before exchange', await G(A, () => ({ coin: Math.round(window.__guild.S.view.coin), net: Math.round(window.__guild.S.view.netH) })));
-// Give Ada money for the exchange if she is short (owner tools do not exist; we just wait longer)
-offset += 2 * 24 * H;
-await G(A, () => window.__guild.refresh());
-const exr = await G(A, async () => { const r = await window.__guild.cmd({ type: 'buildExchange' }); return r && r.error; });
-console.log('exchange error:', exr, 'coin', await G(A, () => Math.round(window.__guild.S.view.coin)));
-offset += 30 * H;
-await G(A, () => window.__guild.refresh());
-await A.waitForTimeout(1000);
-console.log('offers', await G(A, () => window.__guild.S.view.offers.map((o) => `${o.qty} ${o.oreId} @${o.price}`)));
-await A.click('[data-tab="market"]');
-await A.waitForTimeout(600);
-await shot(A, 'Ada-5-market');
-const talk = await A.$('[data-talk]');
-if (talk) {
-  await talk.click(); await A.waitForTimeout(500); await shot(A, 'Ada-6-talk');
-  await A.click('[data-ask]'); await A.waitForTimeout(800); await shot(A, 'Ada-7-haggle');
-  await A.keyboard.press('Escape');
+console.log('Ada after 3h', await G(A, () => { const { S } = window.__guild; return { coin: Math.round(S.view.coin), net: Math.round(S.view.netH), crew: S.view.labor.crew, pool: S.view.labor.pool, dead: S.view.labor.dead, survey: S.guild.surveys.map((s) => s.status + ':' + (s.report ? s.report.headline : '')) }; }));
+await clickMap(A, spot.x, spot.y);
+await shot(A, '05-survey-card');
+
+// Bo gets some money (test only) and builds a refinery, steps inside it
+await money(await idOf(B), 60_000);
+await refresh(B);
+const bref = await G(B, async () => { const { S, cmd } = window.__guild; for (let k = 0; k < 24; k++) { const a = k * 0.7; const r = await cmd({ type: 'build', kind: 'refinery', x: S.guild.landing.x + Math.cos(a) * 45, y: S.guild.landing.y + Math.sin(a) * 45 }); if (r && !r.error) return S.view.sites.find((s) => s.kind === 'refinery').id; } return null; });
+offset += 1 * H;
+await refresh(B);
+await G(B, async (id) => { const { S, cmd } = window.__guild; await cmd({ type: 'route', from: 'pit', to: { kind: 'site', id }, shipId: S.guild.ships[0].id }); await cmd({ type: 'setRefinery', siteId: id, on: true, pct: 0.5 }); await cmd({ type: 'setGate', siteId: 'pit', on: true, pct: 0.3 }); }, bref);
+offset += 2 * H;
+await refresh(B);
+await B.click(`[data-enter="${bref}"]`);
+await B.waitForTimeout(1500);
+await shot(B, '06-inside-refinery');
+await B.click('[data-act="exit"]');
+
+// research tree
+await A.click('[data-tab="lab"]');
+await A.waitForTimeout(500);
+await shot(A, '07-research-tree');
+await G(A, async () => { await window.__guild.cmd({ type: 'unlock', node: 'c1' }); });
+
+// freight board, take a job
+await A.click('[data-tab="fleet"]');
+await A.waitForTimeout(500);
+await shot(A, '08-fleet-freight');
+await money(await idOf(A), 40_000);
+await refresh(A);
+await G(A, async () => { await window.__guild.cmd({ type: 'buyShip', cls: 'clipper' }); });
+await A.waitForTimeout(300);
+if (await A.$('[data-job]')) { await A.click('[data-job]'); await A.waitForTimeout(800); }
+console.log('Ada jobs', await G(A, () => window.__guild.S.view.routes.filter((r) => r.job).map((r) => `${r.from.name}->${r.to.name} ${r.tph.toFixed(1)} ${r.issue}`)));
+
+// follow a ship
+offset += 0.4 * H;
+await refresh(A);
+const sh = await G(A, () => window.__guild.S.guild.ships.find((s) => s.routeId)?.id);
+if (sh) { await G(A, (id) => { window.__guild.S.follow = id; window.__guild.S.sel = { type: 'ship', id }; }, sh); await A.evaluate(() => window.__guild.map.zoomBy(2)); await A.waitForTimeout(2500); await G(A, () => window.__guild.refresh()); await A.waitForTimeout(1200); await shot(A, '09-follow-ship'); }
+
+// Ada looks inside Bo's operation (watch only)
+await G(A, async () => window.__guild.refresh());
+const boHub = await G(A, () => (window.__guild.S.world.sites || []).find((s) => s.uid !== window.__guild.S.me.id && s.kind === 'mine'));
+if (boHub) { await G(A, (s) => window.__guild.enterInside(s.id, s.uid), boHub); await A.waitForTimeout(1800); await shot(A, '10-peek-rival'); await A.click('[data-act="exit"]'); }
+
+// make something go wrong: blast until a cave-in, then look at the call card
+await money(await idOf(A), 50_000);
+let dec = null;
+for (let k = 0; k < 30 && !dec; k++) {
+  offset += 3.2 * H;
+  await refresh(A);
+  dec = await G(A, async () => { const { S, cmd } = window.__guild; if (!S.view.decisions.length) await cmd({ type: 'blast', siteId: 'pit' }); return S.view.decisions[0] || null; });
 }
+await A.waitForTimeout(800);
+await shot(A, '11-cavein-call');
+console.log('decision', dec ? `${dec.kind} n=${dec.n} cost=${dec.cost}` : 'none');
+if (dec) { await A.click('[data-enter="pit"]').catch(() => {}); await A.click('[data-tab="ops"]').catch(() => {}); await A.click('[data-enter="pit"]').catch(() => {}); await A.waitForTimeout(1500); await shot(A, '12-inside-cavein'); await A.click('[data-decide][data-c="rescue"]').catch(() => {}); }
+
+// a day later, with a chronicle
+offset += 20 * H;
 await A.goto(base + '/'); await A.waitForFunction(() => window.__guild && window.__guild.S.view); await A.waitForTimeout(1500);
-await shot(A, 'Ada-8-later');
-await B.click('[data-tab="guild"]'); await B.waitForTimeout(800); await shot(B, 'Bo-9-guild');
+await shot(A, '13-next-day');
+console.log('Ada next day', await G(A, () => { const { S } = window.__guild; return { coin: Math.round(S.view.coin), net: Math.round(S.view.netH), dead: S.view.labor.dead, log: S.guild.log.slice(-4).map((l) => l.text) }; }));
+
+// phone
+const M = await player('Mo', { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+await M.click('[data-enter="pit"]'); await M.waitForTimeout(1500);
+await shot(M, '14-phone-inside');
 console.log('errors:', errors.length ? errors : 'none');
 await browser.close();
 await srv.close();

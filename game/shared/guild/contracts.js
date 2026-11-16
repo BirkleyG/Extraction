@@ -32,7 +32,9 @@ export function makeOffer(g, world, now, prices, idx) {
   for (const [id, w] of oreW) { if (v <= w) { oreId = id; break; } v -= w; }
   if (!oreId || !prices[oreId]) return null;
   const days = Math.round(between(roll(seed, 'days'), C.days));
-  const myRate = Math.max(g.rate?.[oreId] || 0, 0.4);
+  // size it to what you make that is not already promised to someone else
+  const promised = (g.contracts || []).filter((c) => !c.done && c.oreId === oreId).reduce((a, c) => a + (c.qty - c.delivered) / Math.max(1, (c.due - now) / 3_600_000), 0);
+  const myRate = Math.max((g.rate?.[oreId] || 0) - promised, 0.4);
   const want = bd[oreId] || 1;
   const hours = days * 24;
   let qty = myRate * hours * between(roll(seed, 'qty'), [0.25, 0.9]);

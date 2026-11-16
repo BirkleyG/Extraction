@@ -38,7 +38,7 @@ Planning rules:
 
 > **Playtest:** Is the first check-in clear without reading anything? Does a 5-minute player stay competitive with an hour-a-day player? Do players route to each other's refineries? Does anyone haggle? Does a mythic find feel like a jackpot? Is it ever obvious what the best move is (if so, change it)?
 
-## Guild 2: the living operations (next)
+## Guild 2: the living operations (built, v1.1)
 
 *Zoom out to plan, zoom in to play. The map is the strategy layer; every operation is a little world you can open, watch and tune.*
 
@@ -80,6 +80,8 @@ Also in this phase
 - No late-join bonus: join next month.
 - Balance pass across the whole spending mix (parts, workers, ships, buildings, research) with the pacing bot, so no single purchase dominates the way shafts did in v0.5.
 - Buyer conversations voiced by the AI (within the daily limits), with the engine still deciding the deal; market intel as discovery (price history, "what if I flood it").
+
+Built in v1.1: inside views for every operation (and watching rivals'), parts instead of expand-and-wait, workers shipped in by a themed labor company with an auto-replacing labor pool, shift orders and Blast, cave-in and strike decisions with standing orders for offline play, open territory, prospector camps, Guild freight jobs, mine gates, a regional skill tree, themed contractors and camps, ship following, no late-join bonus, Guild 1 guilds migrated. Not yet: AI-voiced buyer conversations, "what if I flood it" intel (price history and market share are in, behind Market Analysts).
 
 > **Playtest:** Do players open their operations just to watch? Do they notice a full pile without being told? Does anyone specialize (all shipping, all refining) and still compete with an integrated guild? Does a 5-minute player still keep up? Is any one purchase obviously the best?
 

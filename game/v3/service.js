@@ -32,21 +32,29 @@ export function createV3({ store, ai, currentModel, broadcast, v2, now: clock = 
     return parties;
   }
 
+  // Themed names for the month (contractors, prospector camps, the labor company). One AI call, or the theme's words.
+  async function buildFlavor(planet) {
+    const model = ai && await currentModel();
+    if (!model) return null;
+    try { return GG.cleanFlavor(await ai.json(model, GG.flavorPrompt(planet), 'quick')); }
+    catch (e) { console.error('Flavor AI failed:', e.message); return null; }
+  }
+
   // The engine world: planet + parties + this game's market state.
   async function getWorld() {
     const w2 = await v2.getWorld();
-    if (cache && cache.month === w2.month && cache.planet === w2.planet) return cache;
+    if (cache && cache.month === w2.month && cache.planetId === w2.planet.id) return cache;
     let w3 = await store.getDoc('world3', 'current');
     if (!w3 || w3.month !== w2.month || w3.planetId !== w2.planet.id) {
       if (w3 && w3.month !== w2.month) await recordHall(w3);
-      w3 = { v: 3, month: w2.month, planetId: w2.planet.id, flow: {}, changes: [], directory: [], sites: [], created: clock() };
+      w3 = { v: 3, month: w2.month, planetId: w2.planet.id, flow: {}, changes: [], directory: [], gates: [], sites: [], flavor: await buildFlavor(w2.planet), created: clock() };
       await store.setDoc('buyers3', 'current', { month: w2.month, parties: await buildDossiers(w2) });
       await store.setDoc('world3', 'current', w3);
       await addFeed(`The Maker Guild opened ${w2.planet.name} for extraction. ${w2.planet.tagline || ''}`.trim(), 'world', null);
     }
     let buyers = await store.getDoc('buyers3', 'current');
     if (!buyers || buyers.month !== w2.month) { buyers = { month: w2.month, parties: await buildDossiers(w2) }; await store.setDoc('buyers3', 'current', buyers); }
-    cache = { ...w3, planet: w2.planet, startedAt: w2.startedAt, endsAt: w2.endsAt, parties: buyers.parties };
+    cache = { ...w3, planet: w3.flavor ? { ...w2.planet, flavor: w3.flavor } : w2.planet, startedAt: w2.startedAt, endsAt: w2.endsAt, parties: buyers.parties };
     return cache;
   }
   async function saveWorld(w) {
@@ -55,9 +63,10 @@ export function createV3({ store, ai, currentModel, broadcast, v2, now: clock = 
     await store.setDoc('world3', 'current', rest);
     broadcast('world3', 'current', publicWorldBits(w));
   }
-  const publicWorldBits = (w) => ({ month: w.month, changes: w.changes || [], directory: w.directory || [], sites: w.sites || [], nextEventAt: w.nextEventAt || null });
+  const publicWorldBits = (w) => ({ month: w.month, changes: w.changes || [], directory: w.directory || [], gates: w.gates || [], sites: w.sites || [], nextEventAt: w.nextEventAt || null });
   function publicWorld(w) {
-    return { ...publicWorldBits(w), planet: w.planet, startedAt: w.startedAt, endsAt: w.endsAt, npc: GG.npcRefineries(w.planet).map(({ bias, cut, ...n }) => n) };
+    const F = GG.flavorOf(w.planet);
+    return { ...publicWorldBits(w), planet: w.planet, startedAt: w.startedAt, endsAt: w.endsAt, npc: GG.npcRefineries(w.planet).map(({ bias, cut, ...n }) => n), camps: GG.npcCamps(w.planet), labor: F.labor, worker: F.worker };
   }
 
   async function addFeed(text, kind, by, t = clock()) {
@@ -88,7 +97,8 @@ export function createV3({ store, ai, currentModel, broadcast, v2, now: clock = 
   /* ---------- guilds ---------- */
 
   async function loadGuild(uid, world) {
-    const g = await store.getDoc('col3', uid);
+    let g = await store.getDoc('col3', uid);
+    if (g && g.v === 1 && g.planetId === world.planet.id) { g = GG.migrate(g, world, clock()); await store.setDoc('col3', uid, g); }
     if (!g || g.v !== GG.GUILD_VERSION || g.planetId !== world.planet.id) return null;
     return g;
   }
@@ -108,10 +118,17 @@ export function createV3({ store, ai, currentModel, broadcast, v2, now: clock = 
   function publish(world, g, player) {
     const v = GG.view(g, world, g.t);
     const color = g.species && g.species.color;
-    world.sites = (world.sites || []).filter((s) => s.uid !== g.uid).concat(g.sites.map((s) => ({ uid: g.uid, guild: g.name, player, color, id: s.id, kind: s.kind, name: s.name, x: s.x, y: s.y, level: s.level })));
+    world.sites = (world.sites || []).filter((s) => s.uid !== g.uid).concat(g.sites.filter((s) => s.kind !== 'exchange').map((s) => ({ uid: g.uid, guild: g.name, player, color, id: s.id, kind: s.kind, name: s.name, x: s.x, y: s.y, level: s.level })));
     world.directory = (world.directory || []).filter((d) => d.uid !== g.uid).concat(v.sites.filter((s) => s.kind === 'refinery' && s.level >= 1).map((s) => ({
       uid: g.uid, guild: g.name, player, color, siteId: s.id, name: s.name, x: s.x, y: s.y, on: !!(s.buy && s.buy.on) && g.coin > 0, pct: s.buy ? s.buy.pct : G.refinery.buyPct, room: Math.round(s.room * 10) / 10,
     })));
+    // mines selling at their gate: what they dig beyond what their own ships take
+    world.gates = (world.gates || []).filter((d) => d.uid !== g.uid).concat(v.sites.filter((s) => s.kind === 'mine' && s.level >= 1 && s.gate && s.gate.on).map((s) => {
+      const tot = s.tph || 0;
+      const mix = tot > 0 ? Object.fromEntries(Object.entries(s.rates).map(([id, r]) => [id, Math.round((r / tot) * 1000) / 1000])) : {};
+      const spare = Math.max(0, tot - (s.shipping || 0)) + (s.stockTot > 20 ? 10 : 0);
+      return { uid: g.uid, guild: g.name, player, color, siteId: s.id, name: s.name, x: s.x, y: s.y, on: spare > 0.1, pct: s.gate.pct, rate: Math.round(spare * 10) / 10, mix };
+    }));
   }
 
   // Advance a guild (and maybe apply a command), fold its sales into the market, hand ore to other guilds, save.
@@ -125,13 +142,14 @@ export function createV3({ store, ai, currentModel, broadcast, v2, now: clock = 
       if (tr.uid === ng.uid) continue;
       const other = await store.getDoc('col3', tr.uid);
       if (!other || other.planetId !== world.planet.id) continue;
-      other.inbox = (other.inbox || []).concat([{ siteId: tr.siteId, oreId: tr.oreId, amount: tr.amount, coin: tr.coin, from: ng.uid }]).slice(-200);
+      other.inbox = (other.inbox || []).concat([{ kind: tr.kind || 'ore', siteId: tr.siteId, oreId: tr.oreId, amount: tr.amount, coin: tr.coin, from: ng.uid }]).slice(-200);
       other.received = (other.received || 0) + tr.coin;
       await store.setDoc('col3', tr.uid, other);
     }
-    const before = JSON.stringify([(world.sites || []).filter((s) => s.uid === ng.uid), (world.directory || []).filter((d) => d.uid === ng.uid)]);
+    const mineOf = (w) => JSON.stringify([(w.sites || []).filter((s) => s.uid === ng.uid), (w.directory || []).filter((d) => d.uid === ng.uid), (w.gates || []).filter((d) => d.uid === ng.uid)]);
+    const before = mineOf(world);
     publish(world, ng, player);
-    if (JSON.stringify([(world.sites || []).filter((s) => s.uid === ng.uid), (world.directory || []).filter((d) => d.uid === ng.uid)]) !== before) worldDirty = true;
+    if (mineOf(world) !== before) worldDirty = true;
     if (worldDirty) await saveWorld(world);
     await store.setDoc('col3', ng.uid, ng);
     const s = summary(ng, world, player);
@@ -153,10 +171,9 @@ export function createV3({ store, ai, currentModel, broadcast, v2, now: clock = 
       me: { id: me.id, name: me.name, owner: !!me.owner },
       guild: g ? publicGuild(g) : null, view: g ? GG.view(g, world, t) : null,
       world: publicWorld(world), serverNow: t,
-      grant: g ? null : grantFor(world, t), ...extra,
+      ...extra,
     };
   }
-  const grantFor = (world, t) => Math.round(G.grantPerDay * Math.max(0, GG.dayOf(world, t) - 1));
 
   // A fair landing spot: as good as anyone's, clear of other guilds, within reach of a Guild contractor refinery.
   function landingSpot(world, uid) {
@@ -202,7 +219,7 @@ export function createV3({ store, ai, currentModel, broadcast, v2, now: clock = 
       const sp = body.species && typeof body.species === 'object' ? body.species : {};
       const lib = await import('../shared/species/index.js').catch(() => null);
       const look = lib ? lib.cleanSpecies({ ...sp, name: sp.name || me.name + "'s kin" }) : { name: String(sp.name || me.name + "'s kin").slice(0, 28), color: /^#[0-9a-f]{6}$/i.test(sp.color || '') ? sp.color : '#ff8a3d' };
-      const g = GG.newGuild({ uid: me.id, name: String(body.name || look.name + ' Extraction Guild').slice(0, 28), species: look, world, x: spot.x, y: spot.y, now: t, grant: grantFor(world, t) });
+      const g = GG.newGuild({ uid: me.id, name: String(body.name || look.name + ' Extraction Guild').slice(0, 28), species: look, world, x: spot.x, y: spot.y, now: t });
       const r = await settle(g, world, t, null, me.name);
       await addFeed(`${me.name} landed in ${g.landing.region} as the ${look.name}.`, 'land', me.id, t);
       return stateFor(me, r.guild, world, t, { justLanded: true });
@@ -216,6 +233,18 @@ export function createV3({ store, ai, currentModel, broadcast, v2, now: clock = 
       if (!cmd || typeof cmd.type !== 'string') throw fail(400, 'invalid_argument', 'Bad command');
       const r = await settle(g, world, t, cmd, me.name);
       return { ...(await stateFor(me, r.guild, world, t)), events: (r.events || []).filter((e) => e.type === 'haggle' || e.at >= t - 60_000), error: r.error || null };
+    }),
+
+    // Look inside another guild's operation (watch only).
+    peek: (me, uid, siteId) => queue(async () => {
+      const world = await getWorld();
+      const g = await loadGuild(String(uid || ''), world);
+      if (!g) throw fail(404, 'not_found', 'No such guild on this planet');
+      const v = GG.view(g, world, g.t);
+      const s = v.sites.find((x) => x.id === siteId && x.kind !== 'exchange');
+      if (!s) throw fail(404, 'not_found', 'No such operation');
+      const { stock, input, buy, gate, ...pub } = s;
+      return { guild: { name: g.name, species: g.species, uid: g.uid }, site: { ...pub, stockTot: s.stockTot, inputTot: s.inputTot }, serverNow: clock() };
     }),
 
     board: () => queue(async () => {
