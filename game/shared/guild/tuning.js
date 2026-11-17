@@ -1,125 +1,135 @@
 // Guild game balance. All numbers live here. Rates are per hour, distances in map units (the planet is 1000 x 1000),
 // times in hours unless named *Ms. Tune with `node game/test/guild-pacing.mjs`.
+//
+// Guild 2: operations are made of parts you buy and watch (no waiting on upgrades: only travel takes time),
+// staffed by workers you ship in. Territory is open; founding far from your hubs costs more and takes longer.
 
 export const G = {
   startCoin: 6_000,
   stepMs: 60_000,                 // advance() integrates whole minutes on the absolute minute grid
   maxSites: 40,
 
-  // The command hub: airstrip, command center and the landing pit (a level-1 mine at the same spot).
-  hub: {
-    radius: [0, 170, 210, 260],   // claim radius by hub level: you may build within this of a hub or air station
-    hangar: [0, 8, 16, 30],        // ships you can own (air stations add more)
-    crews: [0, 2, 3, 4],          // constructions running at once
-    rp: [0, 3, 5, 8],             // research points per hour from the command center
-    upkeep: [0, 30, 60, 110],
-    cost: [0, 0, 22_000, 90_000], // upgrade to this level
-    hours: [0, 0, 6, 12],
-  },
-
-  // Operations you can found on the map.
+  // Founding an operation: crews and supplies fly in from your nearest hub or air station.
   build: {
-    mine:     { cost: 4_000,  hours: 3, upkeep: 15, label: 'Mine' },
-    refinery: { cost: 9_000,  hours: 4, upkeep: 45, label: 'Refinery' },
-    air:      { cost: 5_000,  hours: 2, upkeep: 25, label: 'Air station' },
-    lab:      { cost: 7_000,  hours: 3, upkeep: 35, label: 'Research hub' },
+    mine:     { cost: 3_500,  upkeep: 10, label: 'Mine' },
+    refinery: { cost: 8_000,  upkeep: 25, label: 'Refinery' },
+    air:      { cost: 5_000,  upkeep: 15, label: 'Air station' },
+    lab:      { cost: 6_000,  upkeep: 15, label: 'Research hub' },
   },
-  siteGap: 24,                    // between your own sites
-  rivalGap: 44,                   // from other guilds' sites
+  far: { free: 40, per: 220, speed: 260, setup: 0.25 }, // cost x (1 + (d - free)/per); arrival in setup + d/speed hours
+  siteGap: 18,                    // between your own operations
+  rivalGap: 30,                   // from other guilds' operations
+  hubUpkeep: 20,
 
-  // Mines: macro levels. Output per hour = cap x ore share x richness x focus x intensity x tech / soil.
+  // Parts. Each has a starting level, a max, a price ladder (base x growth^level owned) and crew per level.
+  parts: {
+    hub: {
+      bunks:   { label: 'Bunks', start: 1, max: 10, base: 900, growth: 1.7, text: 'Room for spare workers at the hub.' },
+      shuttle: { label: 'Shuttle pad', start: 1, max: 8, base: 1_400, growth: 1.8, text: 'Bigger, faster worker shuttles.' },
+      hangar:  { label: 'Hangar', start: 1, max: 10, base: 1_600, growth: 1.65, text: 'Room for more ships.' },
+      office:  { label: 'Office', start: 1, max: 8, base: 2_000, growth: 1.9, crew: 2, text: 'Clerks who produce research (and memos).' },
+      radar:   { label: 'Drone radar', start: 0, max: 4, base: 2_500, growth: 2.2, text: 'One more survey drone per level.' },
+    },
+    mine: {
+      shaft:  { label: 'Shafts', start: 1, max: 8, base: 2_600, growth: 1.75, crew: 6, text: 'Each shaft digs another face. Needs a crew.' },
+      rig:    { label: 'Drill rigs', start: 0, max: 12, base: 1_500, growth: 1.55, text: 'Every crew digs faster.' },
+      haul:   { label: 'Carts & lift', start: 1, max: 14, base: 1_000, growth: 1.5, text: 'How much rock comes up the lift.' },
+      yard:   { label: 'Ore yard', start: 1, max: 10, base: 700, growth: 1.6, text: 'Room for ore waiting for ships.' },
+      safety: { label: 'Lights & supports', start: 0, max: 8, base: 900, growth: 1.7, text: 'Fewer accidents, fewer funerals.' },
+      bunk:   { label: 'Bunkhouse', start: 0, max: 8, base: 800, growth: 1.6, text: 'Happier miners. Slightly.' },
+    },
+    refinery: {
+      pad:      { label: 'Landing pads', start: 1, max: 6, base: 1_600, growth: 1.8, text: 'Ships unload faster.' },
+      silo:     { label: 'Silos', start: 1, max: 10, base: 900, growth: 1.6, text: 'Raw ore waiting to be refined.' },
+      belt:     { label: 'Conveyors', start: 1, max: 14, base: 1_100, growth: 1.5, text: 'How fast ore reaches the vats.' },
+      vat:      { label: 'Vats', start: 1, max: 10, base: 3_200, growth: 1.7, crew: 4, text: 'Each vat refines more. Needs a crew.' },
+      purifier: { label: 'Purifier', start: 0, max: 6, base: 4_000, growth: 2, text: 'Better yield from the same ore.' },
+    },
+    air: {
+      hangar: { label: 'Hangars', start: 1, max: 8, base: 1_400, growth: 1.7, text: 'Room for more ships.' },
+      depot:  { label: 'Fuel depot', start: 1, max: 6, base: 1_200, growth: 1.8, crew: 2, text: 'Faster refuelling on long routes.' },
+    },
+    lab: {
+      desk:  { label: 'Research desks', start: 1, max: 10, base: 1_800, growth: 1.65, crew: 3, text: 'More scientists, more research.' },
+      gear:  { label: 'Equipment', start: 0, max: 8, base: 2_400, growth: 1.85, text: 'Every desk thinks faster.' },
+    },
+    exchange: {
+      docks:  { label: 'Cargo docks', start: 1, max: 6, base: 20_000, growth: 1.9, text: 'Store more refined goods in orbit.' },
+      floor:  { label: 'Trading floor', start: 1, max: 6, base: 18_000, growth: 1.9, crew: 4, text: 'Buyers call more often.' },
+      lounge: { label: 'VIP lounge', start: 0, max: 5, base: 25_000, growth: 2, text: 'Buyers open with better offers.' },
+      desk:   { label: 'Spot desk', start: 0, max: 5, base: 15_000, growth: 1.9, text: 'Better prices on the spot market.' },
+    },
+  },
+  // What the parts do.
+  hub: { bunks: 20, bunksPer: 20, shuttleSize: 10, shuttlePer: 10, shuttleHours: 0.6, shuttleFaster: 0.85, hangar: 6, hangarPer: 3, rpPerClerk: 1.2, drones: 1 },
   mine: {
-    names: ['', 'Pit', 'Works', 'Complex', 'Megaworks', 'Planetary Wound'],
-    cap: [0, 40, 90, 200, 420, 860],            // tonnes of rock an hour
-    up: [0, 0, 6_000, 16_000, 42_000, 110_000], // cost to reach this level
-    hours: [0, 0, 3, 5, 8, 12],
-    upkeep: [0, 15, 32, 70, 150, 320],
-    store: [0, 160, 320, 700, 1_400, 2_800],    // stockpile cap (t); production stops when it is full
+    perShaft: 30,                 // t/h of rock per fully staffed shaft
+    rig: 0.22,                    // +22% dig speed per rig level
+    haul: 38, haulGrowth: 1.36,   // t/h the lift can raise at level 1, x growth per level
+    yard: 160, yardGrowth: 1.6,
+    safety: 0.75,                 // incidents and deaths x0.75 per level
+    bunk: 6,                      // +6 morale target per level
     share: { common: 1, rare: 0.12, mythic: 0.025 }, // how much of the rock is that ore at richness 1
     focus: 2.5, unfocused: 0.6,
-    intensity: {
-      gentle:   { out: 0.6, upkeep: 0.8, risk: 0.3, label: 'Gentle' },
-      standard: { out: 1,   upkeep: 1,   risk: 1,   label: 'Standard' },
-      brutal:   { out: 1.6, upkeep: 1.4, risk: 4,   label: 'Brutal' },
-    },
-    reserve: { rare: 2_400, mythic: 420 },  // tonnes in the ground at richness 1 x vein size; commons never run out
-    taper: 0.2,                              // below 20% left output tapers linearly to zero
-    drill: 4,                                // starting drill: cuts ores up to this hardness (tech raises it)
+    reserve: { rare: 4_500, mythic: 700 },  // tonnes in the ground at richness 1 x vein size; commons never run out
+    taper: 0.2, scraps: 0.15,          // a dug-out vein still gives 15% (leftovers in the walls)
+    drill: 4,                     // starting drill: cuts ores up to this hardness
+    blast: { hours: 1.2, cooldown: 3, cave: 0.3, morale: -10 }, // a blast adds this many hours of digging at once
   },
-  incident: { perHour: 0.0045, halt: [2, 8], comp: 260 }, // per mine level, x intensity risk; compensation x level
-
   refinery: {
-    thru: [0, 70, 160, 360, 800],   // raw t/hr
-    up: [0, 0, 14_000, 38_000, 95_000],
-    hours: [0, 0, 4, 6, 10],
-    upkeep: [0, 45, 90, 180, 360],
-    store: [0, 500, 1_000, 2_200, 4_500], // raw input buffer
-    yield: 0.9,
-    buyPct: 0.4,                    // default price offered to other guilds, share of the galactic price
-    buyMin: 0.15, buyMax: 0.9,
+    pad: 90, silo: 320, siloGrowth: 1.7, belt: 55, beltGrowth: 1.35, vat: 42, purifier: 0.04,
+    yield: 0.9, buyPct: 0.4, buyMin: 0.15, buyMax: 0.9,
   },
-  air: { radius: 140, hangar: 6 },
-  lab: { rp: [0, 12, 26, 55], up: [0, 0, 16_000, 45_000], hours: [0, 0, 4, 8], upkeep: [0, 35, 70, 140] },
-
+  air: { hangar: 3, depot: 0.7 },
+  lab: { rpPerDesk: 5, gear: 0.2 },
   exchange: {
-    day: 5, cost: 45_000, hours: 8, upkeep: 160,
-    up: [0, 0, 60_000, 160_000], upHours: [0, 0, 8, 12],
-    store: [0, 3_000, 8_000, 20_000],
-    offerEvery: [0, 5, 3.5, 2.5],   // hours between buyer approaches (mean)
+    day: 5, cost: 45_000, hours: 2, upkeep: 120,
+    store: 3_000, storeGrowth: 1.7,
+    offerEvery: 5, floorFaster: 0.8, lounge: 0.03, spot: 0.82, deskPer: 0.02,
     maxOpen: 3, offerLife: 14,
-    spot: 0.82,                     // spot sales at the exchange: share of the galactic price
   },
-  guildExchange: 0.55,              // without your own exchange, refined goods go to the Guild at this share
-  npcCut: [0.6, 0.7],               // contractor refineries keep this share; they pay the rest for raw ore
+  guildExchange: 0.55,
+  npcCut: [0.6, 0.7],
   npcCount: 5,
+
+  // Shift orders: output, morale drift per hour, death rate multiplier. Refineries use the same orders.
+  shifts: {
+    relaxed:  { out: 0.75, morale: 8, deaths: 0.4, label: 'Relaxed', text: 'Long lunches. Morale climbs.' },
+    normal:   { out: 1, morale: 0, deaths: 1, label: 'Normal', text: 'Business as usual.' },
+    overtime: { out: 1.3, morale: -6, deaths: 2.2, label: 'Overtime', text: 'More now, tired crews later.' },
+  },
+  morale: { base: 60, drift: 4, outLo: 0.8, outHi: 1.15, strike: 15 }, // drift toward target per hour on Normal
+
+  // Workers: shipped in from off-planet, they die, the labor pool replaces them.
+  labor: { price: 80, wage: 1.8, deathRate: 0.004, startPool: 4, reserve: 6, floor: 400, credit: 3_000 },
+  incident: { perHour: 0.005, trapped: [3, 9], rescue: 70, halt: [2, 6], expire: 1 }, // per shaft per hour; rescue cost per trapped worker
+
+  // Prospector camps (computer-run mines) sell ore at their gate; Guild freight jobs pay haulers per tonne.
+  camps: { count: 6, rate: 45, gate: 0.22 },
+  jobs: { open: 4, every: 4, qty: [80, 400], pay: 0.12, perUnit: 0.03, hours: [18, 48] },
+  gate: { pct: 0.25, min: 0.1, max: 0.6 },
 
   ships: {
     hauler:    { cap: 40,  speed: 220, range: 320, cost: 1_200,  upkeep: 10, label: 'Hauler' },
     clipper:   { cap: 16,  speed: 520, range: 460, cost: 3_800,  upkeep: 20, label: 'Clipper' },
-    leviathan: { cap: 260, speed: 130, range: 210, cost: 22_000, upkeep: 60, label: 'Leviathan', tech: 'heavyLift' },
+    leviathan: { cap: 260, speed: 130, range: 210, cost: 22_000, upkeep: 60, label: 'Leviathan', tech: 'o4' },
   },
-  shipGrowth: 1.12,                 // each ship of a class costs a bit more
-  dockHours: 0.35,                  // loading + unloading per round trip
-  refuelHours: 0.12,                // per air-station hop
+  shipGrowth: 1.12,
+  dockHours: 0.35,
+  refuelHours: 0.12,
 
-  drone: { speed: 300, scanHours: 0.5, cost: 150, perUnit: 0.6, radius: 0 },
+  drone: { speed: 300, scanHours: 0.5, cost: 150, perUnit: 0.6 },
 
-  // Research: costs in RP.
-  tech: {
-    deepBore1:   { rp: 60,  track: 'Extraction', label: 'Deep Bores', text: 'Mines dig 25% more.', mine: 0.25 },
-    hardDrill:   { rp: 90,  track: 'Extraction', label: 'Hardened Drills', text: 'Cut ore up to hardness 6.', drill: 6 },
-    deepBore2:   { rp: 220, track: 'Extraction', label: 'Deeper Bores', text: 'Mines dig another 25% more.', mine: 0.25, needs: 'deepBore1' },
-    diamondDrill:{ rp: 300, track: 'Extraction', label: 'Diamond Drills', text: 'Cut ore up to hardness 8.', drill: 8, needs: 'hardDrill' },
-    mythicDrill: { rp: 700, track: 'Extraction', label: 'Mythic Drill', text: 'Cut anything, including mythic ore (hardness 10).', drill: 10, needs: 'diamondDrill' },
-    holds:       { rp: 70,  track: 'Logistics', label: 'Expanded Holds', text: 'Every ship carries 30% more.', hold: 0.3 },
-    burners:     { rp: 120, track: 'Logistics', label: 'Afterburners', text: 'Ships fly 25% faster.', speed: 0.25 },
-    tanks:       { rp: 150, track: 'Logistics', label: 'Long-Range Tanks', text: 'Ships fly 35% farther between stops.', range: 0.35 },
-    corridors:   { rp: 200, track: 'Logistics', label: 'Air Corridors', text: 'Claim radius of hubs and air stations +30%.', claim: 0.3, needs: 'tanks' },
-    heavyLift:   { rp: 360, track: 'Logistics', label: 'Heavy Lift', text: 'Unlocks the Leviathan freighter.', needs: 'holds' },
-    catalysts:   { rp: 110, track: 'Refining', label: 'Better Catalysts', text: 'Refinery yield +15%.', yield: 0.15 },
-    vats:        { rp: 160, track: 'Refining', label: 'Bigger Vats', text: 'Refinery throughput +40%.', thru: 0.4 },
-    alchemy:     { rp: 420, track: 'Refining', label: 'Questionable Alchemy', text: 'Refinery yield another +15%.', yield: 0.15, needs: 'catalysts' },
-    sensors:     { rp: 60,  track: 'Survey', label: 'Sharper Sensors', text: 'Survey ranges get much narrower.', precision: 1 },
-    swarm:       { rp: 140, track: 'Survey', label: 'Drone Swarm', text: 'Two more survey drones.', drones: 2 },
-    deepScan:    { rp: 260, track: 'Survey', label: 'Deep Scan', text: 'Surveys read exact richness and how much ore is in the ground.', precision: 2, needs: 'sensors' },
-    analysts:    { rp: 90,  track: 'Commerce', label: 'Market Analysts', text: 'See galactic price trends and your share of each market.' },
-    silver:      { rp: 180, track: 'Commerce', label: 'Silver Tongue', text: 'Read buyers better: you sense how far they will go.' },
-    waivers:     { rp: 100, track: 'Safety', label: 'Liability Waivers', text: 'Incident compensation -60%. The families sign in triplicate.', comp: 0.6 },
-    safety:      { rp: 240, track: 'Safety', label: 'Actual Safety', text: 'Half as many incidents. Morale is confused.', risk: 0.5, needs: 'waivers' },
-  },
-
-  // The galactic market (market.js). Refined units; p = galactic price (coin per refined unit).
+  // Galactic market (market.js).
   market: {
-    priceScale: 10,                            // galactic price at baseline = ore base value x this
-    target: { common: 90_000, rare: 150, mythic: 5 },    // galactic demand at baseline (units/hr)
-    share: { common: 0.012, rare: 0.14, mythic: 0.5 },     // planet share at the expected planet supply
-    eta: { common: 3, rare: 0.9, mythic: 0.45 },            // outside supply elasticity
+    priceScale: 10,
+    target: { common: 90_000, rare: 150, mythic: 5 },
+    share: { common: 0.012, rare: 0.14, mythic: 0.5 },
+    eta: { common: 3, rare: 0.9, mythic: 0.45 },
     sigma0: 0.5, sigma1: 1.3, matShare: 0.3,
-    flowHalfLife: 6,                           // hours: planet supply is an EMA of recent sales
-    lo: 0.04, hi: 25,                          // price search bounds, x baseline
+    flowHalfLife: 6,
+    lo: 0.04, hi: 25,
   },
-
-  // Contracts (contracts.js).
   contract: { days: [2, 5], open: [0.78, 0.92], over: [1.04, 1.28], penalty: 0.35, sizeHours: [10, 30] },
 
   // Prestige.
@@ -132,5 +142,4 @@ export const G = {
     spectacle:  { per: 0.1,  cost: 4, growth: 2.2, label: 'Spectacle', text: 'Bigger next nuke' },
   },
   evoMax: 30,
-  grantPerDay: 4_000,               // late joiners get startCoin + this per day already gone
 };

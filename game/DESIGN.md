@@ -31,22 +31,28 @@ canBuildAt(guild, world, kind, x, y) -> null | reason      surveyCost(guild, x, 
 ```
 `world` = `{ month, planet, parties, flow: { oreId: { q, t } }, changes, startedAt, endsAt, directory: [refineries buying ore], sites: [every guild's operations] }`.
 
-**Guild (plain JSON):** `{ v, uid, name, species, planetId, seed, t, born, coin, earned, runEarned, monthEarned, grant, sp, evo, nukes, lastNuke, landing,
-sites: [{ id, kind: 'hub'|'mine'|'refinery'|'air'|'lab', name, x, y, level, build: null|{ to, at, doneAt }, ...kind fields }], ships: [{ id, cls, name, routeId }],
-routes: [{ id, from (mine id), to: { kind: 'npc'|'site'|'rival', id, uid? }, cargo: 'all'|oreId }], exchange: null|{ level, build, stock, spot },
-tech: { id: time }, rp, surveys: [{ id, x, y, status, at, doneAt, precision, report }], offers, contracts, buyers: { id: { met, deals, defaults, walked } },
-rate (refined units/hr per ore), ema: { in, out }, ledger: { in, out }, log (last 80 chronicle lines), inbox (ore delivered by other guilds), stats }`.
-Mine fields: `intensity, focus, stock, dug, ground (hidden truth), haltUntil`. Refinery fields: `input, buy: { on, pct }`.
+**Guild 2 (v2 guild, since v1.1): parts, workers, open land.** Every operation is a site made of **parts** (`G.parts[kind]`: start level, max, price ladder, crew per level). Parts install at once for coin; only travel takes time (founding: `foundQuote` = cost x (1 + (distance to your nearest hub or air station - 40)/220), arrival in 0.25h + distance/260). Territory is open: only spacing rules (18 from your own sites, 30 from rivals, contractors and camps).
+- **Mines:** dig = shafts x 30 x (1 + 0.22 rigs) x staffing x morale x shift x tech / soil; rock = min(dig, lift); split by ore share x richness x focus. Yard caps the pile. Rare veins taper below 20% and leave 15% scraps forever. **Shift orders** (relaxed / normal / overtime) move output, morale and deaths; **Blast** adds 1.2 h of digging at once, 3 h cooldown, may cave in.
+- **Refineries:** intake = pads x 90, silo storage, feed = belts, vats x 42 x staffing; throughput = min(feed, vats); yield 0.9 + purifier + tech.
+- **Workers:** bought from the month's labor company (themed), shuttled to the hub (`labor.inbound`), auto-assigned to operations by priority, paid wages, and they die: a steady deterministic rate per worker-hour (x shift x safety parts x tech) plus incidents. The labor pool auto-replaces the dead (on short company credit when broke) and keeps `reserve` spares.
+- **Decisions:** cave-ins (rescue for coin, or seal and lose the trapped crew) and strikes (morale < 15: pay a bonus, or wait 4 h) halt the site until settled; after 1 h the guild's standing `policy` decides (offline play is safe).
+- **Research** is a skill tree (`tree.js`): Management from the hub; Deep Earth, Sky Lanes, Wet Works, Cold Lab and Weird Science each need a research hub in that kind of land (`TERRAIN_BRANCH`).
+- **Specialize or integrate:** prospector camps (`npcCamps`, themed, sell their real ground at 22% of the galactic price), Guild freight jobs (`g.jobs`: haul camp to contractor for pay per tonne), mine **gates** (sell to other guilds at a share you set; published in `world.gates`), refineries buying from guilds (`world.directory`).
+- The Galactic Exchange is a site (`kind: 'exchange'`) with parts too (docks, trading floor, VIP lounge, spot desk).
 
-**Commands:** `build { kind, x, y }` · `upgrade { siteId }` · `demolish { siteId }` · `setMine { siteId, intensity?, focus? }` · `setRefinery { siteId, on?, pct? }` ·
-`buyShip { cls, routeId? }` · `sellShip { shipId }` · `route { from, to, cargo?, shipId? }` · `setRoute { routeId, cargo }` · `deleteRoute { routeId }` · `assign { shipId, routeId|null }` ·
-`survey { x, y }` · `research { tech }` · `buildExchange` · `upgradeExchange` · `setSpot { oreId, on }` · `offer { offerId, action: 'accept'|'decline'|'counter', price? }` ·
-`rename { target: 'guild'|'site'|'ship', id, name }` · `nuke { confirm: 'NUKE' }` · `evolve { kind }`.
+**Guild (plain JSON):** `{ v: 2, uid, name, species, planetId, seed, t, born, coin, earned, runEarned, monthEarned, sp, evo, nukes, lastNuke, landing,
+sites: [{ id, kind: 'hub'|'mine'|'refinery'|'air'|'lab'|'exchange', name, x, y, level (0 while arriving, then 1), arrive, region, terrain, parts: { id: level }, crew, crewCap, morale, shift, decision, haltUntil, ...kind fields }],
+ships, routes: [{ id, from: { kind: 'site'|'camp'|'gate', id, uid? }, to: { kind: 'npc'|'site'|'rival', id, uid? }, cargo, job? }], tree: { nodeId: t }, rp,
+labor: { pool, inbound: [{ n, at, doneAt }], reserve, auto, hired, dead }, policy: { incident, strike }, decisions: [{ id, siteId, kind, n, cost, at, expires }],
+surveys, offers, contracts, buyers, jobs, rate, ema, ledger, log, inbox (deliveries to my refineries and sales at my gates, applied by the server), stats }`.
+Mine fields: `stock, dug, ground (hidden truth), focus, gate: { on, pct }, blastAt`. Refinery: `input, buy: { on, pct }`. Exchange: `stock, spot`.
+Guild 1 (v1) guilds are migrated on load (`migrate`): levels become parts, research comes back as points.
 
-**Flows each minute:** constructions and surveys finish → offers and contract deadlines → mines dig into stockpiles (stop when full) → routes move ore at `ships × hold / round trip`
-(flight path hops through your hubs and air stations, legs ≤ ship range) to a contractor (paid at its posted price), your refinery (input buffer) or another guild's refinery
-(paid `pct × galactic price`; the server credits it to their `inbox` and charges them) → refineries refine at throughput × yield → refined goods go to your exchange
-(contracts first, then spot unless held) or to the Guild exchange at 55% → running costs and research → seeded incidents at mines.
+**Commands:** `build { kind, x, y }` · `part { siteId, part }` · `demolish { siteId }` · `setShift { siteId, shift }` · `blast { siteId }` · `decide { decisionId, choice }` · `setPolicy { incident?, strike? }` ·
+`setMine { siteId, focus }` · `setGate { siteId, on?, pct? }` · `setRefinery { siteId, on?, pct? }` · `setCrew { siteId, max|null }` · `hire { n }` · `setLabor { reserve?, auto? }` ·
+`buyShip { cls, routeId? }` · `sellShip` · `route { from, to, cargo?, shipId?, job? }` · `setRoute` · `deleteRoute` · `assign` · `survey { x, y }` · `unlock { node }` · `buildExchange` · `setSpot` · `offer` · `rename` · `nuke` · `evolve`.
+
+**Client:** `public/guild/map.js` (the planet; ships are clickable and the camera can follow one), `public/guild/inside.js` (the side-view scene of any operation, yours or, watch-only, another guild's via `GET /api/v3/peek?uid&site`), `public/guild/main.js` (HUD, side panel for the map and for each operation, the skill tree, calls for accidents, strikes and buyers). No advice text anywhere: problems show as "!" where they are.
 
 **Market (`market.js`):** nested CES per buyer (materials vs. numeraire σ0 = 0.5; across uses σ1 = 1.3; across ores within a use σ2 = the buyer's sigma), goods in
 baseline-value units, outside supply `S0 · p̂^η` by tier, planet supply = EMA of recorded sales (6h half-life). Calibrated so that at the expected planet supply

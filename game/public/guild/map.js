@@ -31,7 +31,7 @@ export function createMap(S, A) {
     if (baseKey === key) return;
     base = document.createElement('canvas');
     base.width = base.height = 900;
-    try { renderPlanetMap(base, S.world.planet, { labels: true }); } catch (e) { console.error(e); }
+    try { renderPlanetMap(base, S.world.planet, { labels: true, res: 512, retroRes: 300 }); } catch (e) { console.error(e); }
     baseKey = key;
   }
 
@@ -51,7 +51,7 @@ export function createMap(S, A) {
     if (pinch && pointers.size === 2) { const [a, b] = [...pointers.values()]; view.tz = clamp(pinch.z * Math.hypot(a.x - b.x, a.y - b.y) / Math.max(10, pinch.d), 1, 8); return; }
     if (!drag) return;
     const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
-    if (Math.abs(dx) + Math.abs(dy) > 5) drag.moved = true;
+    if (Math.abs(dx) + Math.abs(dy) > 5) { drag.moved = true; if (S.follow) { S.follow = null; A.onUnfollow && A.onUnfollow(); } }
     if (!drag.moved) return;
     const s = scale() / dpr;
     view.cx = view.tcx = clamp(drag.cx - dx / s, 0, 1000); view.cy = view.tcy = clamp(drag.cy - dy / s, 0, 1000);
@@ -137,8 +137,10 @@ export function createMap(S, A) {
     const k = prefs.reduced ? 1 : 0.14;
     view.z = lerp(view.z, view.tz, k); view.cx = lerp(view.cx, view.tcx, k); view.cy = lerp(view.cy, view.tcy, k);
     // keep the planet on screen
-    const half = 500 / view.z * Math.max(W, H) / Math.min(W, H);
-    view.cx = clamp(view.cx, Math.min(500, half * 0.2), Math.max(500, 1000 - half * 0.2)); view.cy = clamp(view.cy, Math.min(500, half * 0.2), Math.max(500, 1000 - half * 0.2));
+    // keep the planet filling the screen: never pan past its edge
+    const hw = (500 / view.z) * (W / Math.min(W, H)), hh = (500 / view.z) * (H / Math.min(W, H));
+    const lim = (c, h) => (h >= 500 ? 500 : clamp(c, h, 1000 - h));
+    view.cx = lim(view.cx, hw); view.cy = lim(view.cy, hh); view.tcx = lim(view.tcx, hw); view.tcy = lim(view.tcy, hh);
     g.imageSmoothingEnabled = false;
     g.fillStyle = '#0b0714'; g.fillRect(0, 0, W, H);
     const o = toScreen(0, 0), s = scale();
@@ -149,19 +151,7 @@ export function createMap(S, A) {
     const showLabels = view.z >= 1.6;
     const mode = S.mode;
 
-    // claim: where you can build
     const claim = V.sites.filter((x) => (x.kind === 'hub' || x.kind === 'air') && x.level >= 1);
-    g.save();
-    g.lineWidth = 2 * dpr;
-    for (const h of claim) {
-      const p = toScreen(h.x, h.y);
-      g.fillStyle = mode && mode.kind === 'build' ? 'rgba(255,210,63,0.12)' : 'rgba(255,210,63,0.07)';
-      g.beginPath(); g.arc(p.x, p.y, h.radius * s, 0, Math.PI * 2); g.fill();
-      g.strokeStyle = mode && mode.kind === 'build' ? 'rgba(255,210,63,0.8)' : 'rgba(255,210,63,0.5)';
-      g.setLineDash([4 * dpr, 5 * dpr]); g.stroke(); g.setLineDash([]);
-    }
-    g.restore();
-
     // survey reports
     for (const sv of me.surveys || []) {
       const p = toScreen(sv.x, sv.y);
@@ -198,6 +188,16 @@ export function createMap(S, A) {
       hits.push({ type: 'npc', id: n.id, sx: p.x, sy: p.y, x: n.x, y: n.y, r: 4 * u });
     }
 
+    // prospector camps: they sell ore at the gate
+    for (const c of S.world.camps || []) {
+      const p = toScreen(c.x, c.y);
+      g.fillStyle = '#140c1c'; g.beginPath(); g.moveTo(p.x, p.y - 7 * u); g.lineTo(p.x + 7 * u, p.y + 5 * u); g.lineTo(p.x - 7 * u, p.y + 5 * u); g.closePath(); g.fill();
+      g.fillStyle = '#c9b8a6'; g.beginPath(); g.moveTo(p.x, p.y - 5 * u); g.lineTo(p.x + 5 * u, p.y + 4 * u); g.lineTo(p.x - 5 * u, p.y + 4 * u); g.closePath(); g.fill();
+      g.fillStyle = '#ffd23f'; g.font = `${Math.round(10 * dpr)}px VT323, monospace`; g.textAlign = 'center'; g.fillText('$', p.x + 8 * u, p.y - 2 * u);
+      if (showLabels) label(c.name.slice(0, 22), p.x, p.y + 8 * u, '#e8dccf');
+      hits.push({ type: 'camp', id: c.id, sx: p.x, sy: p.y, x: c.x, y: c.y, r: 3 * u });
+    }
+
     // other guilds
     for (const o2 of S.world.sites || []) {
       if (o2.uid === S.me.id) continue;
@@ -210,7 +210,9 @@ export function createMap(S, A) {
         hits.push({ type: 'rival', id: o2.id, uid: o2.uid, sx: p.x, sy: p.y, x: o2.x, y: o2.y, r: 3 * u });
       } else {
         box(p.x, p.y, (o2.kind === 'hub' ? 4.5 : 3) * u, col);
-        hits.push({ type: 'rivalsite', id: o2.id, uid: o2.uid, sx: p.x, sy: p.y, x: o2.x, y: o2.y });
+        const gate = o2.kind === 'mine' && (S.world.gates || []).find((x) => x.uid === o2.uid && x.siteId === o2.id && x.on);
+        if (gate) { g.fillStyle = '#ffd23f'; g.font = `${Math.round(9 * dpr)}px VT323, monospace`; g.textAlign = 'center'; g.fillText('$', p.x - 7 * u, p.y - 3 * u); }
+        hits.push({ type: gate ? 'gate' : 'rivalsite', id: o2.id, uid: o2.uid, sx: p.x, sy: p.y, x: o2.x, y: o2.y });
       }
       if (showLabels && o2.kind === 'hub') label(String(o2.guild || '').slice(0, 20), p.x, p.y + 7 * u, col);
     }
@@ -232,6 +234,8 @@ export function createMap(S, A) {
         const ph = ((now / 3_600_000) / r.cycleH + i / ships.length) % 1;
         const out = ph < 0.5, f = out ? ph * 2 : 2 - ph * 2;
         const q = along(pts, f), p = toScreen(q.x, q.y);
+        hits.push({ type: 'ship', id: sh.id, sx: p.x, sy: p.y, x: q.x, y: q.y, r: 2 * u });
+        if (S.follow === sh.id) { view.tcx = q.x; view.tcy = q.y; S.followAt = { x: q.x, y: q.y, out, routeId: r.id }; g.strokeStyle = '#ffd23f'; g.lineWidth = 2 * dpr; g.beginPath(); g.arc(p.x, p.y, 13 * u, 0, Math.PI * 2); g.stroke(); }
         g.save(); g.translate(p.x, p.y); g.rotate(q.a + (out ? 0 : Math.PI));
         const L = sh.cls === 'leviathan' ? 1.6 : sh.cls === 'clipper' ? 0.8 : 1;
         g.fillStyle = 'rgba(207,214,238,0.45)'; for (let k2 = 1; k2 <= 3; k2++) g.fillRect(-(6 + k2 * 3) * u * L, -0.5 * u, 2 * u, u);
@@ -245,28 +249,28 @@ export function createMap(S, A) {
 
     // your operations
     for (const site of V.sites) {
+      if (site.kind === 'exchange') continue;
       const p = toScreen(site.x, site.y);
       const off = site.kind === 'mine' && site.id === 'pit' ? { x: 10 * u, y: 8 * u } : { x: 0, y: 0 };
       const x = p.x + off.x, y = p.y + off.y;
-      if (site.build) {
-        const f = clamp((now - site.build.at) / Math.max(1, site.build.doneAt - site.build.at), 0, 1);
+      if (site.arrive) {
+        const f = clamp((now - site.arrive.at) / Math.max(1, site.arrive.doneAt - site.arrive.at), 0, 1);
         g.strokeStyle = '#ffd23f'; g.setLineDash([2 * dpr, 2 * dpr]); g.strokeRect(x - 8 * u, y - 8 * u, 16 * u, 16 * u); g.setLineDash([]);
         g.fillStyle = '#140c1c'; g.fillRect(x - 9 * u, y + 10 * u, 18 * u, 3 * u); g.fillStyle = '#ffd23f'; g.fillRect(x - 9 * u, y + 10 * u, 18 * u * f, 3 * u);
       }
-      if (site.level >= 1 || site.build) icon(site.kind, x, y, me.species?.color || '#ff8a3d', u, t);
-      if (site.kind === 'mine' && site.level >= 1) {
-        if (site.halted) { g.fillStyle = '#ff5a6e'; g.font = `${Math.round(12 * dpr)}px VT323, monospace`; g.textAlign = 'center'; g.fillText('!', x + 9 * u, y - 6 * u); }
-        else if (site.full) { g.fillStyle = '#ffb347'; g.fillRect(x + 7 * u, y - 9 * u, 3 * u, 3 * u); }
-      }
+      icon(site.kind, x, y, me.species?.color || '#ff8a3d', u, t);
+      const trouble = (site.flags || []).filter((f) => f !== 'staff');
+      if (trouble.length && (Math.floor(t * 2.5) % 2 || prefs.reduced)) { const bad = trouble.includes('decision') || trouble.includes('halt'); g.fillStyle = '#140c1c'; g.fillRect(x + 6 * u, y - 15 * u, 6 * u, 10 * u); g.fillStyle = bad ? '#ff5a6e' : '#ffb347'; g.fillRect(x + 7 * u, y - 14 * u, 4 * u, 5 * u); g.fillRect(x + 7 * u, y - 8 * u, 4 * u, 2 * u); }
       const sel = S.sel && S.sel.type === 'site' && S.sel.id === site.id;
       if (sel) { g.strokeStyle = '#ffd23f'; g.lineWidth = 2 * dpr; g.strokeRect(x - 11 * u, y - 11 * u, 22 * u, 22 * u); }
-      if (showLabels || site.kind === 'hub') label(site.name.slice(0, 20), x, y + 10 * u + (site.build ? 5 * u : 0), KIND_COL[site.kind]);
+      if (showLabels || site.kind === 'hub') label(site.name.slice(0, 20), x, y + 10 * u + (site.arrive ? 5 * u : 0), KIND_COL[site.kind]);
       hits.push({ type: 'site', id: site.id, sx: x, sy: y, x: site.x, y: site.y, r: 4 * u });
     }
 
     // destination picking: pulse what you can ship to
     if (mode && mode.kind === 'dest') {
       const targets = [...(S.world.npc || []).map((n) => ({ x: n.x, y: n.y })), ...V.sites.filter((x) => x.kind === 'refinery' && x.level >= 1), ...(S.world.directory || []).filter((d) => d.uid !== S.me.id && d.on)];
+      if (mode.pick === 'source') targets.splice(0, targets.length, ...V.sites.filter((x) => x.kind === 'mine' && x.level >= 1), ...(S.world.camps || []), ...(S.world.gates || []).filter((d) => d.uid !== S.me.id && d.on));
       g.strokeStyle = '#ffd23f'; g.lineWidth = 2 * dpr;
       for (const q of targets) { const p = toScreen(q.x, q.y); g.beginPath(); g.arc(p.x, p.y, (12 + 3 * Math.sin(t * 5)) * u, 0, Math.PI * 2); g.stroke(); }
     }

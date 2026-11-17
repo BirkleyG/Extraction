@@ -196,6 +196,7 @@ export async function startServer(opts = {}) {
   app.get('/api/v3/state', need(async (req, res, me) => res.json(await v3.state(me))));
   app.post('/api/v3/start', need(async (req, res, me) => res.json(await v3.start(me, req.body || {}))));
   app.post('/api/v3/command', need(async (req, res, me) => res.json(await v3.command(me, req.body && req.body.cmd))));
+  app.get('/api/v3/peek', need(async (req, res, me) => res.json(await v3.peek(me, req.query.uid, String(req.query.site || '')))));
   app.get('/api/v3/board', need(async (req, res) => res.json(await v3.board())));
   app.get('/api/v3/feed', need(async (req, res) => res.json(await v3.feed())));
   app.get('/api/v3/bulletin', need(async (req, res) => res.json(await v3.bulletin())));
@@ -217,21 +218,28 @@ export async function startServer(opts = {}) {
   const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 64 * 1024 });
   const subs = new Map(); // socket -> Set(coll)
   wss.on('connection', async (ws, req) => {
-    const token = new URL(req.url, 'http://x').searchParams.get('token');
-    const me = token ? await store.playerByToken(hashToken(token)).catch(() => null) : null;
-    if (!me) { ws.close(4001, 'unauthenticated'); return; }
-    subs.set(ws, new Set());
-    ws.isAlive = true;
-    ws.on('pong', () => { ws.isAlive = true; });
-    ws.on('close', () => subs.delete(ws));
-    ws.on('message', async raw => {
+    // Listen at once and hold messages until the token is checked: a client may subscribe before the lookup returns.
+    const early = [];
+    let ready = false;
+    const handle = async (raw) => {
       let m; try { m = JSON.parse(raw); } catch { return; }
       if (m.op === 'sub' && (COLLS.has(m.coll) || SUB_COLLS.has(m.coll) || SUB_COLLS3.has(m.coll))) {
         subs.get(ws)?.add(m.coll);
         const docs = await store.listColl(m.coll, (m.coll === 'feed' || m.coll === 'feed2' || m.coll === 'feed3') ? { orderBy: 't', desc: true, limit: 50 } : {});
         send(ws, { op: 'init', coll: m.coll, docs });
       }
-    });
+    };
+    ws.on('message', (raw) => { if (ready) handle(raw).catch(() => {}); else early.push(raw); });
+    ws.on('close', () => subs.delete(ws));
+    const token = new URL(req.url, 'http://x').searchParams.get('token');
+    const me = token ? await store.playerByToken(hashToken(token)).catch(() => null) : null;
+    if (!me) { ws.close(4001, 'unauthenticated'); return; }
+    if (ws.readyState !== 1) return;
+    subs.set(ws, new Set());
+    ws.isAlive = true;
+    ws.on('pong', () => { ws.isAlive = true; });
+    ready = true;
+    for (const raw of early.splice(0)) await handle(raw).catch(() => {});
   });
   const ping = setInterval(() => {
     for (const ws of wss.clients) { if (!ws.isAlive) { ws.terminate(); continue; } ws.isAlive = false; ws.ping(); }

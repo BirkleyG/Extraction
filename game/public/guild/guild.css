@@ -80,3 +80,42 @@ button.row { width: 100%; text-align: left; color: inherit; font: inherit; }
 .row .t + small { margin-left: 4px; }
 body.guild #toasts { left: auto; right: 430px; transform: none; bottom: 46px; align-items: flex-end; width: min(380px, calc(100% - 24px)); }
 @media (max-width: 860px) { body.guild #toasts { right: 12px; } }
+
+/* ---------- Guild 2: inside views, parts, decisions, the skill tree ---------- */
+#inside { position: absolute; inset: 0; width: 100%; height: 100%; display: block; image-rendering: pixelated; cursor: pointer; background: #0b0714; }
+.insidebar { position: absolute; left: 10px; top: 10px; z-index: 4; display: flex; gap: 10px; align-items: center; background: rgba(28,20,48,.92); border: 2px solid var(--line); padding: 4px 10px 4px 4px; box-shadow: 3px 3px 0 #05030a; font-family: var(--f-display); font-size: 12px; }
+.tab.back { color: var(--accent); }
+.tabtitle { font-family: var(--f-display); font-size: 12px; color: var(--text); align-self: center; padding: 0 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.flag { display: inline-block; font-style: normal; font-family: var(--f-mono); font-size: 16px; line-height: 14px; width: 14px; text-align: center; border: 2px solid var(--ink); margin-left: 2px; }
+.flag.warn { background: var(--warn); color: #241400; } .flag.bad { background: var(--bad); color: #200308; }
+.facts { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.facts span { background: var(--panel2); border: 2px solid var(--line); padding: 4px 8px; font-size: 13px; color: var(--muted); }
+.facts b { color: var(--text); font-family: var(--f-mono); font-size: 18px; font-weight: 400; }
+.row.part .pips { color: var(--accent); letter-spacing: -1px; font-size: 11px; margin-left: 4px; }
+.row.part.flash { animation: partflash .9s ease-out; }
+@keyframes partflash { 0% { border-color: var(--coin); background: rgba(255,210,63,.25); } 100% { } }
+.decision { border: 2px solid var(--bad); background: rgba(255,90,110,.08); padding: 8px 10px; margin: 8px 0; }
+.decision b { color: #ffc4c4; }
+.call.bad { border-color: var(--bad); width: 300px; padding: 4px 6px; }
+.call.bad .decision { border: 0; margin: 0; background: none; }
+.chart { margin: 6px 0; }
+.spark { display: block; margin-top: 4px; }
+.spark polyline { fill: none; stroke: var(--sky); stroke-width: 1.5; }
+.chart .spark polyline { stroke: var(--coin); stroke-width: 2; }
+.branch { border: 2px solid var(--bc); background: color-mix(in srgb, var(--bc) 7%, var(--panel2)); margin: 10px 0; padding: 8px; }
+.branch.locked { border-style: dashed; opacity: .6; filter: grayscale(.6); }
+.bhead b { font-family: var(--f-display); font-size: 12px; color: var(--bc); display: block; }
+.bhead small { color: var(--muted); font-size: 12px; }
+.tree { position: relative; height: calc(var(--h) * 78px); margin-top: 8px; }
+.tree .links { position: absolute; inset: 0; width: 100%; height: 100%; }
+.tree .links line { stroke: var(--line); stroke-width: 6; }
+.tree .links line.on { stroke: var(--bc); }
+.node { position: absolute; left: calc(var(--x) * (100% / var(--w)) + 4px); top: calc(var(--y) * 78px + 4px); width: calc(100% / var(--w) - 8px); height: 70px; background: var(--panel); border: 2px solid var(--line); box-shadow: var(--bev); display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 2px; padding: 4px; text-align: center; }
+.node .nl { font-size: 12px; line-height: 1.1; }
+.node .nc { font-family: var(--f-mono); font-size: 16px; color: var(--muted); }
+.node.known { border-color: var(--bc); background: color-mix(in srgb, var(--bc) 25%, var(--panel)); }
+.node.known .nc { color: var(--bc); }
+.node.reach { border-color: color-mix(in srgb, var(--bc) 60%, var(--line)); }
+.node.can { border-color: var(--bc); animation: ready 1.6s ease-in-out infinite; }
+.node.can .nc { color: var(--coin); }
+.node.far { opacity: .55; }
